@@ -2,6 +2,8 @@
 
 Chrome MV3 **Generic Body** for visible, auditable browser automation and user-motor learning.
 
+> **Canonical roadmap:** [ROADMAP.md](ROADMAP.md). Major architecture or sequencing changes must be reconciled with that roadmap before implementation so the project does not drift across layers or skip required maturity gates.
+
 ## Product direction
 
 `daemon.cmd` is the **Body runtime process**, not the product's primary command interface. It stays alive to receive extension telemetry, learn user behavior, maintain Body state, and execute approved Body plans.
