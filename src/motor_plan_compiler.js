@@ -129,12 +129,13 @@ function keyParams(name, type = 'rawKeyDown', modifiers = 0) {
     }
     return params;
   }
-  if (key.length === 1) return characterParams(key, type);
+  if (key.length === 1) return characterParams(key, type, modifiers);
   return { type, key, code: key, modifiers };
 }
 
-function characterParams(char, type = 'rawKeyDown') {
-  const modifiers = SHIFTED_PRINTABLES.has(char) ? MODIFIER_BITS.Shift : 0;
+function characterParams(char, type = 'rawKeyDown', extraModifiers = 0) {
+  const shiftModifier = SHIFTED_PRINTABLES.has(char) ? MODIFIER_BITS.Shift : 0;
+  const modifiers = Number(extraModifiers || 0) | shiftModifier;
   const vk = printableVk(char);
   const params = { type, key: char, code: printableCode(char), modifiers };
   if (vk) {
