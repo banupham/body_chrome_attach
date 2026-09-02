@@ -26,18 +26,9 @@ class CdpInputGateway {
   async attach(tabId) {
     const target = this.debuggee(tabId);
     if (this.attachedTabs.has(target.tabId)) return { attached: true, reused: true };
-    try {
-      await this.chrome.debugger.attach(target, '1.3');
-      this.attachedTabs.add(target.tabId);
-      return { attached: true, reused: false };
-    } catch (error) {
-      const message = String(error?.message || error);
-      if (/already attached|Another debugger/i.test(message)) {
-        this.attachedTabs.add(target.tabId);
-        return { attached: true, reused: true, warning: message };
-      }
-      throw error;
-    }
+    await this.chrome.debugger.attach(target, '1.3');
+    this.attachedTabs.add(target.tabId);
+    return { attached: true, reused: false };
   }
 
   async detach(tabId) {
@@ -59,15 +50,19 @@ class CdpInputGateway {
 
     // Publish before dispatch so the content script can mark the matching DOM event as CDP-origin.
     const mirror = await this.mirror.publishExpected(target.tabId, method, params);
-    const result = await this.chrome.debugger.sendCommand(target, method, params);
-
-    return {
-      ok: true,
-      method,
-      params,
-      mirror,
-      result: result ?? null
-    };
+    try {
+      const result = await this.chrome.debugger.sendCommand(target, method, params);
+      return {
+        ok: true,
+        method,
+        params,
+        mirror,
+        result: result ?? null
+      };
+    } catch (error) {
+      await this.mirror.publishFailure(target.tabId, mirror, method, error).catch(() => {});
+      throw error;
+    }
   }
 
   status() {
