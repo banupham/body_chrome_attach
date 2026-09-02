@@ -24,6 +24,19 @@ function describeTarget(el) {
   return { tag, role, inputType, editable, sensitive, rect };
 }
 
+function pageObservation() {
+  const activeTarget = describeTarget(document.activeElement);
+  return {
+    available: true,
+    hasFocus: document.hasFocus?.() === true,
+    visibilityState: String(document.visibilityState || 'unknown'),
+    activeTarget,
+    scrollX: Number(window.scrollX || 0),
+    scrollY: Number(window.scrollY || 0),
+    viewport: { width: Number(window.innerWidth || 0), height: Number(window.innerHeight || 0) }
+  };
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.action === 'body.virtualCursorSet') {
     const next = message.enabled !== false;
@@ -33,19 +46,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({ ok: true, result: { enabled, ...(enabled ? overlay.status() : { installed:false, visible:false }) } });
     return false;
   }
-
   if (message?.action === 'body.targetContextAt') {
     const x = Number(message.x), y = Number(message.y);
-    const target = Number.isFinite(x) && Number.isFinite(y)
-      ? document.elementFromPoint(x,y)
-      : document.activeElement;
+    const target = Number.isFinite(x) && Number.isFinite(y) ? document.elementFromPoint(x,y) : document.activeElement;
     sendResponse({ ok:true, result:describeTarget(target) });
     return false;
   }
-
+  if (message?.action === 'body.pageObservation') {
+    sendResponse({ ok:true, result:pageObservation() });
+    return false;
+  }
   if (message?.action !== 'body.virtualCursorPing') return false;
   sendResponse({ ok: true, result: { enabled, ...(enabled ? overlay.status() : { installed:false, visible:false }) } });
   return false;
 });
 
-module.exports={describeTarget};
+module.exports={describeTarget,pageObservation};

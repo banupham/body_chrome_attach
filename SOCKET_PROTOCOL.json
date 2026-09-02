@@ -1,39 +1,37 @@
 {
-  "version": 4,
+  "version": 5,
   "url": "ws://127.0.0.1:8765",
   "roles": ["extension", "client"],
+  "authentication": {
+    "client": "256-bit local token from daemon/profiles/.auth/client.token or BODY_DAEMON_TOKEN",
+    "extension": "trust-on-first-use pairing bound to extensionInstanceId + runtimeExtensionId; paired token is stored in chrome.storage.local",
+    "note": "loopback binding is transport scope, not authorization"
+  },
   "client": {
-    "hello": {"type": "HELLO", "role": "client", "protocolVersion": 4},
+    "hello": {"type": "HELLO", "role": "client", "protocolVersion": 5, "token": "required"},
     "command": {"type": "COMMAND", "requestId": "id", "command": "status"},
     "intent": {"type": "INTENT_EXECUTE", "requestId": "id", "extensionId": "optional", "tabId": "active", "intent": {}},
     "strategy": {"type": "STRATEGY_EXECUTE", "requestId": "id", "extensionId": "optional", "tabId": "active", "task": {}},
-    "browserCommand": {
-      "type": "BROWSER_COMMAND",
-      "requestId": "id",
-      "extensionId": "optional",
-      "tabId": "active",
-      "action": "newtab",
-      "value": "optional for address/findtext"
-    }
+    "browserCommand": {"type": "BROWSER_COMMAND", "requestId": "id", "extensionId": "optional", "tabId": "active", "action": "newtab", "value": "optional for address/findtext"}
+  },
+  "pageMotor": {
+    "capability": "HUMAN_MOTOR",
+    "planner": "src/canonical_motor_planner.js",
+    "allowedCdpMethods": ["Input.dispatchMouseEvent", "Input.dispatchKeyEvent"],
+    "browserOnlyActionsRejected": ["back", "forward", "reload"]
   },
   "browserUi": {
     "capability": "BROWSER_UI",
-    "executionBackend": "Windows SendInput",
-    "supportedActions": [
-      "back", "forward", "reload", "hardreload", "stop",
-      "newtab", "closetab", "reopentab", "nexttab", "prevtab", "newwindow",
-      "addressbar", "address", "find", "findtext",
-      "downloads", "history", "devtools", "fullscreen", "bookmark",
-      "zoomin", "zoomout", "zoomreset"
-    ],
-    "resultTruth": "delivered and verified are separate fields; unsupported observation never implies task success"
+    "executionBackend": "persistent Windows SendInput worker",
+    "supportedActions": ["back", "forward", "reload", "hardreload", "stop", "newtab", "closetab", "reopentab", "nexttab", "prevtab", "newwindow", "addressbar", "address", "find", "findtext", "downloads", "history", "devtools", "fullscreen", "bookmark", "zoomin", "zoomout", "zoomreset"],
+    "resultTruth": "delivered, observed effect, verified and taskSuccess are separate concepts"
   },
   "extension": {
-    "hello": {"type": "HELLO", "role": "extension", "protocolVersion": 4},
+    "hello": {"type": "HELLO", "role": "extension", "protocolVersion": 5, "token": "paired token or null on first pairing"},
+    "authEvents": ["AUTH_PAIRED", "AUTH_ERROR"],
     "requests": ["PING", "LIST_TABS", "ACTIVE_TAB", "BODY_EXECUTE", "BODY_DETACH", "TAB_SWITCH", "FOCUS_WINDOW", "BROWSER_UI_END", "RECORD_SET", "CURSOR_SET"],
     "events": ["RECORDER_EVENT", "TAB_EVENT", "TAB_CONTEXT", "TAB_REMOVED", "KEEPALIVE"]
   },
   "trainingGroundTruth": "human-only",
-  "executionCapabilities": ["HUMAN_MOTOR", "BROWSER_UI"],
-  "allowedCdpMethods": ["Input.dispatchMouseEvent", "Input.dispatchKeyEvent"]
+  "executionCapabilities": ["HUMAN_MOTOR", "BROWSER_UI"]
 }

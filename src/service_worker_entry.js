@@ -1,19 +1,13 @@
 'use strict';
 
 const { CdpInputGateway } = require('./cdp_input_gateway');
-const { BehaviorLearner } = require('./behavior_learner');
-const { BodyExecutor } = require('./body_executor');
-const { parseBodyCommand } = require('./body_command_parser');
 const { DaemonBridge } = require('./daemon_bridge');
 const { VIRTUAL_CURSOR_SCOPE, MESSAGE_TYPES } = require('./virtual_cursor_protocol');
 
 const gateway = new CdpInputGateway(chrome);
-const learner = new BehaviorLearner(chrome);
-const executor = new BodyExecutor({ gateway, learner });
 const daemon = new DaemonBridge(chrome, { gateway, WebSocketImpl: WebSocket });
-const learnerReady = learner.init();
 const observedUserMotorByTab = new Map();
-const MAX_OBSERVED_EVENTS_PER_TAB = 5000;
+const MAX_OBSERVED_EVENTS_PER_TAB = 1500;
 
 async function activeTabId() {
   const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -41,35 +35,8 @@ async function cursorStatus(tabId) {
 
 function recentEvents(tabId, limit = 250) {
   const rows = observedUserMotorByTab.get(Number(tabId)) || [];
-  const bounded = Math.max(1, Math.min(5000, Number(limit) || 250));
+  const bounded = Math.max(1, Math.min(MAX_OBSERVED_EVENTS_PER_TAB, Number(limit) || 250));
   return { tabId: Number(tabId), total: rows.length, events: rows.slice(-bounded) };
-}
-
-async function runTextCommand({ text, source }) {
-  await learnerReady;
-  const command = parseBodyCommand(text);
-  const tabId = await activeTabId();
-
-  if (command.type === 'help') {
-    return {
-      source,
-      commands: [
-        'move <x> <y>', 'click <x> <y>', 'doubleclick <x> <y>', 'type <text>',
-        'press <key>', 'combo <Modifier+Key>', 'scroll <deltaY> [x y]', 'submit [x y]',
-        'profile', 'events [limit]', 'status', 'attach', 'detach'
-      ],
-      note: 'For multi-extension, multi-tab, per-site learning and strategy commands use the daemon socket/CMD on ws://127.0.0.1:8765.'
-    };
-  }
-  if (command.type === 'profile') return { source, tabId, profile: learner.snapshot() };
-  if (command.type === 'events') return { source, ...recentEvents(tabId, command.limit) };
-  if (command.type === 'attach') return { source, tabId, ...(await gateway.attach(tabId)) };
-  if (command.type === 'detach') return { source, tabId, ...(await gateway.detach(tabId)) };
-  if (command.type === 'status') {
-    return { source, tabId, profile: learner.snapshot(), executor: executor.status(), cursor: await cursorStatus(tabId), daemon: daemon.status() };
-  }
-
-  return { source, command, execution: await executor.execute(tabId, command) };
 }
 
 function result(sendResponse, work) {
@@ -83,25 +50,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.scope === VIRTUAL_CURSOR_SCOPE && message?.type === MESSAGE_TYPES.USER_MOTOR_EVENT) {
     const tabId = Number(sender?.tab?.id);
     rememberUserMotor(tabId, message.payload);
-    learnerReady.then(() => learner.observe(tabId, message.payload)).catch(() => {});
     daemon.forwardUserMotor(tabId, message.payload);
     return false;
   }
 
-  if (message?.action === 'body.attachActiveTab') return result(sendResponse, async () => gateway.attach(await activeTabId()));
-  if (message?.action === 'body.detachActiveTab') return result(sendResponse, async () => gateway.detach(await activeTabId()));
-
-  if (message?.action === 'body.cdpInput') {
-    return result(sendResponse, async () => {
-      const tabId = Number.isInteger(Number(message.tabId)) ? Number(message.tabId) : await activeTabId();
-      return gateway.sendInput(tabId, String(message.method || ''), message.params || {});
-    });
-  }
-
-  if (message?.action === 'body.executeText') {
-    return result(sendResponse, () => runTextCommand({ text: String(message.text || ''), source: 'runtime-action' }));
-  }
-
+  // Production runtime API is intentionally read-only. All actions go through daemon :8765.
   if (message?.action === 'body.virtualCursorStatus') {
     return result(sendResponse, async () => {
       const tabId = Number.isInteger(Number(message.tabId)) ? Number(message.tabId) : await activeTabId();
@@ -116,7 +69,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
   }
 
-  if (message?.action === 'body.profile') return result(sendResponse, async () => ({ profile: learner.snapshot(), daemon: daemon.status() }));
+  if (message?.action === 'body.profile') {
+    return result(sendResponse, async () => ({
+      daemon: daemon.status(),
+      gateway: gateway.status(),
+      observedTabs: [...observedUserMotorByTab.keys()]
+    }));
+  }
+
   return false;
 });
 
@@ -125,7 +85,6 @@ chrome.debugger.onDetach.addListener(debuggee => {
   if (Number.isInteger(tabId)) gateway.attachedTabs.delete(tabId);
 });
 
-learnerReady
-  .then(() => daemon.start())
-  .then(status => console.log('Body Chrome Attach ready with learned daemon bridge.', status))
+daemon.start()
+  .then(status => console.log('Body Chrome Attach ready. Production actions are daemon-only.', status))
   .catch(error => console.error('Body Chrome Attach startup error:', error));
