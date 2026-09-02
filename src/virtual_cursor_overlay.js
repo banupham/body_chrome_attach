@@ -234,7 +234,6 @@ function installVirtualCursorOverlay({ chromeApi, documentRef } = {}) {
     const expected = consumeExpectedPointer(normalized);
     if (expected) {
       suppressedDomEvents += 1;
-      applyPointer(expected, SOURCES.CDP);
       return;
     }
 
@@ -250,7 +249,6 @@ function installVirtualCursorOverlay({ chromeApi, documentRef } = {}) {
     const expected = consumeExpectedKey(event);
     if (expected) {
       suppressedDomEvents += 1;
-      applyKey(expected, SOURCES.CDP);
       return;
     }
     const normalized = {
