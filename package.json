@@ -5,7 +5,11 @@
   "description": "Standalone visible Chrome CDP Body extracted from extension_agent_v1.",
   "scripts": {
     "build": "node build.js",
-    "check": "node --check build.js && node --check src/service_worker_entry.js && node --check src/cdp_input_gateway.js && node --check src/virtual_cursor_mirror.js && node --check src/virtual_cursor_overlay.js && node --check src/virtual_cursor_content.js"
+    "cli": "node body_cli.js",
+    "check": "node --check build.js && node --check body_cli.js && node --check src/service_worker_entry.js && node --check src/cdp_input_gateway.js && node --check src/virtual_cursor_mirror.js && node --check src/virtual_cursor_overlay.js && node --check src/virtual_cursor_content.js && node --check src/behavior_learner.js && node --check src/body_command_parser.js && node --check src/motor_plan_compiler.js && node --check src/body_executor.js && node --check src/broker_client.js && node --check src/command_ingress.js && node --check src/command_ports.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "esbuild": "^0.25.0"
