@@ -19,3 +19,5 @@ jobs:
         run: npm install
       - name: Verify
         run: npm run verify
+      - name: Check Windows native helper syntax
+        run: python3 -m py_compile daemon/native/windows_input.py

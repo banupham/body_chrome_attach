@@ -2,7 +2,7 @@
 
 Chrome MV3 **Generic Body** with a visible virtual cursor plus a local learned-behavior daemon.
 
-This repository combines the strongest parts of the previous GitHub Body and `learned_body_closed_loop_v3`:
+The repository combines the strongest parts of the previous GitHub Body and `learned_body_closed_loop_v3`:
 
 - Chrome CDP execution stays inside a small, auditable Body surface.
 - The visible cursor shows USER / CDP / CDP ERROR state.
@@ -80,7 +80,7 @@ The daemon learns USER timing sequences:
 
 The motor planner keeps the more complete keyboard encoder from the GitHub Body: modifiers, Shift-required uppercase/punctuation and CDP key codes are generated without `Input.insertText`.
 
-Printable key values are not persisted as dataset text. The learning dataset stores character classes/timing; control keys such as Enter/Tab/Escape are retained so habit sequences can be learned. Sensitive inputs such as password/payment/autocomplete-secret fields are redacted.
+Sensitive inputs such as password/payment/autocomplete-secret fields are excluded/redacted by the observation boundary.
 
 ## Per-site and global learning
 
@@ -105,7 +105,7 @@ daemon/profiles/<extension-id>/<site>/
     habit_model.json
 ```
 
-`daemon/profiles/` is runtime state and is ignored by Git.
+`daemon/profiles/` is runtime state and should normally remain uncommitted.
 
 ## Habit and strategy learning
 
@@ -126,7 +126,7 @@ submitchoice x y [width height role]
 dismisschoice x y [width height]
 ```
 
-Strategy selection uses observed per-site habit evidence with extension-global fallback. It is deterministic rather than randomized merely to create variety.
+Strategy selection uses observed per-site habit evidence with extension-global fallback. It is not randomized merely to create variety.
 
 ## Visible cursor and provenance
 
@@ -140,8 +140,6 @@ The original visible cursor is retained:
 - `CDP · ERROR`
 
 Before CDP dispatch, the extension publishes an expected input marker to the content observer. Matching DOM events are suppressed from USER training. If CDP dispatch fails, the pending marker is removed and the overlay shows `CDP · ERROR`, preventing a later real USER input from being misclassified.
-
-The content script also provides read-only target context (`role`, `rect`, `editable`, `sensitive`) to the learning boundary so trajectories can be grouped by target type and size without using DOM actions as the Body.
 
 ## Single primary CMD/socket transport
 
@@ -166,6 +164,62 @@ CDP gateway
 ```
 
 The previous `8766` broker is no longer started by the service worker.
+
+## Semantic Browser UI controls
+
+Browser chrome is a separate execution capability from page motor input:
+
+```text
+Brain WHAT
+   |-- page action ------> HUMAN_MOTOR ------> CDP Input.dispatchMouseEvent / dispatchKeyEvent
+   `-- browser action ---> BROWSER_UI -------> focused Chrome window + Windows SendInput
+```
+
+The client sends semantic actions such as `newtab` or `back`; it does not need to know Chrome shortcut keys. The daemon owns the mapping from semantic action to native input.
+
+Supported CMD actions include:
+
+```text
+browserback
+browserforward
+browserreload
+browserhardreload
+browserstop
+browsernewtab
+browserclosetab
+browserreopentab
+browsernexttab
+browserprevtab
+browsernewwindow
+browseraddressbar
+browseraddress <url-or-query>
+browserfind
+browserfindtext <text>
+browserdownloads
+browserhistory
+browserdevtools
+browserfullscreen
+browserbookmark
+browserzoomin
+browserzoomout
+browserzoomreset
+```
+
+The socket equivalent is `BROWSER_COMMAND` with `action` plus optional `value` for `address` and `findtext`.
+
+Browser UI execution first asks the selected extension to focus the exact target tab/window and verifies that focus before native input is allowed. Browser-generated tab activations are marked as `agent`, so they do not pollute HUMAN tab-habit learning.
+
+Execution truth is explicit:
+
+- `delivered=true`: native Browser UI input was issued successfully;
+- `verified=true`: an observable browser-state change matched the expected effect;
+- `verified=false`: the UI effect cannot be observed reliably from the extension, or no matching state change was seen.
+
+Strong verification is used for tab creation/closure/reopen/switch, window creation, navigation-token changes and navigation epochs. UI-only focus states such as omnibox/find/devtools are intentionally reported as unverified instead of being claimed as successful.
+
+URLs/queries typed through `browseraddress` are not echoed in command results. The extension exposes a one-way navigation token for comparison rather than persisting the raw URL at the Browser UI verification boundary.
+
+The native backend currently uses Windows `SendInput` through `daemon/native/windows_input.py`. Non-Windows platforms fail closed instead of silently falling back to a different automation path.
 
 ### Start
 
@@ -200,6 +254,8 @@ Interactive client:
 ```bat
 body.cmd
 ```
+
+The daemon itself also has an interactive console when launched directly.
 
 ## Useful daemon commands
 
@@ -239,6 +295,30 @@ back
 forward
 reload
 
+browserback
+browserforward
+browserreload
+browserhardreload
+browserstop
+browsernewtab
+browserclosetab
+browserreopentab
+browsernexttab
+browserprevtab
+browsernewwindow
+browseraddressbar
+browseraddress <url-or-query>
+browserfind
+browserfindtext <text>
+browserdownloads
+browserhistory
+browserdevtools
+browserfullscreen
+browserbookmark
+browserzoomin
+browserzoomout
+browserzoomreset
+
 focusnext x y [width height role]
 submitchoice x y [width height role]
 dismisschoice x y [width height]
@@ -248,7 +328,7 @@ intent {JSON}
 
 ## Direct extension runtime API
 
-The existing direct runtime API remains available for debugging the Body itself:
+The existing direct runtime API remains useful for debugging the Body itself:
 
 ```js
 chrome.runtime.sendMessage({ action: 'body.executeText', text: 'click 400 250' })
@@ -262,8 +342,19 @@ chrome.runtime.sendMessage({ action: 'body.virtualCursorStatus' })
 npm run verify
 ```
 
-Verification includes JavaScript syntax checks, the original Body runtime contract, daemon bridge contract, daemon multi-extension/multi-tab/per-site/habit/strategy tests, deterministic trajectory selection, linear bootstrap, learned typing + Shift/punctuation, and extension build.
+Verification includes:
+
+- JavaScript syntax checks;
+- original Body runtime contract;
+- daemon bridge contract;
+- daemon multi-extension/multi-tab/per-site/habit/strategy tests;
+- deterministic trajectory selection test;
+- linear bootstrap test;
+- learned typing + keyboard Shift/punctuation test;
+- semantic Browser UI adapter + focus/provenance/verification contract;
+- Windows native helper syntax check;
+- extension build.
 
 ## Branch policy
 
-`main` is the working branch for this repository. Do not accumulate feature branches after their changes have been integrated.
+`main` is the working branch for this repository. Feature branches that have already been merged should be deleted rather than accumulated.

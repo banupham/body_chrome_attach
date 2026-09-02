@@ -1,19 +1,39 @@
 {
-  "version": 3,
+  "version": 4,
   "url": "ws://127.0.0.1:8765",
   "roles": ["extension", "client"],
   "client": {
-    "hello": {"type": "HELLO", "role": "client", "protocolVersion": 3},
+    "hello": {"type": "HELLO", "role": "client", "protocolVersion": 4},
     "command": {"type": "COMMAND", "requestId": "id", "command": "status"},
     "intent": {"type": "INTENT_EXECUTE", "requestId": "id", "extensionId": "optional", "tabId": "active", "intent": {}},
-    "strategy": {"type": "STRATEGY_EXECUTE", "requestId": "id", "extensionId": "optional", "tabId": "active", "task": {}}
+    "strategy": {"type": "STRATEGY_EXECUTE", "requestId": "id", "extensionId": "optional", "tabId": "active", "task": {}},
+    "browserCommand": {
+      "type": "BROWSER_COMMAND",
+      "requestId": "id",
+      "extensionId": "optional",
+      "tabId": "active",
+      "action": "newtab",
+      "value": "optional for address/findtext"
+    }
+  },
+  "browserUi": {
+    "capability": "BROWSER_UI",
+    "executionBackend": "Windows SendInput",
+    "supportedActions": [
+      "back", "forward", "reload", "hardreload", "stop",
+      "newtab", "closetab", "reopentab", "nexttab", "prevtab", "newwindow",
+      "addressbar", "address", "find", "findtext",
+      "downloads", "history", "devtools", "fullscreen", "bookmark",
+      "zoomin", "zoomout", "zoomreset"
+    ],
+    "resultTruth": "delivered and verified are separate fields; unsupported observation never implies task success"
   },
   "extension": {
-    "hello": {"type": "HELLO", "role": "extension", "protocolVersion": 3},
-    "requests": ["PING", "LIST_TABS", "ACTIVE_TAB", "BODY_EXECUTE", "BODY_DETACH", "TAB_SWITCH", "RECORD_SET", "CURSOR_SET"],
+    "hello": {"type": "HELLO", "role": "extension", "protocolVersion": 4},
+    "requests": ["PING", "LIST_TABS", "ACTIVE_TAB", "BODY_EXECUTE", "BODY_DETACH", "TAB_SWITCH", "FOCUS_WINDOW", "BROWSER_UI_END", "RECORD_SET", "CURSOR_SET"],
     "events": ["RECORDER_EVENT", "TAB_EVENT", "TAB_CONTEXT", "TAB_REMOVED", "KEEPALIVE"]
   },
   "trainingGroundTruth": "human-only",
-  "executionCapability": "HUMAN_MOTOR",
+  "executionCapabilities": ["HUMAN_MOTOR", "BROWSER_UI"],
   "allowedCdpMethods": ["Input.dispatchMouseEvent", "Input.dispatchKeyEvent"]
 }
