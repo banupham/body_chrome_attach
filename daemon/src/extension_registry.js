@@ -45,18 +45,20 @@ class ExtensionRegistry {
   unregisterSocket(ws) {
     const id=this.socketToId.get(ws);
     if(!id) return null;
+    this.socketToId.delete(ws);
     const item=this.items.get(id);
-    if(item?.ws===ws) {
-      item.online=false;
-      item.ws=null;
-      item.lastSeenAt=Date.now();
-    }
+    if(!item || item.ws!==ws) return null;
+    item.online=false;
+    item.ws=null;
+    item.lastSeenAt=Date.now();
     return id;
   }
 
   bySocket(ws) {
     const id=this.socketToId.get(ws);
-    return id ? this.items.get(id) || null : null;
+    if(!id)return null;
+    const item=this.items.get(id)||null;
+    return item?.ws===ws?item:null;
   }
 
   get(id=null) {

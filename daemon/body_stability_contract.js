@@ -8,6 +8,7 @@ const path=require('node:path');
 const {ExecutionLane}=require('./src/execution_lane');
 const {HumanActionSegmenter}=require('./src/segmenter');
 const {BrowserUiAdapter}=require('./src/browser_ui_adapter');
+const {ExtensionRegistry}=require('./src/extension_registry');
 const {createDaemonRuntime}=require('./src/daemon_runtime');
 
 function tmp(name){return fs.mkdtempSync(path.join(os.tmpdir(),`${name}-`));}
@@ -70,6 +71,18 @@ test('extension disconnect rejects pending requests immediately',()=>{
   assert.equal(runtime.pending.size,0);
   assert.match(String(rejected?.message||rejected),/extension_disconnected:ext-a:BODY_EXECUTE/);
   runtime.flushSync();
+});
+
+test('stale socket close after reconnect cannot unregister replacement connection',()=>{
+  const registry=new ExtensionRegistry();
+  const oldSocket={close(){this.closed=true;}},newSocket={close(){this.closed=true;}};
+  registry.register('ext-a',oldSocket,{tabs:[]});
+  registry.register('ext-a',newSocket,{tabs:[]});
+  assert.equal(oldSocket.closed,true);
+  assert.equal(registry.unregisterSocket(oldSocket),null);
+  assert.equal(registry.get('ext-a').online,true);
+  assert.equal(registry.get('ext-a').ws,newSocket);
+  assert.equal(registry.bySocket(oldSocket),null);
 });
 
 test('Browser UI exposes the same delivery observation verification task-success truth layers',async()=>{
