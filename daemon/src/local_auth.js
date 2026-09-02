@@ -17,6 +17,8 @@ class LocalAuth{
     fs.mkdirSync(this.dir,{recursive:true});
     this.debugClientSecret=this._loadOrCreateSecret(this.debugClientPath);
     this.brainSecret=this._loadOrCreateSecret(this.brainPath);
+    this.clientPath=this.debugClientPath;
+    this.clientSecret=this.debugClientSecret;
     this.extensions=this._loadExtensions();
   }
 
@@ -25,6 +27,7 @@ class LocalAuth{
   _loadExtensions(){try{return JSON.parse(fs.readFileSync(this.extensionsPath,'utf8'));}catch{return {};}}
   _saveExtensions(){this._writePrivate(this.extensionsPath,JSON.stringify(this.extensions,null,2)+'\n');}
   authenticateDebugClient(value){return secureEqualHex(digest(value),digest(this.debugClientSecret));}
+  authenticateClient(value){return this.authenticateDebugClient(value);}
   authenticateBrain(value){return secureEqualHex(digest(value),digest(this.brainSecret));}
 
   authenticateExtension({extensionId,runtimeExtensionId,token:presented,origin}){
@@ -44,13 +47,7 @@ class LocalAuth{
     return {ok:true,paired:true,pairedToken};
   }
 
-  status(){
-    return {
-      debugClientTokenPath:this.debugClientPath,
-      brainTokenPath:this.brainPath,
-      pairedExtensions:Object.keys(this.extensions).length
-    };
-  }
+  status(){return {debugClientTokenPath:this.debugClientPath,brainTokenPath:this.brainPath,pairedExtensions:Object.keys(this.extensions).length};}
 }
 
 module.exports={LocalAuth,digest,secureEqualHex};
