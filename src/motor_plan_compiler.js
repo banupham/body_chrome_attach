@@ -4,64 +4,107 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function cubic(a, b, c, d, t) {
-  const u = 1 - t;
-  return u * u * u * a + 3 * u * u * t * b + 3 * u * t * t * c + t * t * t * d;
+function finiteOr(value, fallback) {
+  return Number.isFinite(Number(value)) ? Number(value) : fallback;
 }
 
-function mousePath(start, end, profile = {}, random = Math.random) {
+function validTrajectoryTemplates(profile = {}) {
+  return (profile.trajectoryTemplates || []).filter(template =>
+    Array.isArray(template?.points) &&
+    template.points.length >= 2 &&
+    template.points.every(point => Number.isFinite(Number(point.u)) && Number.isFinite(Number(point.v)) && Number.isFinite(Number(point.t)))
+  );
+}
+
+function selectTrajectoryTemplate(profile = {}, sequence = 0) {
+  const templates = validTrajectoryTemplates(profile);
+  if (!templates.length) return { template: null, index: -1, count: 0 };
+  const index = Math.abs(Math.trunc(Number(sequence) || 0)) % templates.length;
+  return { template: templates[index], index, count: templates.length };
+}
+
+function bootstrapLinearPath(start, end, profile = {}) {
   const dx = end.x - start.x;
   const dy = end.y - start.y;
   const distance = Math.max(1, Math.hypot(dx, dy));
   const speed = clamp(Number(profile.speedPxPerSec) || 900, 80, 5000);
   const durationMs = clamp((distance / speed) * 1000, 45, 2600);
-  const steps = clamp(Math.round(distance / 12), 4, 90);
-  const nx = -dy / distance;
-  const ny = dx / distance;
-  const ratio = clamp(Number(profile.pathRatio) || 1.12, 1, 4);
-  const curve = clamp(0.06 + (ratio - 1) * 0.32, 0.04, 0.48);
-  const sign = random() < 0.5 ? -1 : 1;
-  const bend = distance * curve * (0.65 + random() * 0.45) * sign;
-  const c1 = {
-    x: start.x + dx * (0.22 + random() * 0.10) + nx * bend,
-    y: start.y + dy * (0.22 + random() * 0.10) + ny * bend
-  };
-  const c2 = {
-    x: start.x + dx * (0.64 + random() * 0.12) + nx * bend * 0.45,
-    y: start.y + dy * (0.64 + random() * 0.12) + ny * bend * 0.45
-  };
+  const steps = clamp(Math.round(distance / 14), 4, 72);
   const out = [];
   for (let index = 1; index <= steps; index += 1) {
     const t = index / steps;
-    const eased = t * t * (3 - 2 * t);
     out.push({
       delayMs: index === 1 ? 0 : durationMs / steps,
       method: 'Input.dispatchMouseEvent',
       params: {
         type: 'mouseMoved',
-        x: cubic(start.x, c1.x, c2.x, end.x, eased),
-        y: cubic(start.y, c1.y, c2.y, end.y, eased),
+        x: start.x + dx * t,
+        y: start.y + dy * t,
         button: 'none'
-      }
-    });
-  }
-
-  const correctionCount = clamp(Math.round((Number(profile.turnRate) || 0.08) * 8), 0, 3);
-  for (let i = 0; i < correctionCount; i += 1) {
-    const amplitude = clamp(2 + distance * 0.004, 2, 7) * (1 - i * 0.2);
-    const angle = random() * Math.PI * 2;
-    out.push({
-      delayMs: 18 + random() * 30,
-      method: 'Input.dispatchMouseEvent',
-      params: { type: 'mouseMoved', x: end.x + Math.cos(angle) * amplitude, y: end.y + Math.sin(angle) * amplitude, button: 'none' }
-    });
-    out.push({
-      delayMs: 18 + random() * 24,
-      method: 'Input.dispatchMouseEvent',
-      params: { type: 'mouseMoved', x: end.x, y: end.y, button: 'none' }
+      },
+      behaviorSource: 'bootstrap-linear'
     });
   }
   return out;
+}
+
+function learnedTrajectoryPath(start, end, profile = {}, sequence = 0) {
+  const selected = selectTrajectoryTemplate(profile, sequence);
+  if (!selected.template) return bootstrapLinearPath(start, end, profile);
+
+  const template = selected.template;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const distance = Math.max(1, Math.hypot(dx, dy));
+  const ux = dx / distance;
+  const uy = dy / distance;
+  const nx = -uy;
+  const ny = ux;
+  const templateDirectPx = Math.max(1, Number(template.directPx) || distance);
+  const templateDurationMs = Math.max(1, Number(template.durationMs) || 0);
+  const templateSpeed = templateDurationMs > 0 ? templateDirectPx / (templateDurationMs / 1000) : Number(profile.speedPxPerSec) || 900;
+  const durationMs = clamp((distance / clamp(templateSpeed, 80, 5000)) * 1000, 45, 2600);
+  const points = template.points;
+  const out = [];
+  let previousT = 0;
+
+  for (let index = 1; index < points.length; index += 1) {
+    const point = points[index];
+    const t = clamp(Number(point.t), previousT, 1);
+    const u = Number(point.u);
+    const v = Number(point.v);
+    const final = index === points.length - 1;
+    out.push({
+      delayMs: clamp((t - previousT) * durationMs, index === 1 ? 0 : 1, 1200),
+      method: 'Input.dispatchMouseEvent',
+      params: {
+        type: 'mouseMoved',
+        x: final ? end.x : start.x + ux * (u * distance) + nx * (v * distance),
+        y: final ? end.y : start.y + uy * (u * distance) + ny * (v * distance),
+        button: 'none'
+      },
+      behaviorSource: 'learned-user-trajectory',
+      trajectoryTemplateIndex: selected.index,
+      trajectoryTemplateCount: selected.count
+    });
+    previousT = t;
+  }
+
+  if (!out.length || out[out.length - 1].params.x !== end.x || out[out.length - 1].params.y !== end.y) {
+    out.push({
+      delayMs: 1,
+      method: 'Input.dispatchMouseEvent',
+      params: { type: 'mouseMoved', x: end.x, y: end.y, button: 'none' },
+      behaviorSource: 'learned-user-trajectory',
+      trajectoryTemplateIndex: selected.index,
+      trajectoryTemplateCount: selected.count
+    });
+  }
+  return out;
+}
+
+function mousePath(start, end, profile = {}, sequence = 0) {
+  return learnedTrajectoryPath(start, end, profile, sequence);
 }
 
 const KEY_SPECS = Object.freeze({
@@ -210,8 +253,8 @@ function keyCombo(value) {
   return out;
 }
 
-function clickPlan(start, point, profile, random = Math.random, count = 1) {
-  const out = mousePath(start, point, profile.mouse, random);
+function clickPlan(start, point, profile, sequence, count = 1) {
+  const out = mousePath(start, point, profile.mouse, sequence);
   const pause = clamp(Number(profile.mouse.pauseBeforeClickMs) || 70, 0, 1500);
   for (let index = 1; index <= count; index += 1) {
     out.push({ delayMs: index === 1 ? pause : 90, method: 'Input.dispatchMouseEvent', params: { type: 'mousePressed', x: point.x, y: point.y, button: 'left', clickCount: index } });
@@ -234,26 +277,33 @@ function scrollPlan(command, pointer) {
 
 class MotorPlanCompiler {
   constructor(random = Math.random) {
-    this.random = random;
+    this.decisionRandom = random;
+    this.mouseSequence = 0;
+  }
+
+  nextMouseSequence() {
+    const value = this.mouseSequence;
+    this.mouseSequence += 1;
+    return value;
   }
 
   compile(command, profile, { pointerStart = { x: 640, y: 360 } } = {}) {
-    const start = { x: Number(pointerStart.x) || 640, y: Number(pointerStart.y) || 360 };
+    const start = { x: finiteOr(pointerStart.x, 640), y: finiteOr(pointerStart.y, 360) };
     let steps = [];
     let strategy = null;
     let finalPointer = start;
 
     if (command.type === 'move') {
       finalPointer = { x: command.x, y: command.y };
-      steps = mousePath(start, finalPointer, profile.mouse, this.random);
+      steps = mousePath(start, finalPointer, profile.mouse, this.nextMouseSequence());
     } else if (command.type === 'click') {
       finalPointer = { x: command.x, y: command.y };
-      steps = clickPlan(start, finalPointer, profile, this.random, 1);
+      steps = clickPlan(start, finalPointer, profile, this.nextMouseSequence(), 1);
     } else if (command.type === 'doubleClick') {
       finalPointer = { x: command.x, y: command.y };
-      steps = clickPlan(start, finalPointer, profile, this.random, 2);
+      steps = clickPlan(start, finalPointer, profile, this.nextMouseSequence(), 2);
     } else if (command.type === 'typeText') {
-      steps = typingPlan(command.text, profile.typing, this.random);
+      steps = typingPlan(command.text, profile.typing, this.decisionRandom);
     } else if (command.type === 'pressKey') {
       steps = keyStroke(command.key, clamp(Number(profile.typing.meanIntervalMs) || 85, 20, 500));
     } else if (command.type === 'keyCombo') {
@@ -263,10 +313,10 @@ class MotorPlanCompiler {
     } else if (command.type === 'submit') {
       const hasPoint = Number.isFinite(command.x) && Number.isFinite(command.y);
       const clickProbability = clamp(Number(profile.submit.clickProbability) || 0.5, 0.05, 0.95);
-      if (hasPoint && this.random() < clickProbability) {
+      if (hasPoint && this.decisionRandom() < clickProbability) {
         strategy = { method: 'click', clickProbability, enterProbability: 1 - clickProbability };
         finalPointer = { x: command.x, y: command.y };
-        steps = clickPlan(start, finalPointer, profile, this.random, 1);
+        steps = clickPlan(start, finalPointer, profile, this.nextMouseSequence(), 1);
       } else {
         strategy = { method: 'enter', clickProbability, enterProbability: 1 - clickProbability, fallbackBecauseNoPoint: !hasPoint };
         steps = keyStroke('Enter', clamp(Number(profile.typing.meanIntervalMs) || 85, 20, 500));
@@ -276,7 +326,7 @@ class MotorPlanCompiler {
     }
 
     return {
-      version: 1,
+      version: 2,
       actionType: command.type,
       strategy,
       steps,
@@ -285,4 +335,13 @@ class MotorPlanCompiler {
   }
 }
 
-module.exports = { mousePath, typingPlan, keyStroke, keyCombo, MotorPlanCompiler };
+module.exports = {
+  selectTrajectoryTemplate,
+  bootstrapLinearPath,
+  learnedTrajectoryPath,
+  mousePath,
+  typingPlan,
+  keyStroke,
+  keyCombo,
+  MotorPlanCompiler
+};
