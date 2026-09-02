@@ -188,6 +188,18 @@ function installVirtualCursorOverlay({ chromeApi, documentRef } = {}) {
     };
   }
 
+  function targetContext(target) {
+    const el = target?.nodeType === 1 ? target : null;
+    if (!el) return { tag: null, role: null, inputType: null, formContext: false, isSubmitControl: false };
+    const tag = String(el.tagName || '').toLowerCase();
+    const role = String(el.getAttribute?.('role') || '').toLowerCase() || null;
+    const inputType = String(el.getAttribute?.('type') || '').toLowerCase() || null;
+    const formContext = Boolean(el.closest?.('form'));
+    const buttonType = tag === 'button' ? String(el.getAttribute?.('type') || 'submit').toLowerCase() : null;
+    const isSubmitControl = (tag === 'button' && buttonType === 'submit') || (tag === 'input' && ['submit', 'image'].includes(inputType));
+    return { tag, role, inputType, formContext, isSubmitControl };
+  }
+
   function consumeExpectedPointer(actual) {
     pruneExpected();
     let bestIndex = -1;
@@ -214,7 +226,7 @@ function installVirtualCursorOverlay({ chromeApi, documentRef } = {}) {
     return expectedKeys.splice(index, 1)[0];
   }
 
-  function emitUserMotorEvent(kind, event) {
+  function emitUserMotorEvent(kind, event, context) {
     chromeApi.runtime.sendMessage({
       scope: VIRTUAL_CURSOR_SCOPE,
       type: MESSAGE_TYPES.USER_MOTOR_EVENT,
@@ -222,6 +234,7 @@ function installVirtualCursorOverlay({ chromeApi, documentRef } = {}) {
         source: SOURCES.USER,
         kind,
         event,
+        context,
         url: String(win?.location?.href || ''),
         at: Date.now()
       }
@@ -241,7 +254,7 @@ function installVirtualCursorOverlay({ chromeApi, documentRef } = {}) {
     const now = clock();
     if (event.type !== 'mousemove' || now - lastMoveSentAt >= 20) {
       lastMoveSentAt = now;
-      emitUserMotorEvent('pointer', normalized);
+      emitUserMotorEvent('pointer', normalized, targetContext(event.target));
     }
   }
 
@@ -259,7 +272,7 @@ function installVirtualCursorOverlay({ chromeApi, documentRef } = {}) {
       at: Date.now()
     };
     applyKey(normalized, SOURCES.USER);
-    emitUserMotorEvent('keyboard', normalized);
+    emitUserMotorEvent('keyboard', normalized, targetContext(event.target));
   }
 
   function messageListener(message, _sender, sendResponse) {
