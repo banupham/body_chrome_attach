@@ -1,124 +1,291 @@
 # PRODUCT ROADMAP — Distributed Agent Company Network
 
-> **Canonical product direction.** This file is the reference roadmap for architecture and sequencing. If a proposed implementation conflicts with this document, update and review the roadmap first instead of silently changing the architecture.
+> **Canonical product direction.** This file is the architecture and sequencing reference for the project. If a proposed implementation conflicts with this roadmap, update and review the roadmap first instead of silently changing the architecture.
 
 ## 0. Mission
 
-Build a local-first distributed agent system in which:
+Build a **local-first distributed agent system** in which each Company Node can observe Human behavior, learn locally, build reusable semantic knowledge, receive high-level goals, reason through a Director Brain, coordinate Browser Instances, execute through one audited BODY, verify effects, and report only necessary summaries to Central.
+
+The first reference platform is **YouTube**. Do not expand to Facebook, TikTok, Instagram, or other platforms until the YouTube architecture works end-to-end.
+
+The central development principle is:
 
 ```text
-CENTRAL
-  = manages the NETWORK
+RAW DATA
+  !=
+BRAIN INPUT
 
-COMPANY NODE
-  = autonomous local operating unit
-
-LOCAL BRAIN
-  = decides WHAT should be done
-
-IDENTITY / HABIT BRAIN
-  = decides HOW this Human usually prefers to do it strategically
-
-BROWSER MANAGER
-  = authoritative local browser/task coordinator
-
-EXTENSION ADAPTER
-  = Chrome observation + execution bridge
-
-BODY
-  = performs HOW physically
-
-OBSERVATION
-  = reports WHAT HAPPENED
-
-HUMAN
-  = teacher + operator + highest local authority
+Raw Human/Browser observations
+  -> Data Factory
+  -> Brain-Ready Semantic Memory
+  -> Director Brain
 ```
 
-The first reference platform is **YouTube**. Do not expand to Facebook, TikTok, Instagram, or other platforms until the YouTube architecture is stable end-to-end.
+The Director Brain must not be designed to understand raw mouse/keyboard/DOM timelines directly.
 
 ---
 
 # 1. Target Architecture
 
 ```text
-                                 CENTRAL
-                           Registry / Presence
-                      Capability / Task Routing
+                                  CENTRAL
+                         Registry / Presence / Policy
+                       Topic / Goal / Task Directives
                                   |
-                 +----------------+----------------+
-                 |                                 |
-                 v                                 v
-          COMPANY NODE A                    COMPANY NODE B
-             Local Device                      Local Device
-                 |                                 |
-        +--------+--------+                        ...
-        |                 |
- Environment Guardian   Local Brain
-                          |
-                 +--------+---------+
-                 |                  |
-          Director Brain      Identity/Habit Brain
-                 |                  |
-                 +--------+---------+
-                          |
-                    Browser Manager
-                          |
-              +-----------+-----------+
-              |           |           |
-              v           v           v
-          Browser A1   Browser A2   Browser A3
-              |           |           |
-         Extension    Extension    Extension
-          Adapter      Adapter      Adapter
-              |           |           |
-              +-----------+-----------+
-                          |
-                         BODY
-                    /             \
-                   v               v
-             PAGE HUMAN_MOTOR    BROWSER_UI
-                   |               |
-                  CDP          Native Input
-                   |               |
-                   +-------+-------+
-                           |
-                         Chrome
-                           |
-                      Observation
-                           |
-                     ObservedEffect
-                           |
-                         Brain
+                  +---------------+---------------+
+                  |                               |
+                  v                               v
+           COMPANY NODE A                  COMPANY NODE B
+             Local Device                    Local Device
+                  |
+        +---------+----------+
+        |                    |
+Environment Guardian     DATA + BRAIN PLANE
+                             |
+                 +-----------+------------+
+                 |                        |
+             Data Factory            Director Brain
+                 |                        |
+      Offline Analyst ~0.6B         Goal / Plan / Replan
+                 |                        |
+     Brain-Ready Semantic Memory          |
+                 |                        |
+                 +-----------+------------+
+                             |
+                      Identity/Habit Brain
+                             |
+                      Capability Workers
+                             |
+                       Browser Manager
+                             |
+               +-------------+-------------+
+               |             |             |
+               v             v             v
+           Browser A1    Browser A2    Browser A3
+               |             |             |
+          Extension     Extension     Extension
+           Adapter       Adapter       Adapter
+               |             |             |
+               +-------------+-------------+
+                             |
+                            BODY
+                       /             \
+                      v               v
+                PAGE HUMAN_MOTOR    BROWSER_UI
+                      |               |
+                     CDP          Native Input
+                      |               |
+                      +-------+-------+
+                              |
+                            Chrome
+                              |
+                         Observation
+                              |
+                        ObservedEffect
+                              |
+                     Raw Evidence Store
+                              |
+                         Data Factory
 ```
-
-## Important correction from the original proposal
-
-**Manager is not the Extension.**
-
-The authoritative Manager is daemon-side/local-process state:
-
-```text
-Browser Manager
-  -> owns browser/task/workspace state
-  -> coordinates multiple Browser Instances
-  -> selects the target Browser/Tab
-  -> maintains task ownership
-
-Extension Adapter
-  -> observes Chrome
-  -> reports tab/browser state
-  -> exposes audited execution bridge
-  -> must not be the authoritative task database
-```
-
-Reason: Chrome MV3 service workers may sleep/restart. Task ownership and local orchestration must survive extension lifecycle changes.
 
 ---
 
-# 2. Identity Model
+# 2. Permanent Responsibility Boundaries
 
-Do not use one ID for all levels.
+## Human
+
+Human is the highest local authority.
+
+```text
+Human Authority > Brain Authority > BODY
+```
+
+When Human takes control, autonomous execution must yield within the available detection scope.
+
+## Central
+
+Central manages the **network**, not Chrome mechanics.
+
+Central may own:
+
+```text
+Company / Device / Browser / Channel registry
+presence + heartbeat
+health summaries
+capability registry
+policy
+topic / goal directives
+task routing
+task history
+network scores / participation summaries
+```
+
+Central must not directly perform:
+
+```text
+mouse movement
+keyboard input
+scroll
+DOM interaction
+browser navigation
+raw motor replay
+```
+
+Central should not receive raw Human mouse trajectories, raw private text, passwords, cookies, session tokens, or complete local personality models.
+
+## Director Brain
+
+Answers:
+
+```text
+WHAT SHOULD BE DONE?
+```
+
+Owns:
+
+```text
+goal interpretation
+task decomposition
+capability selection
+worker assignment
+planning
+replanning
+failure handling
+semantic success evaluation
+```
+
+The Director Brain consumes **Brain-Ready Data**, not raw event streams.
+
+## Identity / Habit Brain
+
+Answers:
+
+```text
+HOW WOULD THIS HUMAN USUALLY PREFER TO DO IT STRATEGICALLY?
+```
+
+Owns Human preference and strategy ranking, not low-level motor generation.
+
+## Data Factory
+
+Transforms raw evidence into compact semantic records that Brain can understand immediately.
+
+It owns:
+
+```text
+normalization
+segmentation
+session building
+before/after state assembly
+statistics
+semantic labeling
+experience compilation
+knowledge candidates
+habit candidates
+Brain-ready indexes
+```
+
+## Offline Analyst (~0.6B or similar small model)
+
+A **data-analysis worker**, not a Brain and not a controller.
+
+It may:
+
+```text
+READ raw/normalized observations
+classify context
+label candidate intent
+label strategy
+interpret ObservedEffect
+group similar demonstrations
+extract knowledge/habit candidates
+write derived semantic records
+```
+
+It must never:
+
+```text
+hold the Brain controller lease
+send INTENT_EXECUTE
+send BROWSER_COMMAND
+send TAB_SWITCH
+call BODY directly
+mutate raw evidence
+increase autonomy by itself
+```
+
+Default execution policy:
+
+```text
+Human active        -> Analyst OFF
+Brain executing     -> Analyst OFF
+machine busy        -> Analyst OFF
+machine idle        -> Analyst MAY RUN
+scheduled/offline   -> Analyst MAY RUN
+```
+
+"Offline" means outside the realtime control loop; Internet connectivity is not the deciding factor.
+
+## Browser Manager
+
+Daemon-side authoritative coordinator.
+
+Owns:
+
+```text
+Browser Instance registry
+active browser/tab state
+TaskWorkspace ownership
+task -> browser/tab assignment
+browser eligibility
+controller ownership integration
+BODY execution state
+```
+
+## Extension Adapter
+
+Per-Chrome adapter only.
+
+Owns:
+
+```text
+Chrome observation bridge
+page observation
+CDP execution bridge
+browser/tab telemetry
+agent provenance markers
+read-only page context
+```
+
+The Extension is **not** the authoritative Manager because MV3 service workers may sleep/restart.
+
+## BODY
+
+BODY has no high-level goal and no personality.
+
+BODY owns physical execution only:
+
+```text
+move
+click
+double click
+drag
+scroll
+type
+key
+combo
+browser navigation
+browser tab/window controls
+address bar controls
+```
+
+BODY may learn low-level motor characteristics such as trajectory and timing.
+
+---
+
+# 3. Identity Model
+
+Do not use one identity for all layers.
 
 ```text
 companyId
@@ -138,7 +305,7 @@ Initial deployment may use:
 1 Company Node -> 1 Device
 ```
 
-but the data model **must not hard-code**:
+but must **not hard-code**:
 
 ```text
 companyId === deviceId
@@ -157,155 +324,22 @@ Channel/account identity is separate from browser identity.
 
 ---
 
-# 3. Responsibility Boundaries
-
-## Human
-
-Highest local authority.
-
-```text
-Human Authority > Brain Authority > BODY
-```
-
-When Human actively takes control, Brain must yield within the allowed detection scope.
-
-## Central
-
-Central manages the network, not Chrome mechanics.
-
-Central may own:
-
-```text
-company/device/browser/channel registry
-presence + heartbeat
-health summaries
-capability registry
-capability score
-participation score
-network score
-task routing
-task history
-trust/reputation summaries
-```
-
-Central must not directly perform:
-
-```text
-mouse movement
-keyboard input
-scroll
-DOM interaction
-browser navigation
-raw motor replay
-```
-
-Central should not receive raw Human keyboard/mouse trajectories, passwords, cookies, session tokens, private text, or the complete local personality model.
-
-## Director Brain
-
-Answers:
-
-```text
-WHAT SHOULD BE DONE?
-```
-
-Owns goal reasoning, task decomposition, planning, replanning, failure handling, and semantic success evaluation.
-
-## Identity / Habit Brain
-
-Answers:
-
-```text
-HOW WOULD THIS HUMAN USUALLY DO IT STRATEGICALLY?
-```
-
-Learns preference and strategy, not low-level motor generation.
-
-Examples:
-
-```text
-keyboard vs mouse preference
-Enter vs click preference
-new-tab preference
-navigation style
-correction style
-decision latency
-action tempo
-```
-
-## Browser Manager
-
-Daemon-side authoritative coordinator.
-
-Owns:
-
-```text
-Browser Instance registry
-active browser/tab state
-TaskWorkspace ownership
-task -> browser/tab assignment
-browser eligibility
-Brain controller lease integration
-BODY execution state
-```
-
-## Extension Adapter
-
-Per-Chrome adapter only.
-
-Owns:
-
-```text
-Chrome observation bridge
-page observation
-CDP execution bridge
-browser/tab telemetry
-agent provenance markers
-read-only page context
-```
-
-## BODY
-
-BODY has no high-level goal and no personality.
-
-BODY owns physical execution:
-
-```text
-move
-click
-double click
-drag
-scroll
-type
-key
-combo
-browser navigation
-browser tab/window controls
-address bar controls
-```
-
-BODY may learn only low-level motor characteristics such as trajectory and timing.
-
----
-
-# 4. Knowledge, Personality, Motor — Keep Separate
-
-Do not merge these models.
+# 4. Knowledge, Personality, Motor and Evidence Must Stay Separate
 
 ## Knowledge
 
 ```text
 What is YouTube search?
-Which page state represents a result page?
-Which effect indicates video navigation succeeded?
-What capability is being attempted?
+What page state represents search results?
+What effect indicates navigation succeeded?
+Which capability is being attempted?
 ```
 
 ## Personality / Habit
 
 ```text
 Does this Human prefer Enter or click?
-Does this Human prefer a new tab?
+Does this Human prefer new tabs?
 How does this Human usually correct text?
 ```
 
@@ -318,29 +352,42 @@ key hold timing
 scroll timing
 ```
 
+## Evidence
+
+```text
+what actually happened
+who caused it
+before state
+action
+after state
+observed effect
+outcome
+```
+
 Rules:
 
 ```text
 Brain does not contain Motor.
 BODY does not contain Personality.
 Knowledge does not automatically become Personality.
+Inference does not overwrite Fact.
 ```
 
 ---
 
 # 5. Human vs Agent Data
 
-This is a permanent invariant.
+Permanent invariant:
 
 ```text
 source = human
-  -> may become training ground truth
+  -> may become Human ground truth
 
 source = agent
   -> telemetry / evaluation / verification only
 ```
 
-Never create the feedback loop:
+Never create:
 
 ```text
 Brain executes
@@ -349,11 +396,184 @@ Brain executes
 -> confidence rises artificially
 ```
 
-Raw Human learning remains local-first at the Company Node.
+Raw Human learning remains local-first.
 
 ---
 
-# 6. Newborn Brain Definition
+# 6. Raw Evidence vs Derived Inference
+
+Raw evidence is immutable from the Analyst's point of view.
+
+```text
+RAW EVIDENCE STORE
+       |
+       | READ ONLY
+       v
+DATA FACTORY / ANALYST
+       |
+       v
+DERIVED SEMANTIC STORE
+```
+
+Every semantic conclusion must preserve provenance.
+
+Example:
+
+```json
+{
+  "evidence": {
+    "source": "HUMAN",
+    "eventIds": ["EV-1001", "EV-1002", "EV-1003"]
+  },
+  "inference": {
+    "capabilityCandidate": "youtube.search",
+    "strategyCandidate": "keyboard_enter",
+    "confidence": 0.94,
+    "producer": "offline-analyst"
+  }
+}
+```
+
+Facts and inferences must remain distinguishable.
+
+Model confidence must **never directly grant autonomy**.
+
+---
+
+# 7. Brain-Ready Semantic Data Contract
+
+The Director Brain should reason primarily over six normalized concepts:
+
+```text
+1. SITUATION
+   Where am I and what is the current context?
+
+2. CAPABILITY
+   What can this Company/Brain currently do and with what evidence?
+
+3. STRATEGY
+   What known ways exist to perform this capability?
+
+4. EXPERIENCE
+   What happened in similar Human/Agent demonstrations before?
+
+5. EFFECT
+   What result should be observed if the action succeeds?
+
+6. POLICY
+   Is this action allowed in this context?
+```
+
+The Director Brain should receive a compact **Situation Pack**, not entire memory stores.
+
+```text
+Goal Pack
++ Situation Pack
++ Capability Pack
++ Strategy Pack
++ Experience Pack
++ Expected Effect
++ Policy Pack
+-> Director Brain
+```
+
+Example:
+
+```json
+{
+  "goal": {
+    "capability": "youtube.search",
+    "query": "robotics"
+  },
+  "situation": {
+    "platform": "youtube",
+    "pageType": "home",
+    "humanActive": false
+  },
+  "capability": {
+    "autonomy": 2,
+    "confidence": 0.94
+  },
+  "strategies": [
+    {
+      "id": "SEARCH_ENTER",
+      "steps": ["focus_search", "type_query", "press_enter"],
+      "humanPreference": 0.91,
+      "successRate": 0.97
+    }
+  ],
+  "expectedEffect": {
+    "pageType": "search_results"
+  },
+  "policy": {
+    "eligible": true
+  }
+}
+```
+
+This contract is intended to let future Director models change size/vendor without redesigning Human-learning infrastructure.
+
+---
+
+# 8. Data Factory Pipeline
+
+Target pipeline:
+
+```text
+Raw Human / Browser Events
+          |
+          v
+Deterministic Normalizer
+          |
+          v
+Action Segmenter
+          |
+          v
+Session Builder
+Before + Action + After + Effect
+          |
+          v
+Rules / Statistics Engine
+          |
+          v
+Offline Analyst ~0.6B
+semantic classification only
+          |
+          v
+Semantic Experience Compiler
+          |
+          +------------------+------------------+
+          |                  |                  |
+          v                  v                  v
+      Knowledge           Habits           Experiences
+          |                  |                  |
+          +------------------+------------------+
+                             |
+                             v
+                  Brain-Ready Memory Store
+                             |
+                             v
+                    Context / Pack Retriever
+                             |
+                             v
+                       Director Brain
+```
+
+Do not send huge raw mousemove streams to the model.
+
+Example:
+
+```text
+300 mousemove events
+-> deterministic trajectory/action feature
+-> one compact semantic record
+```
+
+Use rules/statistics whenever possible. Use the small model only where semantic classification actually helps.
+
+---
+
+# 9. Newborn Director Brain Definition
 
 The Brain is **newborn in experience and personality**, not blank about foundational schemas.
 
@@ -361,42 +581,30 @@ A Newborn Brain may already know:
 
 ```text
 action ontology
-observation schema
+Brain-ready data schema
 task/effect schema
 browser concepts
 capability framework
-policy/safety rules
-how to compare before/after state
+policy rules
+how to compare expected and observed effects
 ```
 
-It initially does **not** know:
+It initially does not know:
 
 ```text
 Human preference
 Human habit
-site-specific strategy
+site-specific strategy quality
 capability confidence
 Human personality
-which strategy this Human would choose
 which unfamiliar task it can safely perform
 ```
 
-A complete Human demonstration should be represented as:
-
-```text
-BeforeState
-+ Human Action
-+ Context
-+ AfterState
-+ ObservedEffect
-+ Outcome
-```
-
-Do not train semantic behavior from coordinates alone.
+The Data Factory exists specifically so the Director Brain does not need to learn how to decode raw event logs.
 
 ---
 
-# 7. Task Workspace Model
+# 10. Task Workspace Model
 
 A Tab is not an Agent.
 
@@ -421,13 +629,11 @@ Recommended invariant:
 one Tab belongs to at most one active TaskWorkspace at a time
 ```
 
-This allows research tasks to use multiple tabs while preserving ownership and recovery semantics.
-
 ---
 
-# 8. Environment Guardian
+# 11. Environment Guardian
 
-Environment Guardian is a local Company module separate from Brain and Extension.
+Environment Guardian is a local Company module separate from Brain, Data Factory and Extension.
 
 Purpose:
 
@@ -455,64 +661,11 @@ change DNS/routes to evade policy
 interfere with detection systems
 ```
 
-Signals may include:
-
-```text
-device health
-network stability
-system proxy / Chrome proxy policy
-network adapters / VPN signals
-DNS/default route changes
-Chrome health
-extension health
-CDP/debugger health
-unexpected launch flags
-```
-
-A single signal must not automatically equal a violation.
-
-Quarantine is **Browser-level** whenever possible:
-
-```text
-Browser A1 -> ACTIVE
-Browser A2 -> ACTIVE
-Browser A3 -> QUARANTINED
-```
-
-Do not disable an entire Company Node because one Browser Instance is unhealthy.
+Quarantine should be Browser-level whenever possible.
 
 ---
 
-# 9. Scores Must Stay Separate
-
-Do not collapse everything into one Agent score.
-
-Maintain distinct concepts:
-
-```text
-Environment Score
-  -> is this browser/device environment healthy?
-
-Network Score
-  -> is network identity/stability reliable?
-
-Capability Score
-  -> how well has this Brain demonstrated this capability?
-
-Participation Score
-  -> how reliably does this Company participate?
-
-Online Score
-  -> uptime / presence / latency / disconnect behavior
-```
-
-Company Trust may aggregate these later, but the source scores remain inspectable.
-
-**Network Score must never grant Brain autonomy.**
-
----
-
-# 10. Capability-Specific Autonomy
+# 12. Capability-Specific Autonomy
 
 Never use one global Brain maturity level to unlock all actions.
 
@@ -538,7 +691,7 @@ Example:
 Autonomy changes only from evidence such as:
 
 ```text
-human demonstration count
+Human demonstration count
 successful imitation count
 failure rate
 context coverage
@@ -547,13 +700,13 @@ ObservedEffect accuracy
 strategy consistency
 ```
 
-Time online alone must never increase autonomy.
+Time online, Analyst confidence, Network Score, or Agent self-execution alone must never increase autonomy.
 
 ---
 
-# 11. YouTube-First Reference Capabilities
+# 13. YouTube-First Capability Framework
 
-Initial reference capability set:
+Initial low-level reference capabilities:
 
 ```text
 youtube.search
@@ -562,26 +715,167 @@ youtube.open_channel
 youtube.navigation
 youtube.back
 youtube.tab_switch
+youtube.content_discovery
+youtube.content_review
+youtube.collect_metadata
 ```
 
-The purpose of YouTube-first is to stabilize:
+Higher-level semantic goals may later use combinations of these capabilities.
+
+The first purpose is to stabilize:
 
 ```text
 task model
-observation model
-semantic effects
+semantic observations
+Brain-ready memory
 capability evidence
-Brain learning
+Director reasoning
 Browser Manager
 BODY
 Human override
+policy gates
 ```
-
-Only after these work end-to-end should another platform adapter be added.
 
 ---
 
-# 12. Development Roadmap
+# 14. Central Topic / Goal Directive Model
+
+Central may later provide high-level Topic Directives rather than physical browser commands.
+
+Example:
+
+```json
+{
+  "taskType": "topic_campaign",
+  "platform": "youtube",
+  "topic": "AI robotics",
+  "scope": "registered_network_channels",
+  "allowedActions": [
+    "discover",
+    "open",
+    "review",
+    "collect_metadata"
+  ]
+}
+```
+
+Central responsibility:
+
+```text
+identify network-level topic/goal
+select eligible Company Nodes
+provide policy constraints
+receive summaries
+```
+
+Local Director responsibility:
+
+```text
+understand topic
+retrieve relevant channel/video candidates
+check registry membership
+check capability evidence
+check environment
+check Human presence
+check policy
+split work into subtasks
+assign local workers/browser resources
+verify results
+report summary
+```
+
+Central must never send mouse coordinates or raw motor sequences.
+
+---
+
+# 15. Capability Workers Under Director Brain
+
+"Subordinates" should normally be bounded capability workers, not independent unrestricted agents.
+
+Example:
+
+```text
+Director Brain
+   |
+   +-- Discovery Worker
+   |     -> candidate content/channel discovery
+   |
+   +-- Relevance Worker
+   |     -> topic classification / semantic score
+   |
+   +-- Registry Worker
+   |     -> registered Company/channel validation
+   |
+   +-- Policy Worker
+   |     -> allowed action evaluation
+   |
+   +-- Execution Planner
+         -> structured strategy for Browser Manager/BODY
+```
+
+Workers may be implemented with:
+
+```text
+rules
+database queries
+embeddings
+small models
+specialized deterministic logic
+```
+
+They do not automatically receive direct BODY access.
+
+---
+
+# 16. Interaction Policy Gate
+
+The architecture must distinguish legitimate automation from coordinated inauthentic engagement.
+
+Use three policy classes:
+
+```text
+SAFE_AUTO
+  discovery
+  open/navigation
+  review/classification
+  collect metadata
+  internal analysis
+
+HUMAN_APPROVED
+  prepare/draft an external interaction
+  actions requiring explicit account-owner approval
+
+RESTRICTED
+  coordinated fake views/likes/comments
+  mass engagement intended to manipulate metrics
+  pretending independent accounts are unrelated Humans
+  detector/anti-bot evasion
+  stealth or fingerprint manipulation
+```
+
+"Natural" behavior in this project means **consistent with learned Human preferences for permitted tasks**, not disguising automation or manipulating platform metrics.
+
+---
+
+# 17. Scores Must Stay Separate
+
+Maintain distinct concepts:
+
+```text
+Environment Score
+Network Score
+Capability Score
+Participation Score
+Online Score
+```
+
+Company Trust may aggregate them later, but underlying evidence remains inspectable.
+
+**Network Score must never grant Brain autonomy.**
+
+---
+
+# 18. Development Roadmap
 
 ## PHASE 1 — BODY CORE
 
@@ -603,22 +897,13 @@ Brain/debug auth separation
 exclusive Brain controller lease
 ```
 
-Must preserve:
-
-```text
-page HUMAN_MOTOR -> Input.dispatchMouseEvent / Input.dispatchKeyEvent only
-content script -> READ/OBSERVE only
-linear bootstrap when no Human trajectory exists
-Human-only training ground truth
-```
-
 Exit criteria:
 
 - CI green for all Body contracts.
-- One Chrome can record Human events and replay audited page/browser actions.
+- One Chrome records Human events and replays audited page/browser actions.
 - Agent events never become Human ground truth.
 - Brain lease and debug lock are deterministic.
-- Page and Browser UI execution return truthful delivered/observed/verified semantics.
+- Execution truth separates delivered / observed / verified / taskSuccess.
 
 ---
 
@@ -626,7 +911,7 @@ Exit criteria:
 
 **Status: NEXT FOUNDATION.**
 
-Goal: stable multi-level identity before multi-browser orchestration expands.
+Goal: stable identity before multi-browser orchestration expands.
 
 Deliverables:
 
@@ -640,23 +925,17 @@ persistent identity files
 registration metadata
 ```
 
-Rules:
-
-- Do not hard-code Company == Device.
-- Browser identity survives tab churn.
-- Extension identity is not Channel identity.
-
 Exit criteria:
 
-- Restarting daemon/browser does not accidentally create a different logical identity unless explicitly re-registered.
+- Restarting daemon/browser preserves intended logical identity.
 - Multiple Browser Instances on one Device remain distinguishable.
-- Identity is available to all later health/task/capability records.
+- Identity exists on later health/task/capability records.
 
 ---
 
 ## PHASE 3 — BROWSER MANAGER + TASK WORKSPACE
 
-Goal: make daemon-side Browser Manager authoritative for browser/task state.
+Goal: daemon-side Browser Manager becomes authoritative for browser/task state.
 
 Deliverables:
 
@@ -670,7 +949,7 @@ busy/idle state
 controller ownership integration
 ```
 
-Recommended Browser states:
+Recommended states:
 
 ```text
 REGISTERED
@@ -685,16 +964,16 @@ ERROR
 
 Exit criteria:
 
-- One Device can coordinate at least two Browser Instances independently.
-- One TaskWorkspace may safely own multiple tabs.
-- Extension reconnect does not lose authoritative task ownership.
-- A task cannot accidentally execute on the wrong Browser Instance.
+- One Device coordinates at least two Browser Instances independently.
+- TaskWorkspace safely owns multiple tabs.
+- Extension reconnect does not lose task ownership.
+- Task cannot execute on the wrong Browser Instance.
 
 ---
 
 ## PHASE 4 — ENVIRONMENT GUARDIAN MVP
 
-Goal: decide whether a Browser Instance is eligible for autonomous work.
+Goal: decide whether Browser Instance is eligible for autonomous work.
 
 Deliverables:
 
@@ -711,82 +990,112 @@ Browser-level quarantine
 Exit criteria:
 
 - Unhealthy Browser can be quarantined without stopping healthy browsers.
-- Guardian reports evidence; it does not modify network configuration to evade policy.
-- Brain/Manager cannot schedule autonomous work onto QUARANTINED browser state.
+- Guardian reports evidence and does not modify environment to evade policy.
+- Brain/Manager cannot schedule autonomous work on QUARANTINED browser.
 
 ---
 
-## PHASE 5 — SEMANTIC OBSERVATION LAYER
+## PHASE 5 — SEMANTIC OBSERVATION + RAW EVIDENCE
 
-Goal: turn raw interaction history into reusable demonstrations.
+Goal: create reliable immutable evidence for later analysis.
 
 Deliverables:
 
 ```text
-BeforeState schema
-Action schema
-AfterState schema
-ObservedEffect schema
-Outcome schema
-Context schema
-YouTube page-state adapter
-Demonstration timeline
-```
-
-Target record:
-
-```text
+Raw Evidence Store
+BeforeState
+Action
+AfterState
+ObservedEffect
+Outcome
 Context
-+ Intent candidate
-+ Human strategy
-+ BeforeState
-+ Human Action
-+ AfterState
-+ ObservedEffect
-+ Outcome
+Demonstration timeline
+YouTube page-state adapter
+provenance IDs
 ```
 
 Exit criteria:
 
-- `youtube.search` Human demonstrations can be reconstructed without relying on raw coordinates alone.
-- Navigation/focus/tab effects have stable semantic representation.
-- Sensitive raw Human data remains local/redacted according to policy.
+- Human `youtube.search` demonstration can be reconstructed without raw coordinates alone.
+- Facts preserve Human/Agent provenance.
+- Sensitive raw data remains local/redacted by policy.
 
 ---
 
-## PHASE 6 — NEWBORN BRAIN
+## PHASE 6 — DATA FACTORY + OFFLINE ANALYST
 
-Goal: a Brain that can observe, remember, compare, associate, evaluate, and learn evidence without autonomous action.
+Goal: turn raw evidence into Brain-ready semantic data before Director Brain is built.
+
+Deliverables:
+
+```text
+Deterministic Normalizer
+Action Segmenter
+Session Builder
+Rules/Statistics Engine
+Offline Analyst adapter (~0.6B class)
+Semantic Experience Compiler
+Knowledge Candidate Store
+Habit Candidate Store
+Experience Store
+Brain-Ready Memory Store
+Context/Situation Pack Retriever
+```
+
+Hard rules:
+
+```text
+Analyst cannot control BODY.
+Analyst cannot hold controller lease.
+Analyst cannot mutate raw evidence.
+Analyst output is inference, not Human fact.
+Analyst confidence cannot unlock autonomy.
+```
+
+Exit criteria:
+
+- Raw `youtube.search` demonstration compiles into a compact Brain-ready Experience record.
+- Brain can retrieve Situation/Capability/Strategy/Experience/Effect/Policy packs without reading raw events.
+- Every inference is traceable to source evidence IDs.
+- Batch analysis can run while idle/offline without affecting Body responsiveness.
+
+---
+
+## PHASE 7 — NEWBORN DIRECTOR BRAIN
+
+Goal: Brain reasons directly from Brain-ready packs and does not need raw-data understanding logic.
 
 Autonomy:
 
 ```text
-0 = OBSERVE ONLY
+0 = OBSERVE / REASON / PREDICT ONLY
 ```
 
 Deliverables:
 
 ```text
-foundational action/observation ontology
-Knowledge Store
-Demonstration Store
+Goal Pack parser
+Situation Pack reader
+Knowledge retrieval
 Capability Evidence Store
-confidence model
-context coverage model
+Strategy evaluation
+ExpectedEffect reasoning
+confidence/evidence API
 prediction/evaluation API
 ```
 
 Exit criteria:
 
-- Brain can explain what evidence it has for `youtube.search`.
-- Brain can distinguish unknown capability from known capability.
-- Brain confidence cannot increase from Agent self-execution data alone.
+- Brain can explain why it believes `youtube.search` is known or unknown.
+- Brain can select a candidate strategy from semantic records without raw logs.
+- Brain can identify insufficient evidence instead of inventing certainty.
+- Agent execution data alone cannot increase Human preference confidence.
 
 ---
 
-## PHASE 7 — IDENTITY / HABIT BRAIN
+## PHASE 8 — IDENTITY / HABIT BRAIN
 
-Goal: learn how the Human tends to choose strategies while keeping Knowledge and Motor separate.
+Goal: learn how Human tends to choose strategies while keeping Knowledge and Motor separate.
 
 Deliverables:
 
@@ -803,38 +1112,38 @@ strategy ranking
 
 Exit criteria:
 
-- For a known context, Brain can rank Human-like strategies with evidence/confidence.
-- Identity/Habit model can be reset without deleting Knowledge.
+- Known context returns ranked Human-preferred strategies with evidence.
+- Habit model can be reset without deleting Knowledge.
 - Motor model can be reset without deleting Personality/Habit.
 
 ---
 
-## PHASE 8 — HUMAN OVERRIDE
+## PHASE 9 — HUMAN OVERRIDE
 
 Goal: Human always wins local control.
 
-### V1 — Page-level override
+### V1 — Page-level
 
 ```text
-Human page input detected
+Human page input
 -> Brain yields
 -> active BODY plan pauses/cancels safely
 -> Browser enters HUMAN_CONTROL
 ```
 
-### V2 — Browser/OS-level override
+### V2 — Browser/OS-level
 
-Later add native input observation for browser chrome actions that content scripts cannot see.
+Later add native input observation for Chrome UI actions not visible to content scripts.
 
 Exit criteria:
 
-- Human page interaction reliably interrupts autonomous page execution.
-- Body does not race Human input.
-- Resume requires explicit policy eligibility, not a blind timer.
+- Human input reliably interrupts autonomous page execution.
+- Body does not race Human.
+- Resume requires policy eligibility, not a blind timer.
 
 ---
 
-## PHASE 9 — IMITATION + ASSISTED AUTONOMY
+## PHASE 10 — IMITATION + ASSISTED AUTONOMY
 
 Goal: allow only proven capability-specific behavior.
 
@@ -845,70 +1154,63 @@ Level 0 NEWBORN
   observe only
 
 Level 1 IMITATION
-  predict Human action/strategy
-  compare against real Human behavior
+  predict Human strategy
+  compare with real Human behavior
 
 Level 2 ASSISTED
   execute explicitly approved capabilities
 
 Level 3 CONTEXT AUTONOMY
-  autonomous only in known contexts with sufficient evidence
-```
+  autonomous only inside proven context/policy
 
-Deliverables:
-
-```text
-prediction tests
-Human agreement tests
-capability-specific permission
-failure budget
-recovery rules
-ObservedEffect validation
+Level 4 MATURE CAPABILITY
+  Goal -> Plan -> Act -> Observe -> Verify -> Replan
+  but only for that proven capability
 ```
 
 Exit criteria:
 
-- At least one YouTube capability reaches assisted autonomy through evidence, not manual score inflation.
-- Failure lowers/blocks confidence according to policy.
-- Unknown contexts fall back to WAIT/OBSERVE instead of improvising unrestricted actions.
+- Autonomy is per capability.
+- Failed/novel context causes downgrade/wait/replan rather than unrestricted action.
+- Human Override remains authoritative.
 
 ---
 
-## PHASE 10 — MATURE LOCAL COMPANY
+## PHASE 11 — MATURE LOCAL COMPANY
 
-Goal: demonstrate a complete local autonomous loop before building full Central task routing.
+Goal: prove one Company Node can operate locally before depending on Central routing.
 
-Target loop:
+Reference path:
 
 ```text
 Goal
 -> Director Brain
+-> Situation Pack
 -> Identity/Habit strategy
+-> Policy check
 -> Browser Manager
 -> BODY
 -> Observation
 -> ObservedEffect
--> Brain verification
--> retry/replan if required
--> Learning/Evidence update
+-> semantic verification
+-> capability evidence update
 ```
 
-Reference target: at least one YouTube workflow with capability-specific autonomy and Human override.
+Minimum proof:
 
-Exit criteria — **hard gate before Central Task Router**:
+- At least one YouTube capability works end-to-end repeatedly.
+- Local Company works when Central is offline.
+- Environment eligibility is enforced.
+- Human Override works.
+- Task success is based on semantic effects, not merely input delivery.
 
-- Local Company completes selected YouTube capability end-to-end.
-- Browser eligibility is enforced.
-- Human override is demonstrated.
-- Success/failure is determined semantically, not by input delivery alone.
-- Capability confidence has reproducible evidence.
-- Company operates even when Central is unavailable.
+**Do not build production Central Task Router before this gate is met.**
 
 ---
 
-## PHASE 11 — CENTRAL REGISTRY + PRESENCE
+## PHASE 12 — CENTRAL REGISTRY + PRESENCE + TOPIC DIRECTIVES
 
-Goal: connect proven Local Companies without centralizing their raw Human data.
+Goal: Central can discover healthy network participants and issue high-level goals/topics.
 
 Deliverables:
 
@@ -917,195 +1219,203 @@ Company Registry
 Device Registry
 Browser Registry
 Channel Registry
-Presence
-Heartbeat
+Presence / heartbeat
 health summaries
-Online Score
+Capability Registry
+Topic/Goal Directive schema
+policy distribution
 ```
-
-Central still does **not** route autonomous tasks at this phase unless explicitly experimental.
 
 Exit criteria:
 
-- Multiple Company Nodes can register/reconnect safely.
-- Central failure does not stop local Human observation/learning.
-- Raw Human event streams remain local.
+- Central sees Company/Browser capability and health without raw Human data.
+- Central can issue a Topic Directive without specifying physical browser actions.
+- Local Director may reject a directive that fails capability/environment/policy checks.
 
 ---
 
-## PHASE 12 — CENTRAL TASK ROUTING + NETWORK SCORES
+## PHASE 13 — DISTRIBUTED CAPABILITY WORKERS
 
-**Blocked until Phase 10 exit criteria are met.**
+Goal: Director can decompose a high-level topic task into bounded subtasks.
 
-Goal: route Goals to capable Company Nodes rather than control Chrome directly.
+Reference flow:
+
+```text
+Central Topic Directive
+-> Local Director
+-> Discovery Worker
+-> Relevance Worker
+-> Registry Worker
+-> Policy Worker
+-> Execution Planner
+-> Browser Manager/BODY when allowed
+-> Result verification
+```
+
+Exit criteria:
+
+- Topic candidates can be matched to registered Company/channel metadata.
+- Workers have bounded responsibilities and do not bypass Director/Policy/Manager.
+- Results remain attributable to Company/Browser/TaskWorkspace.
+
+---
+
+## PHASE 14 — CENTRAL TASK ROUTING + NETWORK SCORES
+
+Goal: route tasks only after local capability evidence exists.
 
 Deliverables:
 
 ```text
-Capability Registry
+Online Score
+Environment Score
+Network Score
 Capability Score
 Participation Score
-Network Score
 Task Router
-Task History
-Trust/Reputation aggregation
+Task history
+Trust/reputation summaries
 ```
 
 Routing inputs may include:
 
 ```text
-platform
-category
-required capability
-browser eligibility
-capability confidence
+platform/category match
+capability score
+environment eligibility
 availability
-participation/reliability
+historical task reliability
+policy eligibility
 ```
 
-Central output:
+Hard rule:
 
 ```text
-Goal / Task assignment
+Network Score != Brain Autonomy
 ```
-
-Central must never output raw mouse/keyboard action plans for a remote Browser.
 
 Exit criteria:
 
-- Router selects among multiple eligible Company Nodes.
-- Network/Environment scores do not grant capability autonomy.
-- Task result summaries are sufficient for network coordination without uploading raw local personality/motor data.
+- Router assigns goals to eligible Company Nodes without controlling Chrome directly.
+- Company may safely reject unsupported tasks.
+- Central receives summary evidence/results rather than raw Human telemetry.
 
 ---
 
-## PHASE 13 — NETWORK EXPANSION
+## PHASE 15 — PLATFORM / NETWORK EXPANSION
 
-Only after YouTube end-to-end architecture is stable.
-
-Possible adapters:
+Only after YouTube reference architecture is stable:
 
 ```text
 Facebook
 TikTok
-Instagram
 other platforms
+additional devices/companies
 ```
 
-Each new platform must define:
-
-```text
-capability ontology
-observation/state model
-semantic success effects
-policy boundaries
-platform-specific tests
-```
-
-Do not duplicate BODY motor implementations per platform.
+New platforms add adapters/capability definitions; they do not create a second BODY architecture.
 
 ---
 
-# 13. Central Build Gate
+# 19. Architecture Gates — Do Not Skip
 
-A minimal Central registry can be prototyped earlier for testing multi-device presence.
+## Gate A — BODY before Brain autonomy
 
-However, **full Central Task Router, Trust routing, and production Capability routing are forbidden milestones until a Mature Local Company proves at least one YouTube capability end-to-end.**
+No autonomous Brain work until BODY execution/audit contracts are stable.
 
-Reason:
+## Gate B — Identity before large multi-browser operation
 
-```text
-Do not design distributed routing around capabilities that have not yet been proven locally.
-```
+Do not scale Browser Instances without stable Company/Device/Browser/Extension identity.
 
----
+## Gate C — Manager before complex Tasks
 
-# 14. Current Repository Responsibility
+Do not use Extension as authoritative Task Manager.
 
-`body_chrome_attach` remains the reference implementation for the physical/local browser execution boundary.
+## Gate D — Semantic Evidence before Director Brain
 
-This repo should contain or own interfaces for:
+Do not build Director reasoning around raw mouse/keyboard/DOM logs.
 
-```text
-BODY runtime
-Canonical page motor
-Browser UI input
-Extension Adapter
-Human/Agent provenance
-local observation/effect transport
-Browser runtime registry
-Brain control lease / Body API boundary
-Body-side performance and audit contracts
-```
+## Gate E — Data Factory before mature Brain
 
-Brain and Central may live in separate repositories/processes later.
+A Brain-ready semantic pipeline must exist before attempting sophisticated Director behavior.
 
-**Do not move high-level goal reasoning or Central network logic into BODY simply because this repository already has a daemon.**
+## Gate F — Analyst has zero execution authority
 
----
+Small/offline models analyze data only. They do not control Browser/BODY.
 
-# 15. Permanent Guardrails
+## Gate G — Local maturity before full Central Router
 
-These rules require an explicit architecture review before changing:
+At least one YouTube capability must work repeatedly end-to-end locally before production Central task routing.
 
-1. **Human is highest local authority.**
-2. **Central never directly drives Chrome motor actions.**
-3. **Brain uses structured contracts, not free-form CMD strings as the product control plane.**
-4. **`daemon.cmd` is Body runtime; CMD input and `body.cmd` are debug/test surfaces only.**
-5. **Only one Brain controller may hold the execution lease at a time.**
-6. **Manager is daemon-side Browser Manager; Extension is an Adapter, not authoritative task state.**
-7. **Company/Device relationship is not hard-coded 1:1 in the data model.**
-8. **Tab is a workspace resource, not an Agent. Tasks may own multiple tabs.**
-9. **Newborn Brain is blank in experience/personality, not blank in foundational schemas.**
-10. **Knowledge, Personality/Habit, and Motor are separate models.**
-11. **Human data and Agent data remain separate. Agent output never becomes Human ground truth automatically.**
-12. **Page execution remains audited HUMAN_MOTOR CDP input only; content scripts remain READ/OBSERVE only.**
-13. **BODY contains physical HOW, not high-level goals or personality.**
-14. **Autonomy is capability-specific and evidence-based.**
-15. **Network/Environment/Participation scores do not unlock Brain autonomy.**
-16. **Environment Guardian observes/reports/quarantines; it does not hide or manipulate the environment to evade checks.**
-17. **Raw Human learning is local-first. Central receives summaries, not unnecessary raw personal interaction data.**
-18. **YouTube is the first reference platform. Do not expand platforms before the local loop is proven.**
-19. **Full Central Task Router is blocked until Phase 10 local maturity gate passes.**
-20. **No duplicate per-platform motor implementation; platforms adapt semantics above the common BODY.**
+## Gate H — Human Override before higher autonomy
+
+Human must be able to reclaim control before Level 3/4 autonomy is enabled.
+
+## Gate I — Policy before distributed interaction
+
+No distributed task may bypass local/network policy checks.
 
 ---
 
-# 16. Decision Rule for Future Changes
+# 20. Permanent Guardrails
 
-Before implementing a major feature, answer:
-
-```text
-Which phase does this belong to?
-What exit criterion does it satisfy?
-Does it preserve the permanent guardrails?
-Does it introduce responsibility into the wrong layer?
-Does it create a second execution/control path?
-Does it depend on a later phase that has not passed its gate?
-```
-
-If a feature cannot answer those questions, it should not be merged yet.
+1. Human is the highest local authority.
+2. Central manages the network; it does not directly control Chrome.
+3. Brain uses structured contracts, not free-form CMD text as the control plane.
+4. `daemon.cmd` is Body Runtime; CMD input is diagnostic/test only.
+5. Only one Brain may hold the Body controller lease at a time.
+6. Browser Manager is daemon-side authoritative state; Extension is an Adapter.
+7. Company and Device are separate identities even if initial deployment is 1:1.
+8. Tab is a TaskWorkspace resource, not an Agent.
+9. Knowledge, Personality/Habit, Motor and Evidence are separate models.
+10. Human data and Agent data stay separate.
+11. BODY does not contain Personality.
+12. Brain does not contain low-level Motor generation.
+13. Raw evidence is not the Director Brain API.
+14. Analyst inference does not overwrite Human fact.
+15. Offline/small Analyst has no execution authority.
+16. Autonomy is per capability, never globally unlocked.
+17. Network Score does not unlock autonomy.
+18. Analyst/model confidence does not unlock autonomy.
+19. Raw Human learning stays local-first by default.
+20. Central receives summaries/evidence, not raw sensitive Human streams.
+21. Browser quarantine should isolate the bad Browser before the whole Company.
+22. No environment/fingerprint/proxy/VPN concealment or detector evasion.
+23. YouTube remains the reference platform until end-to-end maturity.
+24. Full Central Task Router comes after Mature Local Company proof.
+25. New platforms reuse Manager/BODY architecture rather than forking motor systems.
+26. Distributed content work must pass policy gates.
+27. Coordinated fake engagement, metric manipulation and stealth impersonation are out of scope.
 
 ---
 
-# 17. Immediate Next Target
+# 21. Current Priority
 
-The next architectural target after BODY stabilization is:
+Current project priority is **not** to build the largest possible Brain.
+
+The priority is:
 
 ```text
-PHASE 2 — LOCAL IDENTITY
-        ↓
-PHASE 3 — BROWSER MANAGER + TASK WORKSPACE
-        ↓
-PHASE 4 — ENVIRONMENT GUARDIAN MVP
-        ↓
-PHASE 5 — SEMANTIC OBSERVATION
-        ↓
-PHASE 6 — NEWBORN BRAIN
+1. stabilize BODY
+2. establish Local Identity
+3. establish Browser Manager + TaskWorkspace
+4. establish Environment Guardian
+5. create reliable Raw/Semantic Observation
+6. build Data Factory + Offline Analyst
+7. produce Brain-Ready Semantic Memory
+8. only then build Newborn Director Brain
 ```
 
-Do **not** jump directly from the current BODY to a full Central network or a fully autonomous Brain.
+The near-term proof target is:
 
-The near-term success condition is not “many Agents online”. It is:
+```text
+Human performs a YouTube capability
+-> system records immutable evidence
+-> deterministic processor compresses raw events
+-> Offline Analyst labels semantic candidates
+-> Experience Compiler creates Brain-ready record
+-> Director Brain retrieves the correct Situation Pack
+-> Brain understands the demonstration without reading raw logs
+```
 
-> **One Local Company can identify its browsers, observe a Human, represent a semantic demonstration, let a Brain reason over it, execute through BODY, observe the effect, and preserve Human authority.**
+That proof is the foundation for later autonomous reasoning, distributed task coordination and Central topic routing.
