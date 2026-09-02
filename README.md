@@ -3,6 +3,8 @@
 Chrome MV3 **Generic Body** for visible, auditable browser automation and user-motor learning.
 
 > **Canonical roadmap:** [ROADMAP.md](ROADMAP.md). Major architecture or sequencing changes must be reconciled with that roadmap before implementation so the project does not drift across layers or skip required maturity gates.
+>
+> **Canonical Brain data contract:** [BRAIN_DATA_CONTRACT.md](BRAIN_DATA_CONTRACT.md). The Data Factory / Offline Analyst produces evidence and candidates; the Context Builder produces a versioned Situation Pack; the Director Brain consumes the Pack and writes separate Agent feedback.
 
 ## Product direction
 
@@ -193,7 +195,7 @@ body.cmd "browsernewtab"
 
 When Brain is attached, write/test commands above are intentionally blocked; read-only diagnostics such as `status`, `extensions`, `tabs`, `dataset`, and `model` remain available.
 
-`npm run verify` checks the canonical planner, CDP allowlist/failure rollback, DOM read-only contract, recorder optimization, page ObservedEffect, per-site/HUMAN-only learning, linear bootstrap, keyboard encoding, buffered persistence/backpressure, local auth, exclusive Brain controller lease, semantic Browser UI, and extension build. CI also checks Python helper syntax.
+`npm run verify` checks the canonical planner, CDP allowlist/failure rollback, DOM read-only contract, recorder optimization, page ObservedEffect, per-site/HUMAN-only learning, linear bootstrap, keyboard encoding, buffered persistence/backpressure, Brain-ready data contract invariants, local auth, exclusive Brain controller lease, semantic Browser UI, and extension build. CI also checks Python helper syntax.
 
 ## Deferred intentionally
 

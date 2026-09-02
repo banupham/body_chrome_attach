@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://body.local/contracts/brain-data/v1/brain-feedback-record.schema.json",
+  "title": "BrainFeedbackRecord v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["feedbackVersion", "feedbackId", "decisionId", "packId", "source", "consumedRecordIds", "decision", "result", "createdAt"],
+  "properties": {
+    "feedbackVersion": {"const": "1.0"},
+    "feedbackId": {"type": "string", "minLength": 1},
+    "decisionId": {"type": "string", "minLength": 1},
+    "packId": {"type": "string", "minLength": 1},
+    "source": {"const": "agent"},
+    "consumedRecordIds": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {"enum": ["EXECUTE", "WAIT", "REQUEST_EVIDENCE", "REPLAN", "REJECT"]},
+        "selectedCapability": {"type": ["string", "null"]},
+        "selectedStrategy": {"type": ["string", "null"]},
+        "reasonCode": {"type": "string"}
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["delivered", "verified", "taskSuccess"],
+      "properties": {
+        "delivered": {"type": ["boolean", "null"]},
+        "verified": {"type": ["boolean", "null"]},
+        "taskSuccess": {"type": ["boolean", "null"]},
+        "observedEffectRef": {"type": ["string", "null"]},
+        "errorCode": {"type": ["string", "null"]}
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "companyId": {"type": "string"},
+        "deviceId": {"type": "string"},
+        "browserInstanceId": {"type": "string"},
+        "taskId": {"type": "string"},
+        "workspaceId": {"type": "string"}
+      }
+    },
+    "createdAt": {"type": "string", "format": "date-time"}
+  }
+}

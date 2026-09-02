@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://body.local/contracts/brain-data/v1/brain-ready-record.schema.json",
+  "title": "BrainReadyRecord v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "recordType", "recordId", "recordClass", "producer", "scope", "provenance", "facts", "inferences", "semantic", "quality", "createdAt"],
+  "properties": {
+    "schemaVersion": {"const": "1.0"},
+    "recordType": {"const": "brain_ready_record"},
+    "recordId": {"type": "string", "minLength": 1},
+    "recordClass": {
+      "enum": ["demonstration", "pattern", "habit_candidate", "capability_candidate", "content_semantic", "effect_evidence", "knowledge_candidate"]
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {"enum": ["deterministic_processor", "offline_analyst", "semantic_compiler"]},
+        "id": {"type": "string", "minLength": 1},
+        "model": {"type": "string"},
+        "modelVersion": {"type": "string"}
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["companyId", "deviceId"],
+      "properties": {
+        "companyId": {"type": "string", "minLength": 1},
+        "deviceId": {"type": "string", "minLength": 1},
+        "browserInstanceId": {"type": "string"},
+        "extensionInstanceId": {"type": "string"},
+        "platform": {"type": "string"},
+        "channelId": {"type": "string"},
+        "taskId": {"type": "string"},
+        "workspaceId": {"type": "string"}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "rawEvidenceRefs", "derivedFrom", "immutable"],
+      "properties": {
+        "source": {"enum": ["human", "agent", "system", "external"]},
+        "sessionId": {"type": "string"},
+        "rawEvidenceRefs": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "derivedFrom": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "immutable": {"const": true}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"source": {"const": "human"}}, "required": ["source"]},
+          "then": {"properties": {"rawEvidenceRefs": {"minItems": 1}}}
+        }
+      ]
+    },
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "value", "evidenceRefs"],
+        "properties": {
+          "type": {"type": "string", "minLength": 1},
+          "value": {},
+          "evidenceRefs": {"type": "array", "items": {"type": "string"}, "minItems": 1, "uniqueItems": true}
+        }
+      }
+    },
+    "inferences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "value", "confidence", "method", "evidenceRefs"],
+        "properties": {
+          "type": {"type": "string", "minLength": 1},
+          "value": {},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "method": {"type": "string", "minLength": 1},
+          "evidenceRefs": {"type": "array", "items": {"type": "string"}, "minItems": 1, "uniqueItems": true}
+        }
+      }
+    },
+    "semantic": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "situation": {"type": "object", "additionalProperties": true},
+        "capabilityCandidate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "confidence"],
+          "properties": {
+            "name": {"type": "string", "minLength": 1},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+          }
+        },
+        "strategyCandidate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "steps", "confidence"],
+          "properties": {
+            "id": {"type": "string", "minLength": 1},
+            "steps": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+          }
+        },
+        "effect": {"type": "object", "additionalProperties": true},
+        "outcome": {"type": "object", "additionalProperties": true},
+        "topics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "confidence"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+            }
+          }
+        }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["overallConfidence", "humanSampleCount", "agentSampleCount"],
+      "properties": {
+        "overallConfidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "humanSampleCount": {"type": "integer", "minimum": 0},
+        "agentSampleCount": {"type": "integer", "minimum": 0}
+      }
+    },
+    "createdAt": {"type": "string", "format": "date-time"}
+  }
+}
