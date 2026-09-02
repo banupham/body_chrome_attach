@@ -42,7 +42,10 @@ class BodyCommandBroker {
       if (socket !== this.extension) return;
       this.extension = null;
       const error = new Error('Body extension disconnected.');
-      for (const pending of this.pending.values()) pending.reject(error);
+      for (const pending of this.pending.values()) {
+        clearTimeout(pending.timer);
+        pending.reject(error);
+      }
       this.pending.clear();
     });
   }
@@ -67,7 +70,7 @@ class BodyCommandBroker {
   }
 
   waitForExtension(timeoutMs = 8000) {
-    if (this.extension?.readyState === this.extension.OPEN) return Promise.resolve(this.extension);
+    if (this.extension?.readyState === 1) return Promise.resolve(this.extension);
     return new Promise((resolve, reject) => {
       const done = socket => {
         clearTimeout(timer);
