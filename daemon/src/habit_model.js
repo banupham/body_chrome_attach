@@ -1,8 +1,7 @@
-
 'use strict';
 
 const fs = require('node:fs');
-const path = require('node:path');
+const {SafeJsonPersistence}=require('./safe_json_persistence');
 
 function modalityOf(sample) {
   const a=String(sample?.action||'');
@@ -19,7 +18,7 @@ function targetRole(sample) {
 function nowIso(){ return new Date().toISOString(); }
 
 class HabitModel {
-  constructor(modelPath) {
+  constructor(modelPath,{persistenceOptions={}}={}) {
     this.modelPath=modelPath;
     this.state={
       version:1,
@@ -29,6 +28,7 @@ class HabitModel {
       habits:{},
       lastHumanByTab:{}
     };
+    this.persistence=new SafeJsonPersistence(this.modelPath,{getValue:()=>this.state,...persistenceOptions});
     this.load();
   }
 
@@ -38,12 +38,12 @@ class HabitModel {
     if(p?.version===1) this.state={...this.state,...p};
   }
 
-  save() {
-    fs.mkdirSync(path.dirname(this.modelPath),{recursive:true});
-    const tmp=this.modelPath+'.tmp';
-    fs.writeFileSync(tmp,JSON.stringify(this.state,null,2),'utf8');
-    fs.renameSync(tmp,this.modelPath);
+  save({immediate=false}={}) {
+    this.persistence.schedule();
+    return immediate ? this.persistence.flushSync() : this.persistence.status();
   }
+
+  flushSync(){ return this.persistence.flushSync(); }
 
   _inc(obj,key,by=1) {
     obj[key]=(obj[key]||0)+by;
@@ -167,7 +167,8 @@ class HabitModel {
       updatedAt:this.state.updatedAt,
       habitCount:Object.keys(this.state.habits).length,
       transitionCount:Object.keys(this.state.transitions).length,
-      habits:this.state.habits
+      habits:this.state.habits,
+      persistence:this.persistence.status()
     };
   }
 }

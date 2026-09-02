@@ -1,8 +1,7 @@
-
 'use strict';
 
 const fs = require('node:fs');
-const path = require('node:path');
+const {SafeJsonPersistence}=require('./safe_json_persistence');
 
 function distanceBucket(d) {
   if (!Number.isFinite(Number(d))) return 'unknown';
@@ -49,11 +48,12 @@ function normalizePath(points, start, end) {
 }
 
 class OnlineBehaviorModel {
-  constructor(modelPath, {maxTemplatesPerGroup=240}={}) {
+  constructor(modelPath, {maxTemplatesPerGroup=240,persistenceOptions={}}={}) {
     this.modelPath=modelPath;
     this.maxTemplatesPerGroup=maxTemplatesPerGroup;
     this.model={version:1,revision:0,updatedAt:null,groups:{}};
     this.selectionCursor={};
+    this.persistence=new SafeJsonPersistence(this.modelPath,{getValue:()=>this.model,...persistenceOptions});
     this.load();
   }
 
@@ -63,16 +63,16 @@ class OnlineBehaviorModel {
     if (parsed?.version===1 && parsed?.groups) this.model=parsed;
   }
 
-  save() {
-    fs.mkdirSync(path.dirname(this.modelPath),{recursive:true});
-    const tmp=this.modelPath+'.tmp';
-    fs.writeFileSync(tmp,JSON.stringify(this.model,null,2),'utf8');
-    fs.renameSync(tmp,this.modelPath);
+  save({immediate=false}={}) {
+    this.persistence.schedule();
+    return immediate ? this.persistence.flushSync() : this.persistence.status();
   }
+
+  flushSync() { return this.persistence.flushSync(); }
 
   clear() {
     this.model={version:1,revision:0,updatedAt:null,groups:{}};
-    this.save();
+    this.save({immediate:true});
   }
 
   _push(groupKey, template) {
@@ -214,14 +214,14 @@ class OnlineBehaviorModel {
         if(item) this._push(item.groupKey,item.template);
       }
     }
-    this.save();
+    this.save({immediate:true});
   }
 
   stats() {
     const groups={};
     let total=0;
     for(const [k,v] of Object.entries(this.model.groups)) { groups[k]=v.length; total+=v.length; }
-    return {revision:this.model.revision,updatedAt:this.model.updatedAt,totalTemplates:total,groups};
+    return {revision:this.model.revision,updatedAt:this.model.updatedAt,totalTemplates:total,groups,persistence:this.persistence.status()};
   }
 }
 

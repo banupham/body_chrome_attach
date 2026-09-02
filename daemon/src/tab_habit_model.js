@@ -1,10 +1,10 @@
 'use strict';
 
 const fs=require('node:fs');
-const path=require('node:path');
+const {SafeJsonPersistence}=require('./safe_json_persistence');
 
 class TabHabitModel {
-  constructor(file) {
+  constructor(file,{persistenceOptions={}}={}) {
     this.file=file;
     this.state={
       version:1,
@@ -13,6 +13,7 @@ class TabHabitModel {
       transitions:{},
       lastActiveByExtension:{}
     };
+    this.persistence=new SafeJsonPersistence(this.file,{getValue:()=>this.state,...persistenceOptions});
     this.load();
   }
 
@@ -22,12 +23,12 @@ class TabHabitModel {
     if(p?.version===1) this.state={...this.state,...p};
   }
 
-  save() {
-    fs.mkdirSync(path.dirname(this.file),{recursive:true});
-    const tmp=this.file+'.tmp';
-    fs.writeFileSync(tmp,JSON.stringify(this.state,null,2),'utf8');
-    fs.renameSync(tmp,this.file);
+  save({immediate=false}={}) {
+    this.persistence.schedule();
+    return immediate ? this.persistence.flushSync() : this.persistence.status();
   }
+
+  flushSync(){ return this.persistence.flushSync(); }
 
   observe(extensionId,event) {
     if(event?.source!=='human' || event?.eventType!=='tabActivated') return false;
@@ -58,7 +59,8 @@ class TabHabitModel {
       revision:this.state.revision,
       updatedAt:this.state.updatedAt,
       transitions:this.state.transitions,
-      lastActive:last
+      lastActive:last,
+      persistence:this.persistence.status()
     };
   }
 }

@@ -1,4 +1,3 @@
-
 'use strict';
 
 const fs=require('node:fs');
@@ -146,6 +145,18 @@ class ScopedLearningManager {
     return new CascadingHabitModel(site.habit,global.habit);
   }
 
+  flushSync() {
+    const results=[];
+    for(const scope of this.cache.values()) {
+      let datasetOk=true;
+      try{scope.store.flushSync();}catch{datasetOk=false;}
+      const motor=scope.motor.flushSync();
+      const habit=scope.habit.flushSync();
+      results.push({extensionId:scope.extensionId,siteKey:scope.siteKey,datasetOk,motorOk:motor.ok,habitOk:habit.ok});
+    }
+    return results;
+  }
+
   rebuild(extensionId,siteKey='__global__') {
     if(siteKey==='*') {
       const extDir=path.join(this.baseDir,safeSegment(extensionId,'extension'));
@@ -169,6 +180,7 @@ class ScopedLearningManager {
       lastHumanByTab:{}
     };
     for(const s of samples) scope.habit.observe(s);
+    scope.habit.flushSync();
 
     return {
       extensionId:String(extensionId),

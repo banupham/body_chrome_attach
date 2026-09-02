@@ -127,7 +127,10 @@ wss.on('connection',(ws,request)=>{
   });
 });
 
-function flushStores(){for(const scope of runtime.learning.cache.values()){try{scope.store.flushSync();}catch{}}}
+function flushStores(){
+  try{runtime.learning.flushSync();}catch{}
+  try{runtime.tabHabit.flushSync();}catch{}
+}
 process.once('SIGINT',()=>{flushStores();process.exit(0);});
 process.once('SIGTERM',()=>{flushStores();process.exit(0);});
 process.once('exit',flushStores);
@@ -147,4 +150,4 @@ rl.on('line',async line=>{
   updatePrompt();rl.prompt();
 });
 
-module.exports={runtime,router,wss,auth,controller,handleBrainMessage,CONTROL_PROTOCOL_VERSION,EXTENSION_PROTOCOL_VERSIONS,protocolAllowed};
+module.exports={runtime,router,wss,auth,controller,handleBrainMessage,CONTROL_PROTOCOL_VERSION,EXTENSION_PROTOCOL_VERSIONS,protocolAllowed,flushStores};
