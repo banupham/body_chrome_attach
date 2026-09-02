@@ -1,0 +1,13 @@
+{
+  "name": "body-chrome-attach",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone visible Chrome CDP Body extracted from extension_agent_v1.",
+  "scripts": {
+    "build": "node build.js",
+    "check": "node --check build.js && node --check src/service_worker_entry.js && node --check src/cdp_input_gateway.js && node --check src/virtual_cursor_mirror.js && node --check src/virtual_cursor_overlay.js && node --check src/virtual_cursor_content.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}
