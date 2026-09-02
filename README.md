@@ -11,7 +11,7 @@ USER mouse/keyboard
   -> content observer
   -> USER/CDP provenance classifier
   -> persistent motor learner
-  -> learned motor profile
+  -> learned motor profile + USER trajectory bank
   -> CMD/socket text command
   -> motor plan compiler
   -> CDP input gateway
@@ -36,20 +36,52 @@ Before every approved CDP input command, the gateway publishes an expected event
 
 This is a provenance mechanism for truthful training data and operator visibility. It is not a stealth or anti-bot mechanism.
 
+## Learned mouse trajectories
+
+Mouse geometry no longer uses a randomized Bezier curve.
+
+When a real USER mouse episode ends in a click, the learner stores the observed path as normalized local coordinates:
+
+```text
+u = progress along the direct start -> target axis
+v = perpendicular offset from that axis
+t = normalized elapsed time
+```
+
+The profile keeps up to 64 recent USER trajectory templates, with up to 64 normalized points per template. On a later Body mouse action, the motor compiler selects a learned template in sequence and maps it to the new start/target by rotation, scaling, and time re-parameterization.
+
+```text
+recorded USER shape
+       |
+       v
+normalized (u,v,t)
+       |
+       +-- rotate to new direction
+       +-- scale to new distance
+       +-- scale timing to learned speed
+       v
+CDP mouseMoved points
+```
+
+There is no synthetic random curvature, random bend direction, or random micro-correction in mouse geometry. The variety comes from actual USER trajectory samples. If no USER trajectory has been learned yet, the Body uses a visible straight-line bootstrap path rather than inventing a human-looking curve.
+
+The trajectory bank is for faithful motor modeling and testing, not for concealing automation or defeating bot-detection systems.
+
 ## What is learned
 
-The persisted profile currently contains generic motor statistics only:
+The persisted profile currently contains:
 
 - mouse movement speed;
 - path/direct-distance ratio;
 - pause before click;
 - turn/correction tendency;
+- normalized USER trajectory templates;
 - mean keyboard interval;
 - p90 keyboard interval;
 - backspace rate;
 - submit preference: click vs Enter.
 
-Raw recent USER events are kept only in the service-worker in-memory buffer; the aggregate profile is persisted in `chrome.storage.local`.
+Raw recent USER events are kept only in the service-worker in-memory buffer. Aggregate statistics and normalized trajectory templates are persisted in `chrome.storage.local`.
 
 For submit learning, the content script records only generic form context (`tag`, `role`, `inputType`, `formContext`, `isSubmitControl`). It does not persist form values or typed text into the learned profile.
 
