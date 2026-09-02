@@ -29,7 +29,7 @@ function protocolAllowed(role,version){const v=Number(version);return role==='ex
 async function handleBrainMessage(ws,msg){
   let result,type;
   if(msg.type==='BODY_STATUS'){
-    result={controller:controller.status(),extensions:runtime.registry.list(),recordingEnabled:runtime.recordingEnabled,learningEnabled:runtime.learningEnabled};type='BODY_STATUS_RESULT';
+    result={controller:controller.status(),extensions:runtime.registry.list(),recordingEnabled:runtime.recordingEnabled,learningEnabled:runtime.learningEnabled,execution:runtime.execution.status()};type='BODY_STATUS_RESULT';
   }else if(msg.type==='EXTENSIONS_LIST'){
     result=runtime.registry.list();type='EXTENSIONS_LIST_RESULT';
   }else if(msg.type==='TABS_LIST'){
@@ -121,15 +121,18 @@ wss.on('connection',(ws,request)=>{
 
   ws.on('close',()=>{
     const extId=runtime.registry.unregisterSocket(ws);
-    if(extId){printAsync(`[OFFLINE] extension=${extId}`);updatePrompt();brainSend('BODY_EVENT',{event:{eventType:'extensionOffline',extensionId:extId,ts:Date.now()}});}
+    if(extId){
+      const cleanup=runtime.extensionOffline(extId);
+      printAsync(`[OFFLINE] extension=${extId} rejectedPending=${cleanup.rejectedPending} flushedSegments=${cleanup.emitted}`);
+      updatePrompt();brainSend('BODY_EVENT',{event:{eventType:'extensionOffline',extensionId:extId,ts:Date.now()}});
+    }
     if(controller.detachSocket(ws))printAsync('[BRAIN] controller detached; Body continues observing/learning.');
     debugClients.delete(ws);
   });
 });
 
 function flushStores(){
-  try{runtime.learning.flushSync();}catch{}
-  try{runtime.tabHabit.flushSync();}catch{}
+  try{return runtime.flushSync();}catch{return null;}
 }
 process.once('SIGINT',()=>{flushStores();process.exit(0);});
 process.once('SIGTERM',()=>{flushStores();process.exit(0);});

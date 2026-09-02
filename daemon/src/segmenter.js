@@ -99,17 +99,21 @@ class HumanActionSegmenter {
     s.typing.events.push({type:e.eventType,t:e.ts - s.typing.startedAt,keyClass:e.keyClass || 'unknown'});
     clearTimeout(s.typingTimer);
     s.typingTimer = setTimeout(() => this._flushTyping(tabId, s), 1000);
+    s.typingTimer.unref?.();
   }
 
   _flushTyping(tabId, s) {
-    if (!s.typing || !s.typing.events.length) { s.typing = null; return; }
-    const downs = s.typing.events.filter(x => x.type === 'keydown');
-    if (downs.length >= 2) {
-      this.onSample({source:'human',action:'typeText',tabId,context:{target_role:s.typing.target?.role || null,target_tag:s.typing.target?.tag || null,target_rect:s.typing.target?.rect || null,target_editable:s.typing.target?.editable === true},key_events:s.typing.events});
-    }
-    s.typing = null;
     clearTimeout(s.typingTimer);
     s.typingTimer = null;
+    if (!s.typing || !s.typing.events.length) { s.typing = null; return false; }
+    const downs = s.typing.events.filter(x => x.type === 'keydown');
+    let emitted=false;
+    if (downs.length >= 2) {
+      this.onSample({source:'human',action:'typeText',tabId,context:{target_role:s.typing.target?.role || null,target_tag:s.typing.target?.tag || null,target_rect:s.typing.target?.rect || null,target_editable:s.typing.target?.editable === true},key_events:s.typing.events});
+      emitted=true;
+    }
+    s.typing = null;
+    return emitted;
   }
 
   _scroll(tabId, s, e) {
@@ -121,18 +125,51 @@ class HumanActionSegmenter {
     s.scroll.events.push({t:e.ts - s.scroll.startedAt,deltaX:e.deltaX,deltaY:e.deltaY,x:e.x,y:e.y});
     clearTimeout(s.scrollTimer);
     s.scrollTimer = setTimeout(() => this._flushScroll(tabId, s), 260);
+    s.scrollTimer.unref?.();
   }
 
   _flushScroll(tabId, s) {
-    if (!s.scroll || !s.scroll.events.length) { s.scroll = null; return; }
-    const sumX = s.scroll.events.reduce((a,x) => a + Number(x.deltaX||0), 0);
-    const sumY = s.scroll.events.reduce((a,x) => a + Number(x.deltaY||0), 0);
-    if (Math.abs(sumX) + Math.abs(sumY) >= 1) {
-      this.onSample({source:'human',action:Math.abs(sumX) > Math.abs(sumY) ? 'scrollHorizontal' : 'scrollVertical',tabId,deltaX:sumX,deltaY:sumY,wheel_events:s.scroll.events,context:{target_role:s.scroll.target?.role || null,target_tag:s.scroll.target?.tag || null,target_rect:s.scroll.target?.rect || null}});
-    }
-    s.scroll = null;
     clearTimeout(s.scrollTimer);
     s.scrollTimer = null;
+    if (!s.scroll || !s.scroll.events.length) { s.scroll = null; return false; }
+    const sumX = s.scroll.events.reduce((a,x) => a + Number(x.deltaX||0), 0);
+    const sumY = s.scroll.events.reduce((a,x) => a + Number(x.deltaY||0), 0);
+    let emitted=false;
+    if (Math.abs(sumX) + Math.abs(sumY) >= 1) {
+      this.onSample({source:'human',action:Math.abs(sumX) > Math.abs(sumY) ? 'scrollHorizontal' : 'scrollVertical',tabId,deltaX:sumX,deltaY:sumY,wheel_events:s.scroll.events,context:{target_role:s.scroll.target?.role || null,target_tag:s.scroll.target?.tag || null,target_rect:s.scroll.target?.rect || null}});
+      emitted=true;
+    }
+    s.scroll = null;
+    return emitted;
+  }
+
+  flush(tabId=null) {
+    const ids=tabId===null||tabId===undefined?[...this.tabs.keys()]:[Number(tabId)];
+    let emitted=0;
+    for(const id of ids){
+      const s=this.tabs.get(id);if(!s)continue;
+      if(this._flushTyping(id,s))emitted++;
+      if(this._flushScroll(id,s))emitted++;
+    }
+    return {tabs:ids.length,emitted};
+  }
+
+  dispose(tabId=null,{flush=true}={}) {
+    const ids=tabId===null||tabId===undefined?[...this.tabs.keys()]:[Number(tabId)];
+    let emitted=0;
+    for(const id of ids){
+      const s=this.tabs.get(id);if(!s)continue;
+      if(flush){
+        if(this._flushTyping(id,s))emitted++;
+        if(this._flushScroll(id,s))emitted++;
+      }else{
+        clearTimeout(s.typingTimer);clearTimeout(s.scrollTimer);
+      }
+      s.down=null;
+      s.recentMouse=[];
+      this.tabs.delete(id);
+    }
+    return {tabs:ids.length,emitted};
   }
 }
 

@@ -135,9 +135,11 @@ class BrowserUiAdapter{
       for(const step of steps){
         const result=await this.runNativeInput(step.mode,String(step.value));
         native.push({step:publicNativeStep(step),ok:result?.ok!==false});
+        if(result?.ok===false)throw new Error('browser_ui_native_input_failed');
       }
       const kind=this.verifyKind(action);
       const {after,result}=await this.pollVerification(kind,before,Number(target.tab.id),target.extensionId);
+      const observable=kind!=='unobservable';
       return {
         commandId,
         capability:'BROWSER_UI',
@@ -145,10 +147,14 @@ class BrowserUiAdapter{
         extensionId:target.extensionId,
         tabId:Number(target.tab.id),
         delivered:true,
+        observed:true,
+        observedEffect:{kind,observable,changed:observable?result.verified:null,reason:result.reason},
         verified:result.verified,
+        taskSuccess:null,
         verification:{kind,...result},
         focus,
         native,
+        executionAudit:{nativeInputOnly:true,stepCount:native.length},
         before:{tabCount:tabCount(before),activeTabId:activeOf(before)?.id??null,windowCount:windowCount(before)},
         after:{tabCount:tabCount(after),activeTabId:activeOf(after)?.id??null,windowCount:windowCount(after)}
       };
