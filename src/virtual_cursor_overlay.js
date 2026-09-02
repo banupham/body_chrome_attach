@@ -25,6 +25,7 @@ function installVirtualCursorOverlay({ chromeApi, documentRef } = {}) {
   let lastMoveSentAt = 0;
   let userEvents = 0;
   let cdpEvents = 0;
+  let cdpFailures = 0;
   let suppressedDomEvents = 0;
   const expectedPointers = [];
   const expectedKeys = [];
@@ -68,6 +69,7 @@ function installVirtualCursorOverlay({ chromeApi, documentRef } = {}) {
         #cursor[data-state="down"] #ring{opacity:1;transform:scale(1)}
         #label{position:absolute;left:16px;top:22px;padding:3px 7px;border-radius:5px;color:#fff;font:600 10px/1.25 system-ui,sans-serif;white-space:nowrap;user-select:none;letter-spacing:.02em;background:rgba(37,99,235,.95)}
         #cursor[data-source="CDP"] #label{background:rgba(180,83,9,.96)}
+        #cursor[data-state="error"] #label{background:rgba(185,28,28,.97)}
         #cursor[data-state="key"] #label{outline:1px solid rgba(255,255,255,.35)}
         #cursor[data-state="wheel"] #label{outline:1px solid rgba(255,255,255,.35)}
       </style>
@@ -163,6 +165,27 @@ function installVirtualCursorOverlay({ chromeApi, documentRef } = {}) {
     expectedKeys.push({ ...event, expiresAt: clock() + 320 });
     if (expectedKeys.length > 96) expectedKeys.splice(0, expectedKeys.length - 96);
     applyKey(event, SOURCES.CDP);
+  }
+
+  function removeExpectedById(eventId) {
+    if (!eventId) return;
+    const pointerIndex = expectedPointers.findIndex(item => item.eventId === eventId);
+    if (pointerIndex >= 0) expectedPointers.splice(pointerIndex, 1);
+    const keyIndex = expectedKeys.findIndex(item => item.eventId === eventId);
+    if (keyIndex >= 0) expectedKeys.splice(keyIndex, 1);
+  }
+
+  function applyFailure(event) {
+    removeExpectedById(event?.eventId);
+    if (!ensure()) return false;
+    cdpFailures += 1;
+    clearTimeout(resetTimer);
+    cursor.dataset.source = SOURCES.CDP;
+    cursor.dataset.state = 'error';
+    cursor.style.display = 'block';
+    label.textContent = 'CDP · ERROR';
+    resetLabel(900);
+    return true;
   }
 
   function normalizeButton(button) {
@@ -279,6 +302,7 @@ function installVirtualCursorOverlay({ chromeApi, documentRef } = {}) {
     if (message?.scope !== VIRTUAL_CURSOR_SCOPE) return false;
     if (message.type === MESSAGE_TYPES.CDP_POINTER_EXPECTED) expectPointer(message.event);
     else if (message.type === MESSAGE_TYPES.CDP_KEY_EXPECTED) expectKey(message.event);
+    else if (message.type === MESSAGE_TYPES.CDP_INPUT_FAILED) applyFailure(message.event);
     else if (message.type === MESSAGE_TYPES.CURSOR_STATUS) {
       sendResponse({ ok: true, result: status() });
     }
@@ -292,6 +316,7 @@ function installVirtualCursorOverlay({ chromeApi, documentRef } = {}) {
       source: cursor?.dataset?.source || null,
       userEvents,
       cdpEvents,
+      cdpFailures,
       suppressedDomEvents,
       expectedPointerCount: expectedPointers.length,
       expectedKeyCount: expectedKeys.length
