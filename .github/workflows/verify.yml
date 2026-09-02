@@ -2,7 +2,7 @@ name: Verify Body Chrome Attach
 
 on:
   push:
-    branches: [main, feat/virtual-cursor-body]
+    branches: [main]
   pull_request:
 
 jobs:

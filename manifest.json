@@ -1,23 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Body Chrome Attach",
-  "version": "0.1.0",
-  "description": "Visible Chrome CDP Body with virtual cursor and user/CDP provenance tracking.",
+  "version": "0.2.0",
+  "description": "Visible Chrome CDP Body with USER/CDP provenance and learned per-site behavior daemon.",
   "minimum_chrome_version": "125",
   "permissions": ["debugger", "tabs", "activeTab", "storage"],
   "host_permissions": ["*://*/*"],
-  "background": {
-    "service_worker": "service_worker.js"
-  },
-  "content_scripts": [
-    {
-      "matches": ["*://*/*"],
-      "js": ["virtual_cursor_content.js"],
-      "run_at": "document_start",
-      "all_frames": false
-    }
-  ],
-  "action": {
-    "default_title": "Body Chrome Attach"
-  }
+  "background": {"service_worker": "service_worker.js"},
+  "content_scripts": [{"matches": ["*://*/*"], "js": ["virtual_cursor_content.js"], "run_at": "document_start", "all_frames": false}],
+  "action": {"default_title": "Body Chrome Attach"}
 }

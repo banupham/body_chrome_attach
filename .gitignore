@@ -1,0 +1,5 @@
+node_modules/
+dist/
+daemon/node_modules/
+daemon/profiles/
+*.log

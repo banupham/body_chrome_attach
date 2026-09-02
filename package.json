@@ -1,14 +1,16 @@
 {
   "name": "body-chrome-attach",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Standalone visible Chrome CDP Body extracted from extension_agent_v1.",
+  "description": "Visible Chrome CDP Body with learned per-site motor/habit daemon, multi-extension and multi-tab support.",
   "scripts": {
     "build": "node build.js",
     "cli": "node body_cli.js",
-    "test": "node tests/body_runtime_contract.js",
-    "check": "node --check build.js && node --check body_cli.js && node --check src/service_worker_entry.js && node --check src/cdp_input_gateway.js && node --check src/virtual_cursor_mirror.js && node --check src/virtual_cursor_overlay.js && node --check src/virtual_cursor_content.js && node --check src/behavior_learner.js && node --check src/body_command_parser.js && node --check src/motor_plan_compiler.js && node --check src/body_executor.js && node --check src/broker_client.js && node --check src/command_ingress.js && node --check src/command_ports.js && node --check tests/body_runtime_contract.js",
-    "verify": "npm run check && npm test && npm run build"
+    "daemon": "node daemon/server.js",
+    "test": "node tests/body_runtime_contract.js && node tests/daemon_bridge_contract.js",
+    "daemon:test": "node --test daemon/runtime_contract.js",
+    "check": "node --check build.js && node --check body_cli.js && node --check src/service_worker_entry.js && node --check src/daemon_bridge.js && node --check src/cdp_input_gateway.js && node --check src/virtual_cursor_mirror.js && node --check src/virtual_cursor_overlay.js && node --check src/virtual_cursor_content.js && node --check src/behavior_learner.js && node --check src/body_command_parser.js && node --check src/motor_plan_compiler.js && node --check src/body_executor.js && node --check tests/body_runtime_contract.js && node --check tests/daemon_bridge_contract.js && node --check daemon/server.js && node --check daemon/src/dataset_store.js && node --check daemon/src/extension_registry.js && node --check daemon/src/habit_model.js && node --check daemon/src/motor_planner.js && node --check daemon/src/online_model.js && node --check daemon/src/scoped_learning.js && node --check daemon/src/segmenter.js && node --check daemon/src/strategy_executor.js && node --check daemon/src/tab_habit_model.js && node --check daemon/runtime_contract.js",
+    "verify": "npm run check && npm test && npm run daemon:test && npm run build"
   },
   "dependencies": {
     "ws": "^8.18.0"

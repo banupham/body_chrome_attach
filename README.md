@@ -1,216 +1,269 @@
 # body_chrome_attach
 
-Standalone Chrome MV3 Body extracted and adapted from `banupham/extension_agent_v1`.
+Chrome MV3 **Generic Body** with a visible virtual cursor plus a local learned-behavior daemon.
 
-This repository keeps browser execution separate from semantic Brain logic. The Body observes real user motor behavior, learns a local motor profile, accepts text commands through CMD/WebSocket, compiles them into mouse/keyboard CDP actions, renders a visible virtual cursor, and keeps CDP-generated events out of USER training data.
+This repository combines the strongest parts of the previous GitHub Body and `learned_body_closed_loop_v3`:
 
-## Closed loop
+- Chrome CDP execution stays inside a small, auditable Body surface.
+- The visible cursor shows USER / CDP / CDP ERROR state.
+- USER and Body-generated CDP input are separated before training.
+- Real USER mouse trajectories are learned instead of generating a synthetic curved path.
+- A daemon stores long-lived datasets and models per extension and per website.
+- Multi-extension and multi-tab control are supported.
+- Typing and scroll timing sequences are learned from USER demonstrations.
+- Habit/strategy learning can choose between alternatives such as Enter vs mouse click based on observed behavior.
+- CDP execution remains restricted to `Input.dispatchMouseEvent` and `Input.dispatchKeyEvent`.
 
-```text
-USER mouse/keyboard
-  -> content observer
-  -> USER/CDP provenance classifier
-  -> persistent motor learner
-  -> learned motor profile + USER trajectory bank
-  -> CMD/socket text command
-  -> motor plan compiler
-  -> CDP input gateway
-  -> visible virtual cursor
-  -> browser
-```
+> Origin labeling and motor learning are for truthful automation/UX testing and reproducible user-behavior modeling. This project does not attempt to conceal automation or defeat bot-detection systems.
 
-CDP execution is not fed back into the USER learner. The learner only fits events classified as `USER`.
-
-## Visible virtual cursor
-
-The content script draws a cursor above the page so the operator can watch actions directly.
-
-- `USER`: real observed mouse/keyboard event with no matching pre-announced CDP event.
-- `CDP`: event issued through the Body CDP input gateway.
-- Clicks show DOWN/UP and a click ring.
-- Wheel and keyboard activity are shown in the label.
-- Failed CDP dispatch shows `CDP · ERROR` and removes the pending provenance expectation.
-- The last cursor position is retained in `sessionStorage` when available.
-
-Before every approved CDP input command, the gateway publishes an expected event to the content script. The content script matches the resulting DOM event by type/time/position and suppresses the matched event from USER learning.
-
-This is a provenance mechanism for truthful training data and operator visibility. It is not a stealth or anti-bot mechanism.
-
-## Learned mouse trajectories
-
-Mouse geometry no longer uses a randomized Bezier curve.
-
-When a real USER mouse episode ends in a click, the learner stores the observed path as normalized local coordinates:
+## Final architecture
 
 ```text
-u = progress along the direct start -> target axis
-v = perpendicular offset from that axis
-t = normalized elapsed time
+USER mouse / keyboard / wheel / tab switch
+            |
+            v
+visible content observer
+            |
+            +---- USER/CDP provenance ----> virtual cursor
+            |                                 USER / CDP / ERROR
+            v
+extension service worker
+            |
+            +---- local aggregate learner
+            |
+            +---- daemon bridge ws://127.0.0.1:8765
+                         |
+                         v
+                 learned Body daemon
+                 - extension registry
+                 - multi-tab state
+                 - per-site dataset
+                 - site + extension-global motor model
+                 - habit model
+                 - strategy selector
+                         |
+                         v
+                 HUMAN_MOTOR plan
+                         |
+                         v
+                existing CDP gateway
+                         |
+                 dispatchMouseEvent
+                 dispatchKeyEvent
+                         |
+                         v
+                      Chrome
 ```
 
-The profile keeps up to 64 recent USER trajectory templates, with up to 64 normalized points per template. On a later Body mouse action, the motor compiler selects a learned template in sequence and maps it to the new start/target by rotation, scaling, and time re-parameterization.
+## Mouse movement model
+
+Mouse geometry does **not** use a randomized Bezier or a synthetic random correction model.
+
+USER click/drag episodes are normalized relative to the start/target axis and stored as trajectory templates. The daemon groups them by context:
 
 ```text
-recorded USER shape
-       |
-       v
-normalized (u,v,t)
-       |
-       +-- rotate to new direction
-       +-- scale to new distance
-       +-- scale timing to learned speed
-       v
-CDP mouseMoved points
+mouse | action | target role | distance bucket | target-size bucket
 ```
 
-There is no synthetic random curvature, random bend direction, or random micro-correction in mouse geometry. The variety comes from actual USER trajectory samples. If no USER trajectory has been learned yet, the Body uses a visible straight-line bootstrap path rather than inventing a human-looking curve.
+A learned trajectory is mapped to a new target by rotation, scale and learned timing. Template selection is a deterministic cycle through the matching USER bank.
 
-The trajectory bank is for faithful motor modeling and testing, not for concealing automation or defeating bot-detection systems.
+When no learned trajectory exists, bootstrap movement is a visible straight line. The Body does not invent a curved "human-looking" fallback.
 
-## What is learned
+## Typing and scrolling
 
-The persisted profile currently contains:
+The daemon learns USER timing sequences:
 
-- mouse movement speed;
-- path/direct-distance ratio;
-- pause before click;
-- turn/correction tendency;
-- normalized USER trajectory templates;
-- mean keyboard interval;
-- p90 keyboard interval;
-- backspace rate;
-- submit preference: click vs Enter.
+- inter-key intervals;
+- key hold durations;
+- wheel-event ratios and gaps;
+- navigation/function-key actions.
 
-Raw recent USER events are kept only in the service-worker in-memory buffer. Aggregate statistics and normalized trajectory templates are persisted in `chrome.storage.local`.
+The motor planner keeps the more complete keyboard encoder from the GitHub Body: modifiers, Shift-required uppercase/punctuation and CDP key codes are generated without `Input.insertText`.
 
-For submit learning, the content script records only generic form context (`tag`, `role`, `inputType`, `formContext`, `isSubmitControl`). It does not persist form values or typed text into the learned profile.
+Printable key values are not persisted as dataset text. The learning dataset stores character classes/timing; control keys such as Enter/Tab/Escape are retained so habit sequences can be learned. Sensitive inputs such as password/payment/autocomplete-secret fields are redacted.
 
-## Human-motor CDP allowlist
+## Per-site and global learning
 
-Only these methods are accepted by `CdpInputGateway`:
+Learning is scoped by:
 
 ```text
-Input.dispatchMouseEvent
-Input.dispatchKeyEvent
+extensionInstanceId + siteKey
 ```
 
-No JavaScript/DOM click, form submit, `Input.insertText`, or Page navigation shortcut is used as a human-motor fallback.
+Each extension also has an `__global__` fallback model. Website-specific evidence wins when available; otherwise the daemon falls back to that extension's global model. Data from two Chrome extension instances is never mixed accidentally.
 
-## Build and verify
+Runtime data is stored under:
 
-```bash
+```text
+daemon/profiles/<extension-id>/<site>/
+  data/
+    human_events.jsonl
+    agent_events.jsonl
+    human_samples.jsonl
+  model/
+    behavior_model.json
+    habit_model.json
+```
+
+`daemon/profiles/` is runtime state and is ignored by Git.
+
+## Habit and strategy learning
+
+The daemon learns sequences such as:
+
+```text
+typeText -> Tab
+typeText -> click next editable
+typeText -> Enter
+typeText -> Escape
+```
+
+Built-in strategy commands include:
+
+```text
+focusnext x y [width height role]
+submitchoice x y [width height role]
+dismisschoice x y [width height]
+```
+
+Strategy selection uses observed per-site habit evidence with extension-global fallback. It is deterministic rather than randomized merely to create variety.
+
+## Visible cursor and provenance
+
+The original visible cursor is retained:
+
+- `USER`
+- `CDP`
+- `CDP · DOWN / UP`
+- `CDP · WHEEL`
+- `CDP · KEY ...`
+- `CDP · ERROR`
+
+Before CDP dispatch, the extension publishes an expected input marker to the content observer. Matching DOM events are suppressed from USER training. If CDP dispatch fails, the pending marker is removed and the overlay shows `CDP · ERROR`, preventing a later real USER input from being misclassified.
+
+The content script also provides read-only target context (`role`, `rect`, `editable`, `sensitive`) to the learning boundary so trajectories can be grouped by target type and size without using DOM actions as the Body.
+
+## Single primary CMD/socket transport
+
+Primary control is now the learned daemon:
+
+```text
+body.cmd / body_cli.js
+        |
+        v
+ws://127.0.0.1:8765
+        |
+        v
+daemon/server.js
+        |
+        +-- choose extension
+        +-- choose tab
+        +-- choose site model / habit
+        v
+extension daemon bridge
+        v
+CDP gateway
+```
+
+The previous `8766` broker is no longer started by the service worker.
+
+### Start
+
+Install/build once:
+
+```bat
 npm install
 npm run verify
 ```
 
-`npm run verify` runs syntax checks, the Body runtime contract, and the extension build.
+Load `dist/` from `chrome://extensions` with Developer mode enabled.
 
-Load `dist/` as an unpacked extension in `chrome://extensions`.
-
-## CMD + WebSocket transport
-
-The transport is intentionally one path:
-
-```text
-body.cmd / body_cli.js
-       |
-       v
-ws://127.0.0.1:8766
-       |
-       v
-text-only command ingress
-       |
-       v
-Body executor
-```
-
-The extension reconnects to the local socket automatically. Both runtime messages and the socket use the same command runner.
-
-One-shot Windows examples:
+Start the daemon:
 
 ```bat
-body.cmd "move 400 250"
-body.cmd "click 400 250"
-body.cmd "type hello world"
-body.cmd "press Enter"
-body.cmd "combo Control+a"
-body.cmd "scroll 500"
-body.cmd "submit 620 710"
-body.cmd "profile"
-body.cmd "status"
+daemon.cmd
 ```
 
-Interactive mode:
+Then use a second CMD window:
+
+```bat
+body.cmd "status"
+body.cmd "extensions"
+body.cmd "tabs"
+body.cmd "click 400 250 120 40 button"
+body.cmd "type 400 250 hello world"
+body.cmd "submitchoice 620 710 120 40 button"
+```
+
+Interactive client:
 
 ```bat
 body.cmd
 ```
 
-Supported commands:
+## Useful daemon commands
 
 ```text
-move <x> <y>
-click <x> <y>
-doubleclick <x> <y>
-type <text>
-press <key>
-combo <Modifier+Key>
-scroll <deltaY> [x y]
-submit [x y]
-profile
-events [limit]
-status
-attach
-detach
 help
+extensions
+use <extensionId>
+status
+
+tabs
+tab
+switch <tabId>
+
+sites
+site [tabId]
+dataset [tabId]
+model [tabId]
+habit [tabId]
+globalmodel
+train [tabId|global|all]
+
+record on|off
+learn on|off
+cursor on|off
+
+move x y
+click x y [width height role]
+doubleclick x y [width height]
+hover x y
+drag x1 y1 x2 y2
+scroll delta
+hscroll delta
+type x y text
+key Enter
+combo Control+a
+back
+forward
+reload
+
+focusnext x y [width height role]
+submitchoice x y [width height role]
+dismisschoice x y [width height]
+strategy {JSON}
+intent {JSON}
 ```
 
-## Submit behavior
+## Direct extension runtime API
 
-`submit` demonstrates the learned task-style choice requested for the Body.
-
-If a grounded submit point is supplied:
-
-```text
-submit 620 710
-```
-
-Body samples the learned `clickProbability` / `enterProbability` and may either move/click the supplied point or press Enter.
-
-If no coordinates are supplied, Body does not invent a location and falls back to Enter:
-
-```text
-submit
-```
-
-This keeps target grounding outside the Body while still letting the Body learn HOW the user typically submits.
-
-## Development runtime messages
-
-Direct text command:
+The existing direct runtime API remains available for debugging the Body itself:
 
 ```js
 chrome.runtime.sendMessage({ action: 'body.executeText', text: 'click 400 250' })
-```
-
-Direct approved CDP input for debugging:
-
-```js
-chrome.runtime.sendMessage({
-  action: 'body.cdpInput',
-  method: 'Input.dispatchMouseEvent',
-  params: { type: 'mouseMoved', x: 400, y: 250, button: 'none' }
-})
-```
-
-Inspect profile/cursor/runtime:
-
-```js
 chrome.runtime.sendMessage({ action: 'body.profile' })
 chrome.runtime.sendMessage({ action: 'body.virtualCursorStatus' })
-chrome.runtime.sendMessage({ action: 'body.getObservedUserMotor', limit: 250 })
 ```
 
-## Execution truth
+## Verification
 
-`delivered=true` means all CDP motor steps were delivered successfully. It does **not** claim the semantic task succeeded. Browser-effect verification belongs above the generic Body.
+```bat
+npm run verify
+```
+
+Verification includes JavaScript syntax checks, the original Body runtime contract, daemon bridge contract, daemon multi-extension/multi-tab/per-site/habit/strategy tests, deterministic trajectory selection, linear bootstrap, learned typing + Shift/punctuation, and extension build.
+
+## Branch policy
+
+`main` is the working branch for this repository. Do not accumulate feature branches after their changes have been integrated.

@@ -4,12 +4,13 @@ const { CdpInputGateway } = require('./cdp_input_gateway');
 const { BehaviorLearner } = require('./behavior_learner');
 const { BodyExecutor } = require('./body_executor');
 const { parseBodyCommand } = require('./body_command_parser');
-const { createCommandPorts } = require('./command_ports');
+const { DaemonBridge } = require('./daemon_bridge');
 const { VIRTUAL_CURSOR_SCOPE, MESSAGE_TYPES } = require('./virtual_cursor_protocol');
 
 const gateway = new CdpInputGateway(chrome);
 const learner = new BehaviorLearner(chrome);
 const executor = new BodyExecutor({ gateway, learner });
+const daemon = new DaemonBridge(chrome, { gateway, WebSocketImpl: WebSocket });
 const learnerReady = learner.init();
 const observedUserMotorByTab = new Map();
 const MAX_OBSERVED_EVENTS_PER_TAB = 5000;
@@ -53,20 +54,11 @@ async function runTextCommand({ text, source }) {
     return {
       source,
       commands: [
-        'move <x> <y>',
-        'click <x> <y>',
-        'doubleclick <x> <y>',
-        'type <text>',
-        'press <key>',
-        'combo <Modifier+Key>',
-        'scroll <deltaY> [x y]',
-        'submit [x y]',
-        'profile',
-        'events [limit]',
-        'status',
-        'attach',
-        'detach'
-      ]
+        'move <x> <y>', 'click <x> <y>', 'doubleclick <x> <y>', 'type <text>',
+        'press <key>', 'combo <Modifier+Key>', 'scroll <deltaY> [x y]', 'submit [x y]',
+        'profile', 'events [limit]', 'status', 'attach', 'detach'
+      ],
+      note: 'For multi-extension, multi-tab, per-site learning and strategy commands use the daemon socket/CMD on ws://127.0.0.1:8765.'
     };
   }
   if (command.type === 'profile') return { source, tabId, profile: learner.snapshot() };
@@ -74,25 +66,14 @@ async function runTextCommand({ text, source }) {
   if (command.type === 'attach') return { source, tabId, ...(await gateway.attach(tabId)) };
   if (command.type === 'detach') return { source, tabId, ...(await gateway.detach(tabId)) };
   if (command.type === 'status') {
-    return {
-      source,
-      tabId,
-      profile: learner.snapshot(),
-      executor: executor.status(),
-      cursor: await cursorStatus(tabId)
-    };
+    return { source, tabId, profile: learner.snapshot(), executor: executor.status(), cursor: await cursorStatus(tabId), daemon: daemon.status() };
   }
 
-  return {
-    source,
-    command,
-    execution: await executor.execute(tabId, command)
-  };
+  return { source, command, execution: await executor.execute(tabId, command) };
 }
 
 function result(sendResponse, work) {
-  Promise.resolve()
-    .then(work)
+  Promise.resolve().then(work)
     .then(value => sendResponse({ ok: true, result: value }))
     .catch(error => sendResponse({ ok: false, error: String(error?.message || error), code: error?.code || null }));
   return true;
@@ -103,6 +84,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const tabId = Number(sender?.tab?.id);
     rememberUserMotor(tabId, message.payload);
     learnerReady.then(() => learner.observe(tabId, message.payload)).catch(() => {});
+    daemon.forwardUserMotor(tabId, message.payload);
     return false;
   }
 
@@ -123,7 +105,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action === 'body.virtualCursorStatus') {
     return result(sendResponse, async () => {
       const tabId = Number.isInteger(Number(message.tabId)) ? Number(message.tabId) : await activeTabId();
-      return { tabId, gateway: gateway.status(), overlay: await cursorStatus(tabId) };
+      return { tabId, gateway: gateway.status(), overlay: await cursorStatus(tabId), daemon: daemon.status() };
     });
   }
 
@@ -134,7 +116,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
   }
 
-  if (message?.action === 'body.profile') return result(sendResponse, async () => ({ profile: learner.snapshot() }));
+  if (message?.action === 'body.profile') return result(sendResponse, async () => ({ profile: learner.snapshot(), daemon: daemon.status() }));
   return false;
 });
 
@@ -143,13 +125,7 @@ chrome.debugger.onDetach.addListener(debuggee => {
   if (Number.isInteger(tabId)) gateway.attachedTabs.delete(tabId);
 });
 
-const commandPorts = createCommandPorts({
-  chromeApi: chrome,
-  WebSocketImpl: WebSocket,
-  runCommand: runTextCommand
-});
-
 learnerReady
-  .then(() => commandPorts.start())
-  .then(status => console.log('Body Chrome Attach ready.', status))
+  .then(() => daemon.start())
+  .then(status => console.log('Body Chrome Attach ready with learned daemon bridge.', status))
   .catch(error => console.error('Body Chrome Attach startup error:', error));

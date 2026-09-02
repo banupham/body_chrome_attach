@@ -1,0 +1,19 @@
+{
+  "version": 3,
+  "url": "ws://127.0.0.1:8765",
+  "roles": ["extension", "client"],
+  "client": {
+    "hello": {"type": "HELLO", "role": "client", "protocolVersion": 3},
+    "command": {"type": "COMMAND", "requestId": "id", "command": "status"},
+    "intent": {"type": "INTENT_EXECUTE", "requestId": "id", "extensionId": "optional", "tabId": "active", "intent": {}},
+    "strategy": {"type": "STRATEGY_EXECUTE", "requestId": "id", "extensionId": "optional", "tabId": "active", "task": {}}
+  },
+  "extension": {
+    "hello": {"type": "HELLO", "role": "extension", "protocolVersion": 3},
+    "requests": ["PING", "LIST_TABS", "ACTIVE_TAB", "BODY_EXECUTE", "BODY_DETACH", "TAB_SWITCH", "RECORD_SET", "CURSOR_SET"],
+    "events": ["RECORDER_EVENT", "TAB_EVENT", "TAB_CONTEXT", "TAB_REMOVED", "KEEPALIVE"]
+  },
+  "trainingGroundTruth": "human-only",
+  "executionCapability": "HUMAN_MOTOR",
+  "allowedCdpMethods": ["Input.dispatchMouseEvent", "Input.dispatchKeyEvent"]
+}
