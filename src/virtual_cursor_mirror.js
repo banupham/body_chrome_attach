@@ -12,6 +12,7 @@ class VirtualCursorMirror {
     this.sequence = 0;
     this.pointerEvents = 0;
     this.keyEvents = 0;
+    this.failedEvents = 0;
     this.deliveryErrors = 0;
   }
 
@@ -88,11 +89,25 @@ class VirtualCursorMirror {
     return { published: false };
   }
 
+  async publishFailure(tabId, expectedResult, method, error) {
+    const expectedEvent = expectedResult?.event || null;
+    const failure = {
+      eventId: expectedEvent?.eventId || this.nextId('failed'),
+      method: String(method || ''),
+      error: String(error?.message || error || 'cdp_input_failed'),
+      at: this.now()
+    };
+    const result = await this.deliver(tabId, MESSAGE_TYPES.CDP_INPUT_FAILED, failure);
+    if (result.published) this.failedEvents += 1;
+    return result;
+  }
+
   status() {
     return {
       scope: VIRTUAL_CURSOR_SCOPE,
       pointerEvents: this.pointerEvents,
       keyEvents: this.keyEvents,
+      failedEvents: this.failedEvents,
       deliveryErrors: this.deliveryErrors
     };
   }
