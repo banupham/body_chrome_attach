@@ -3,4 +3,5 @@ dist/
 daemon/node_modules/
 daemon/profiles/
 daemon/identity/
+daemon/state/
 *.log

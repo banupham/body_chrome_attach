@@ -1,174 +1,175 @@
 # body_chrome_attach
 
-Chrome MV3 **Generic Body** for visible, auditable browser automation and user-motor learning.
+Local-first **Company Runtime** for Chrome observation, Human-only motor learning, Browser/Task management and audited BODY execution.
 
-> **Canonical roadmap:** [ROADMAP.md](ROADMAP.md). Major architecture or sequencing changes must be reconciled with that roadmap before implementation so the project does not drift across layers or skip required maturity gates.
->
-> **Canonical Brain data contract:** [BRAIN_DATA_CONTRACT.md](BRAIN_DATA_CONTRACT.md). The Data Factory / Offline Analyst produces evidence and candidates; the Context Builder produces a versioned Situation Pack; the Director Brain consumes the Pack and writes separate Agent feedback.
+> Architecture/sequencing: [ROADMAP.md](ROADMAP.md)  
+> Brain data producer/consumer contract: [BRAIN_DATA_CONTRACT.md](BRAIN_DATA_CONTRACT.md)
 
-## Product direction
+## Product model
 
-`daemon.cmd` is the **Body runtime process**, not the product's primary command interface. It stays alive to receive extension telemetry, learn user behavior, maintain Body state, and execute approved Body plans.
-
-The text prompt shown in the daemon window and `body.cmd` / `body_cli.js` are **diagnostic/test harnesses only**. They exist so the Body can be developed and smoke-tested before the real Brain is connected.
-
-The intended product architecture is one Brain taking over the Body through a structured Brain API. When Brain is attached it holds an exclusive controller lease; mutating CMD/debug commands are rejected so two controllers cannot race the browser. If Brain disconnects, Body continues observing and learning.
-
-## Core invariants
-
-- Page actions are **HUMAN_MOTOR** only: `Input.dispatchMouseEvent` and `Input.dispatchKeyEvent`.
-- Chrome browser UI actions are separate **BROWSER_UI** actions backed by Windows `SendInput`.
-- Content scripts are **READ / OBSERVE only**. DOM JavaScript actions/mutations are forbidden.
-- Only `source=human` is behavior/habit ground truth; agent events are telemetry/evaluation only.
-- Site learning is scoped by `extensionInstanceId + siteKey` with same-extension `__global__` fallback only.
-- No synthetic human-looking bootstrap. With no learned trajectory, mouse movement is linear.
-- `delivered`, `observedEffect`, `verified`, and `taskSuccess` are different concepts.
-
-## Architecture
+One Company may own multiple Devices. By default, each Device runs **one Company Runtime application**. The daemon/BODY engine, Browser Manager, Task Manager, Chrome validation, Data Factory and later Brain are modules of that same application — not separate applications per Task/Tab/Chrome.
 
 ```text
-                         BRAIN
-                           |
-                  structured Body API
-                           |
-                     exclusive lease
-                           |
-                           v
-                    Body runtime daemon
-                 ws://127.0.0.1:8765
-                   (internal transport)
-                     /           \
-                    /             \
-                   v               v
-             PAGE intent       BROWSER intent
-                   |               |
-                   v               v
-       CanonicalMotorPlanner   BrowserUiAdapter
-                   |               |
-                   v               v
-          CdpInputGateway    persistent WindowsInputWorker
-                   |               |
-        dispatchMouseEvent        SendInput
-        dispatchKeyEvent            |
-                   +-------+---------+
-                           |
-                       Observation
-                           |
-                    ObservedEffect
-                           |
-                          Brain
-
-Extension telemetry -----------------> Body runtime
-CMD prompt / body.cmd ----------------> debug/test only
+Company
+  -> Device
+       -> Company Runtime
+            -> Local Identity
+            -> Browser Manager
+            -> Task Manager / TaskWorkspace
+            -> later Environment Guardian
+            -> Daemon / BODY
+                 -> 1..N Browser Instances
+                      -> 1..N Tabs / Tasks
 ```
 
-The `:8765` socket is an internal local Body transport. It is not treated as the product's main user-facing port or as the Brain itself.
+A single Chrome/Browser Instance may have many Tabs performing different legitimate Tasks. Tabs in the same Browser sharing browser/network environment is normal.
 
-## Brain takeover contract
-
-The control protocol has three roles:
+## Current roadmap state
 
 ```text
-extension     = telemetry + execution bridge
-brain         = exclusive structured controller
-debug_client  = manual diagnostics/smoke tests
+PHASE 1 BODY CORE                              COMPLETE
+PHASE 2 LOCAL IDENTITY                         COMPLETE
+PHASE 3 BROWSER + TASK MANAGER / TASKWORKSPACE COMPLETE
+PHASE 4 ENVIRONMENT GUARDIAN / CHROME VALIDATOR NEXT
 ```
 
-Brain does **not** send free-form CMD strings. Its control surface is structured:
+## Identity
+
+Persistent local identity chain:
+
+```text
+companyId
+ -> deviceId
+    -> browserInstanceId
+       -> extensionInstanceId
+          -> platform/account/channel identity
+```
+
+Runtime identity files are local and git-ignored:
+
+```text
+daemon/identity/company.json
+daemon/identity/device.json
+daemon/identity/browsers.json
+```
+
+Chrome stores `bodyBrowserInstanceId`, `bodyDaemonExtensionInstanceId` and its paired auth token in `chrome.storage.local`. Existing v5 profiles without `bodyBrowserInstanceId` migrate to `browser-<extensionInstanceId>` so learned profile data is not silently detached.
+
+## Browser Manager
+
+`BrowserManager` is daemon-side authoritative Browser state keyed by `browserInstanceId`. `ExtensionRegistry` remains transport/connection state only.
+
+Browser states:
+
+```text
+REGISTERED
+OFFLINE
+ENV_CHECK
+ACTIVE
+BUSY
+HUMAN_CONTROL
+QUARANTINED
+ERROR
+```
+
+Environment eligibility is intentionally `PENDING_PHASE4` until the Guardian is implemented.
+
+## Task Manager / TaskWorkspace
+
+A Task owns a workspace, not an application:
+
+```text
+Task
+ -> TaskWorkspace
+      -> browserInstanceId
+      -> primaryTabId
+      -> tabIds [1..N]
+```
+
+Rules:
+
+- One Tab belongs to at most one active TaskWorkspace.
+- One Task may own multiple Tabs.
+- One Browser may host many Tasks on different Tabs.
+- Task execution cannot escape its assigned Browser or Tabs.
+- If a reconnect no longer contains an owned Tab, the Task fails instead of executing on another Tab.
+- A Task that was `RUNNING` when the daemon restarts becomes `RECOVERY_REQUIRED`; execution cannot resume blindly.
+
+Task state is persisted locally under `daemon/state/tasks.json`.
+
+## Task policy
+
+Browser eligibility and Task policy are separate gates.
+
+```text
+SAFE_AUTO
+  discovery, navigation, review/classification, metadata, internal analysis
+
+HUMAN_APPROVED
+  external interaction or unknown/unproven work requiring explicit approval
+
+RESTRICTED
+  spam, repetitive unsolicited interaction, fake engagement,
+  metric manipulation, detector evasion, fingerprint manipulation,
+  proxy/VPN concealment
+```
+
+A RESTRICTED/spam Task is rejected without automatically quarantining an otherwise healthy Browser.
+
+## Brain control protocol
+
+Production Brain control protocol is **v7**. Extension transport remains compatible with extension protocols v5/v6.
+
+Brain queries include:
 
 ```text
 BODY_STATUS
 EXTENSIONS_LIST
+BROWSERS_LIST
 TABS_LIST
+TASKS_LIST
+TASK_GET
+```
+
+Task lifecycle actions include:
+
+```text
+TASK_CREATE
+TASK_APPROVE
+TASK_START
+TASK_COMPLETE
+TASK_FAIL
+TASK_CANCEL
+```
+
+Physical Brain actions:
+
+```text
 INTENT_EXECUTE
 STRATEGY_EXECUTE
 TAB_SWITCH
 BROWSER_COMMAND
 ```
 
-Body can stream high-level `BODY_EVENT` messages such as tab/extension state changes to the connected Brain.
+require `taskId`. Task Manager resolves Browser/Extension/Tab ownership before BODY runs. Brain cannot use the production structured socket to bypass TaskWorkspace ownership.
 
-Only one Brain controller can hold the lease at a time. While Brain is connected:
+The daemon console, `body.cmd`, and `body_cli.js` remain diagnostic/test tools and may exercise low-level BODY directly while no Brain holds the exclusive controller lease.
 
-```text
-read-only debug commands  -> allowed
-mutating debug commands   -> rejected: brain_controller_active
-```
+## BODY invariants
 
-## Canonical page motor
+- Page actions use only `Input.dispatchMouseEvent` and `Input.dispatchKeyEvent`.
+- Browser UI actions use the separate Windows `SendInput` path.
+- Content scripts are READ/OBSERVE only; no DOM click/focus/value/dispatch/navigation mutations.
+- Only `source=human` may become Human behavior/habit ground truth.
+- Agent events remain telemetry/evaluation only.
+- `delivered`, `observed`, `verified`, and `taskSuccess` remain separate truths.
+- Physical work for the same Chrome is serialized through the execution lane.
 
-The old duplicate planner/executor path is removed from production. The shared page motor is:
+## Environment Guardian boundary
 
-```text
-src/page_motor_core.js
-        ^
-src/canonical_motor_planner.js
-        ^
-daemon/src/motor_planner.js   (re-export only)
-```
+Phase 4 will observe Browser/device health, environment consistency, public egress/network identity and proxy/VPN/tunnel signals according to Company policy, then ALLOW or QUARANTINE a Browser.
 
-`CanonicalMotorPlanner` rejects browser-only `back`, `forward`, and `reload`; debug aliases for those actions are routed to Browser UI.
-
-The canonical page motor retains learned USER trajectories, deterministic learned-template selection, linear bootstrap, learned typing/scroll timing, and the full Shift/modifier/punctuation encoder.
-
-## Production execution boundary
-
-The extension service worker does not expose direct production write APIs such as `body.executeText` or `body.cdpInput`.
-
-Production control is intended to be:
-
-```text
-Brain
-  -> structured Body API
-  -> Body runtime
-  -> page/browser motor
-  -> Chrome
-```
-
-Read-only runtime surfaces remain available for diagnostics:
-
-```text
-body.profile
-body.virtualCursorStatus
-body.getObservedUserMotor
-```
-
-## Recorder performance
-
-- `mousemove` no longer performs a DOM target-context lookup.
-- Target context is enriched at `mousedown` / `mouseup` and keyboard boundaries.
-- Dataset rows are buffered in RAM and written asynchronously in batches (default 100 rows or about 300 ms).
-- Under buffer pressure, coalescible mousemove rows may be replaced while boundary/key events remain queued.
-- Rebuild and shutdown paths flush pending rows before reading/exiting.
-
-## ObservedEffect
-
-Page HUMAN_MOTOR execution captures read-only state before and after a plan. Effects can report navigation, active-target, scroll, focus, and visibility changes.
-
-`verified=true` means an observable effect changed. It does **not** mean the semantic user goal was proven. `taskSuccess` remains `null` unless Brain or another higher semantic layer has sufficient goal context.
-
-## Browser UI
-
-Semantic Browser UI commands include navigation, tab/window control, omnibox/find, downloads/history/devtools, fullscreen/bookmark, and zoom controls. Browser input is delivered through one persistent Python worker per daemon process rather than spawning Python for every step. Text is sent over worker stdin JSONL and is not echoed in execution results.
-
-## Local authentication
-
-Loopback binding is not treated as authorization.
-
-Daemon creates separate credentials:
-
-```text
-daemon/profiles/.auth/brain.token   -> Brain controller
-daemon/profiles/.auth/client.token  -> debug client only
-```
-
-`body_cli.js` reads the debug token automatically. `BODY_DEBUG_TOKEN` can override it for development.
-
-Extension authentication uses trust-on-first-use pairing bound to `extensionInstanceId + runtimeExtensionId`. The paired token is stored in `chrome.storage.local`; daemon pairing metadata stores only its hash.
-
-## Visible cursor and provenance
-
-The existing audit cursor remains: USER, CDP, DOWN/UP, WHEEL, KEY, and CDP ERROR. CDP pending provenance is rolled back on dispatch failure. Browser UI tab changes are also marked agent-origin so they cannot become HUMAN tab-habit ground truth.
+It may verify/report/quarantine only. It must not spoof browser fingerprint, conceal proxy/VPN, rotate IP/identity to evade checks, modify DNS/routes to bypass policy, or interfere with detection systems.
 
 ## Install / verify
 
@@ -179,32 +180,30 @@ npm install
 npm run verify
 ```
 
-Load `dist/` from `chrome://extensions`, then start the Body runtime:
+Load `dist/` from `chrome://extensions`, then start the local Company Runtime development entrypoint:
 
 ```bat
 daemon.cmd
 ```
 
-For manual development testing only, either type commands in that daemon window or use:
+Useful read-only debug commands:
 
 ```bat
 body.cmd "status"
-body.cmd "click 400 250 120 40 button"
-body.cmd "browsernewtab"
+body.cmd "identity"
+body.cmd "browsers"
+body.cmd "tasks"
+body.cmd "taskowners"
 ```
 
-When Brain is attached, write/test commands above are intentionally blocked; read-only diagnostics such as `status`, `extensions`, `tabs`, `dataset`, and `model` remain available.
+Example debug Task creation after a Browser is connected:
 
-`npm run verify` checks the canonical planner, CDP allowlist/failure rollback, DOM read-only contract, recorder optimization, page ObservedEffect, per-site/HUMAN-only learning, linear bootstrap, keyboard encoding, buffered persistence/backpressure, Brain-ready data contract invariants, local auth, exclusive Brain controller lease, semantic Browser UI, and extension build. CI also checks Python helper syntax.
+```bat
+body.cmd "taskcreate {\"taskId\":\"demo\",\"capability\":\"youtube.search\",\"browserInstanceId\":\"browser-id\",\"primaryTabId\":123,\"tabIds\":[123]}"
+```
 
-## Deferred intentionally
-
-- Real Brain implementation / planner is external to this Body repository.
-- Windows global low-level input observer and browser-level human habit learning.
-- iframe-aware recorder/coordinate transforms.
-- Optional empirical trajectory sampling mode.
-- macOS/Linux native Browser UI backends.
+`npm run verify` runs syntax checks, Body contracts, persistence/auth contracts, Local Identity contracts, Browser/Task/TaskWorkspace policy and recovery contracts, extension contracts and the production build. CI also validates the Windows native helper syntax.
 
 ## Branch policy
 
-`main` is the working branch. Do not accumulate feature branches after changes have been integrated.
+`main` is the working branch. Keep architecture changes synchronized with `ROADMAP.md`; do not accumulate feature branches after integration.
