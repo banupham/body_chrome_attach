@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Body Chrome Attach",
-  "version": "0.4.0",
-  "description": "Audited daemon-only Chrome Body with canonical CDP page motor, buffered learning, provenance, and authenticated Browser UI controls.",
+  "version": "0.5.0",
+  "description": "Authenticated Chrome adapter with persistent Browser Instance identity for the local Company Runtime and audited BODY execution.",
   "minimum_chrome_version": "125",
   "permissions": ["debugger", "tabs", "activeTab", "storage"],
   "host_permissions": ["*://*/*"],

@@ -10,8 +10,10 @@ const {MotorPlanner}=require('./motor_planner');
 const {BrowserUiAdapter}=require('./browser_ui_adapter');
 const {createWindowsInputRunner}=require('./windows_native_input');
 const {ExecutionLane}=require('./execution_lane');
+const {LocalIdentityStore}=require('./local_identity');
 
-function createDaemonRuntime({baseDir=path.join(__dirname,'..'),printAsync=()=>{}}={}){
+function createDaemonRuntime({baseDir=path.join(__dirname,'..'),printAsync=()=>{},identityOptions={}}={}){
+  const identity=new LocalIdentityStore(baseDir,identityOptions);
   const registry=new ExtensionRegistry();
   const learning=new ScopedLearningManager(path.join(baseDir,'profiles'));
   const tabHabit=new TabHabitModel(path.join(baseDir,'profiles','_tab_habits.json'));
@@ -23,6 +25,25 @@ function createDaemonRuntime({baseDir=path.join(__dirname,'..'),printAsync=()=>{
   const segKey=(ext,tab,site)=>`${ctx(ext,tab)}/${normalizeSiteKey(site)}`;
   const send=(ws,obj)=>ws?.readyState===WebSocket.OPEN?(ws.send(JSON.stringify(obj)),true):false;
   const pnum=(v,n)=>{const x=Number(v);if(!Number.isFinite(x))throw new Error(`${n}_required`);return x;};
+
+  function registerExtensionIdentity({browserInstanceId,extensionInstanceId,runtimeExtensionId}){
+    return identity.registerBrowser({browserInstanceId,extensionInstanceId,runtimeExtensionId});
+  }
+
+  function identityForExtension(extensionId=null){
+    const item=registry.get(extensionId||null);
+    if(item?.browserInstanceId){
+      const chain=identity.identityChain(item.browserInstanceId);
+      if(chain)return chain;
+    }
+    return {
+      ...identity.snapshot(),
+      browserInstanceId:item?.browserInstanceId||null,
+      extensionInstanceId:item?.extensionInstanceId||item?.extensionId||extensionId||null,
+      runtimeExtensionId:item?.runtimeExtensionId||null,
+      platformIdentities:{}
+    };
+  }
 
   function requestExtension(extensionId,type,payload={},timeoutMs=30000){
     const ext=registry.require(extensionId),requestId=id(type.toLowerCase());
@@ -136,7 +157,7 @@ function createDaemonRuntime({baseDir=path.join(__dirname,'..'),printAsync=()=>{
       const tab=await resolveTab(extId,tabId),tid=Number(tab.id),siteKey=normalizeSiteKey(tab.siteKey||tabSites.get(ctx(extId,tid)));
       const planner=new MotorPlanner(learning.motorFor(extId,siteKey)),planned=planner.plan(intent,{pointerStart:pointers.get(ctx(extId,tid))||{x:400,y:300}}),commandId=id(intent.type||'action');
       const result=await requestExtension(extId,'BODY_EXECUTE',{commandId,tabId:tid,deadlineMs:Number(intent.deadlineMs||60000),plan:planned.plan},65000);
-      return {commandId,extensionId:extId,tabId:tid,siteKey,behaviorSource:planned.source,learnedGroup:planned.learnedGroup,learnedTemplateCount:planned.learnedTemplateCount,execution:result};
+      return {commandId,identity:identityForExtension(extId),extensionId:extId,tabId:tid,siteKey,behaviorSource:planned.source,learnedGroup:planned.learnedGroup,learnedTemplateCount:planned.learnedTemplateCount,execution:result};
     });
   }
   function history(extId,siteKey,tabId,targetRole='unknown'){
@@ -150,7 +171,7 @@ function createDaemonRuntime({baseDir=path.join(__dirname,'..'),printAsync=()=>{
       const executor=new StrategyExecutor(learning.habitFor(extId,siteKey),new MotorPlanner(learning.motorFor(extId,siteKey))),decision=executor.choose(task,history(extId,siteKey,tid,task.targetRole||task.role));
       const planned=executor.planSelected(decision,{pointerStart:pointers.get(ctx(extId,tid))||{x:400,y:300}}),commandId=id(`strategy-${planned.strategyId}`);
       const result=await requestExtension(extId,'BODY_EXECUTE',{commandId,tabId:tid,deadlineMs:Number(task.deadlineMs||60000),plan:planned.plan},65000);
-      return {commandId,extensionId:extId,tabId:tid,siteKey,habitScope:decision.scopeSource||'site',habitKey:task.habitKey,selectedStrategy:planned.strategyId,selectedModality:planned.modality,score:planned.score,habitObservations:decision.totalHabitObservations,ranking:decision.ranking.map(x=>({id:x.id,modality:x.modality,score:x.score,habitCount:x.habitCount,transitionModalityCount:x.transitionModalityCount,transitionActionCount:x.transitionActionCount})),subPlans:planned.subPlans,execution:result};
+      return {commandId,identity:identityForExtension(extId),extensionId:extId,tabId:tid,siteKey,habitScope:decision.scopeSource||'site',habitKey:task.habitKey,selectedStrategy:planned.strategyId,selectedModality:planned.modality,score:planned.score,habitObservations:decision.totalHabitObservations,ranking:decision.ranking.map(x=>({id:x.id,modality:x.modality,score:x.score,habitCount:x.habitCount,transitionModalityCount:x.transitionModalityCount,transitionActionCount:x.transitionActionCount})),subPlans:planned.subPlans,execution:result};
     });
   }
   async function switchTab(extensionId,tabId){
@@ -158,7 +179,7 @@ function createDaemonRuntime({baseDir=path.join(__dirname,'..'),printAsync=()=>{
     return execution.run(extId,{capability:'BROWSER_UI',operation:'tab_switch',tabId:Number(tabId)},async()=>{
       const tab=await resolveTab(extId,tabId),commandId=id('switch-tab');
       const result=await requestExtension(extId,'TAB_SWITCH',{commandId,tabId:Number(tab.id)});registry.activateTab(extId,Number(tab.id),{...tab,active:true,siteKey:normalizeSiteKey(result.siteKey||tab.siteKey)});
-      return {extensionId:extId,commandId,source:'agent',...result};
+      return {identity:identityForExtension(extId),extensionId:extId,commandId,source:'agent',...result};
     });
   }
   const runWindowsInput=createWindowsInputRunner({baseDir});
@@ -173,7 +194,10 @@ function createDaemonRuntime({baseDir=path.join(__dirname,'..'),printAsync=()=>{
   });
   function executeBrowserCommand(action,{extensionId=null,tabId='active',value=null}={}){
     const extId=selected(extensionId);
-    return execution.run(extId,{capability:'BROWSER_UI',operation:'browser_command',action:String(action||'unknown')},()=>browserUi.execute(action,{extensionId:extId,tabId,value}));
+    return execution.run(extId,{capability:'BROWSER_UI',operation:'browser_command',action:String(action||'unknown')},async()=>{
+      const result=await browserUi.execute(action,{extensionId:extId,tabId,value});
+      return {identity:identityForExtension(extId),...result};
+    });
   }
 
   function flushSync(){
@@ -181,11 +205,13 @@ function createDaemonRuntime({baseDir=path.join(__dirname,'..'),printAsync=()=>{
     for(const s of segmenters.values())emitted+=Number(s.flush()?.emitted||0);
     const learningResult=learning.flushSync();
     const tabHabitResult=tabHabit.flushSync();
-    return {segmenterEmitted:emitted,learning:learningResult,tabHabitOk:tabHabitResult.ok};
+    const identityResult=identity.flushSync();
+    return {segmenterEmitted:emitted,learning:learningResult,tabHabitOk:tabHabitResult.ok,identityOk:identityResult.ok};
   }
 
   return {
-    registry,learning,tabHabit,execution,pending,pointers,tabSites,id,ctx,pnum,send,requestExtension,rejectPendingForExtension,resolveResponse,selected,refreshTabs,resolveTab,
+    identity,registry,learning,tabHabit,execution,pending,pointers,tabSites,id,ctx,pnum,send,registerExtensionIdentity,identityForExtension,
+    requestExtension,rejectPendingForExtension,resolveResponse,selected,refreshTabs,resolveTab,
     recorderEvent,tabEvent,tabContext,tabRemoved,extensionOffline,disposeSegmentersForTab,disposeSegmentersForExtension,
     executeIntent,executeStrategy,switchTab,executeBrowserCommand,flushSync,
     get recordingEnabled(){return recordingEnabled;},set recordingEnabled(value){recordingEnabled=value===true;},

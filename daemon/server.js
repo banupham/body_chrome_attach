@@ -25,11 +25,18 @@ const wss=new WebSocketServer({host:'127.0.0.1',port:PORT,verifyClient:({origin}
 function rejectAuth(ws,error){runtime.send(ws,{type:'AUTH_ERROR',ok:false,error});try{ws.close(1008,'Authentication required');}catch{}}
 function brainSend(type,payload={}){if(!controller.brainSocket)return false;return runtime.send(controller.brainSocket,{type,...payload});}
 function protocolAllowed(role,version){const v=Number(version);return role==='extension'?EXTENSION_PROTOCOL_VERSIONS.has(v):v===CONTROL_PROTOCOL_VERSION;}
+function browserIdFromHello(msg){
+  const explicit=String(msg.browserInstanceId||'').trim();
+  if(explicit)return explicit;
+  const extensionId=String(msg.extensionId||'').trim();
+  if(Number(msg.protocolVersion)===5&&extensionId)return `browser-${extensionId}`;
+  return '';
+}
 
 async function handleBrainMessage(ws,msg){
   let result,type;
   if(msg.type==='BODY_STATUS'){
-    result={controller:controller.status(),extensions:runtime.registry.list(),recordingEnabled:runtime.recordingEnabled,learningEnabled:runtime.learningEnabled,execution:runtime.execution.status()};type='BODY_STATUS_RESULT';
+    result={identity:runtime.identity.snapshot(),controller:controller.status(),extensions:runtime.registry.list(),recordingEnabled:runtime.recordingEnabled,learningEnabled:runtime.learningEnabled,execution:runtime.execution.status()};type='BODY_STATUS_RESULT';
   }else if(msg.type==='EXTENSIONS_LIST'){
     result=runtime.registry.list();type='EXTENSIONS_LIST_RESULT';
   }else if(msg.type==='TABS_LIST'){
@@ -59,17 +66,22 @@ wss.on('connection',(ws,request)=>{
       if(!protocolAllowed(requestedRole,msg.protocolVersion)){rejectAuth(ws,'protocol_version_mismatch');return;}
 
       if(requestedRole==='extension'){
-        const authResult=auth.authenticateExtension({extensionId:msg.extensionId,runtimeExtensionId:msg.runtimeExtensionId,token:msg.token,origin});
+        const extId=String(msg.extensionId||'').trim();
+        const browserInstanceId=browserIdFromHello(msg);
+        if(!browserInstanceId){rejectAuth(ws,'browser_instance_id_required');return;}
+        const authResult=auth.authenticateExtension({extensionId:extId,browserInstanceId,runtimeExtensionId:msg.runtimeExtensionId,token:msg.token,origin});
         if(!authResult.ok){rejectAuth(ws,authResult.error);return;}
+        let identity;
+        try{identity=runtime.registerExtensionIdentity({browserInstanceId,extensionInstanceId:extId,runtimeExtensionId:msg.runtimeExtensionId});}
+        catch(error){if(authResult.paired)auth.forgetExtension(extId);rejectAuth(ws,String(error?.message||error));return;}
         role='extension';
-        if(authResult.paired)runtime.send(ws,{type:'AUTH_PAIRED',role:'extension',protocolVersion:Number(msg.protocolVersion),token:authResult.pairedToken});
-        const extId=String(msg.extensionId||'');
-        const item=runtime.registry.register(extId,ws,msg);
+        const item=runtime.registry.register(extId,ws,{...msg,...identity,browserInstanceId});
+        if(authResult.paired)runtime.send(ws,{type:'AUTH_PAIRED',role:'extension',protocolVersion:Number(msg.protocolVersion),token:authResult.pairedToken,identity});
         for(const t of msg.tabs||[])runtime.tabSites.set(runtime.ctx(extId,t.id),String(t.siteKey||'').toLowerCase());
-        printAsync(`[ONLINE] extension=${extId} tabs=${item.tabs.size} auth=${authResult.paired?'paired':'verified'}`);
+        printAsync(`[ONLINE] browser=${browserInstanceId} extension=${extId} tabs=${item.tabs.size} auth=${authResult.paired?'paired':'verified'}`);
         runtime.requestExtension(extId,'RECORD_SET',{enabled:runtime.recordingEnabled}).catch(()=>{});
         updatePrompt();
-        brainSend('BODY_EVENT',{event:{eventType:'extensionOnline',extensionId:extId,tabCount:item.tabs.size,ts:Date.now()}});
+        brainSend('BODY_EVENT',{event:{eventType:'extensionOnline',identity:runtime.identityForExtension(extId),extensionId:extId,browserInstanceId,tabCount:item.tabs.size,ts:Date.now()}});
         return;
       }
 
@@ -77,7 +89,7 @@ wss.on('connection',(ws,request)=>{
         if(!auth.authenticateBrain(msg.token)){rejectAuth(ws,'brain_token_invalid');return;}
         try{controller.attachBrain(ws,{controllerId:msg.controllerId||'brain'});}catch(error){rejectAuth(ws,String(error?.message||error));return;}
         role='brain';
-        runtime.send(ws,{type:'HELLO_ACK',role:'brain',protocolVersion:CONTROL_PROTOCOL_VERSION,authenticated:true,controller:controller.status()});
+        runtime.send(ws,{type:'HELLO_ACK',role:'brain',protocolVersion:CONTROL_PROTOCOL_VERSION,authenticated:true,identity:runtime.identity.snapshot(),controller:controller.status()});
         printAsync('[BRAIN] controller attached');
         return;
       }
@@ -85,7 +97,7 @@ wss.on('connection',(ws,request)=>{
       if(requestedRole==='debug_client'){
         if(!auth.authenticateDebugClient(msg.token)){rejectAuth(ws,'debug_client_token_invalid');return;}
         role='debug_client';debugClients.add(ws);
-        runtime.send(ws,{type:'HELLO_ACK',role:'debug_client',protocolVersion:CONTROL_PROTOCOL_VERSION,authenticated:true,controller:controller.status()});
+        runtime.send(ws,{type:'HELLO_ACK',role:'debug_client',protocolVersion:CONTROL_PROTOCOL_VERSION,authenticated:true,identity:runtime.identity.snapshot(),controller:controller.status()});
         return;
       }
 
@@ -97,12 +109,14 @@ wss.on('connection',(ws,request)=>{
 
     if(role==='extension'){
       const item=runtime.registry.bySocket(ws);if(!item)return;
-      const extId=item.extensionId;runtime.registry.touch(extId);
+      const extId=item.extensionId;
+      if(msg.browserInstanceId&&String(msg.browserInstanceId)!==String(item.browserInstanceId)){rejectAuth(ws,'browser_instance_scope_mismatch');return;}
+      runtime.registry.touch(extId);
       if(runtime.resolveResponse(extId,msg))return;
       if(msg.type==='RECORDER_EVENT'){runtime.recorderEvent(extId,msg);return;}
-      if(msg.type==='TAB_EVENT'){runtime.tabEvent(extId,msg.event||{});brainSend('BODY_EVENT',{event:{...msg.event,extensionId:extId}});return;}
-      if(msg.type==='TAB_CONTEXT'){runtime.tabContext(extId,msg);brainSend('BODY_EVENT',{event:{eventType:'tabContext',extensionId:extId,tabId:msg.tabId,context:msg.context,ts:Date.now()}});return;}
-      if(msg.type==='TAB_REMOVED'){runtime.tabRemoved(extId,msg.tabId);brainSend('BODY_EVENT',{event:{eventType:'tabRemoved',extensionId:extId,tabId:msg.tabId,ts:Date.now()}});return;}
+      if(msg.type==='TAB_EVENT'){runtime.tabEvent(extId,msg.event||{});brainSend('BODY_EVENT',{event:{...msg.event,identity:runtime.identityForExtension(extId),extensionId:extId,browserInstanceId:item.browserInstanceId}});return;}
+      if(msg.type==='TAB_CONTEXT'){runtime.tabContext(extId,msg);brainSend('BODY_EVENT',{event:{eventType:'tabContext',identity:runtime.identityForExtension(extId),extensionId:extId,browserInstanceId:item.browserInstanceId,tabId:msg.tabId,context:msg.context,ts:Date.now()}});return;}
+      if(msg.type==='TAB_REMOVED'){runtime.tabRemoved(extId,msg.tabId);brainSend('BODY_EVENT',{event:{eventType:'tabRemoved',identity:runtime.identityForExtension(extId),extensionId:extId,browserInstanceId:item.browserInstanceId,tabId:msg.tabId,ts:Date.now()}});return;}
       return;
     }
 
@@ -122,9 +136,10 @@ wss.on('connection',(ws,request)=>{
   ws.on('close',()=>{
     const extId=runtime.registry.unregisterSocket(ws);
     if(extId){
+      const identity=runtime.identityForExtension(extId);
       const cleanup=runtime.extensionOffline(extId);
-      printAsync(`[OFFLINE] extension=${extId} rejectedPending=${cleanup.rejectedPending} flushedSegments=${cleanup.emitted}`);
-      updatePrompt();brainSend('BODY_EVENT',{event:{eventType:'extensionOffline',extensionId:extId,ts:Date.now()}});
+      printAsync(`[OFFLINE] browser=${identity.browserInstanceId||'unknown'} extension=${extId} rejectedPending=${cleanup.rejectedPending} flushedSegments=${cleanup.emitted}`);
+      updatePrompt();brainSend('BODY_EVENT',{event:{eventType:'extensionOffline',identity,extensionId:extId,browserInstanceId:identity.browserInstanceId,ts:Date.now()}});
     }
     if(controller.detachSocket(ws))printAsync('[BRAIN] controller detached; Body continues observing/learning.');
     debugClients.delete(ws);
@@ -138,10 +153,12 @@ process.once('SIGINT',()=>{flushStores();process.exit(0);});
 process.once('SIGTERM',()=>{flushStores();process.exit(0);});
 process.once('exit',flushStores);
 
+const localIdentity=runtime.identity.snapshot();
+console.log(`Company runtime identity: company=${localIdentity.companyId} device=${localIdentity.deviceId}`);
 console.log(`Body runtime transport: ws://127.0.0.1:${PORT}`);
 console.log(`Brain auth token: ${auth.status().brainTokenPath}`);
 console.log(`Debug client token: ${auth.status().debugClientTokenPath}`);
-console.log('daemon.cmd = Body runtime. CMD input is diagnostic/test only. Brain becomes the exclusive controller when attached.');
+console.log('daemon.cmd = internal Company Runtime/Body engine. CMD input is diagnostic/test only. Browser validation and later managers remain modules of the same application.');
 
 rl=readline.createInterface({input:process.stdin,output:process.stdout,prompt:prompt()});
 rl.prompt();
@@ -153,4 +170,4 @@ rl.on('line',async line=>{
   updatePrompt();rl.prompt();
 });
 
-module.exports={runtime,router,wss,auth,controller,handleBrainMessage,CONTROL_PROTOCOL_VERSION,EXTENSION_PROTOCOL_VERSIONS,protocolAllowed,flushStores};
+module.exports={runtime,router,wss,auth,controller,handleBrainMessage,CONTROL_PROTOCOL_VERSION,EXTENSION_PROTOCOL_VERSIONS,protocolAllowed,browserIdFromHello,flushStores};

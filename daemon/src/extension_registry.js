@@ -1,4 +1,3 @@
-
 'use strict';
 
 class ExtensionRegistry {
@@ -23,6 +22,10 @@ class ExtensionRegistry {
     }
 
     const item={
+      companyId:meta.companyId||existing?.companyId||null,
+      deviceId:meta.deviceId||existing?.deviceId||null,
+      browserInstanceId:meta.browserInstanceId||existing?.browserInstanceId||null,
+      extensionInstanceId:extensionId,
       extensionId,
       ws,
       online:true,
@@ -119,9 +122,25 @@ class ExtensionRegistry {
     if(item.activeTabId===Number(tabId)) item.activeTabId=null;
   }
 
+  identity(id=null){
+    const item=this.get(id);
+    if(!item)return null;
+    return {
+      companyId:item.companyId,
+      deviceId:item.deviceId,
+      browserInstanceId:item.browserInstanceId,
+      extensionInstanceId:item.extensionInstanceId,
+      runtimeExtensionId:item.runtimeExtensionId
+    };
+  }
+
   list() {
     return [...this.items.values()]
       .map(x=>({
+        companyId:x.companyId,
+        deviceId:x.deviceId,
+        browserInstanceId:x.browserInstanceId,
+        extensionInstanceId:x.extensionInstanceId,
         extensionId:x.extensionId,
         online:x.online,
         selected:x.extensionId===this.selectedId,
@@ -129,6 +148,7 @@ class ExtensionRegistry {
         lastSeenAt:x.lastSeenAt,
         protocolVersion:x.protocolVersion,
         extensionVersion:x.extensionVersion,
+        runtimeExtensionId:x.runtimeExtensionId,
         tabCount:x.tabs.size,
         activeTabId:x.activeTabId
       }))

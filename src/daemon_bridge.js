@@ -24,11 +24,23 @@ function observedEffect(before,after){
 class DaemonBridge{
   constructor(chromeApi,{gateway,WebSocketImpl=WebSocket,url=DEFAULT_DAEMON_URL}={}){
     if(!chromeApi||!gateway)throw new Error('daemon_bridge_dependencies_required');
-    this.chrome=chromeApi;this.gateway=gateway;this.WebSocketImpl=WebSocketImpl;this.url=url;this.socket=null;this.reconnectTimer=null;this.keepaliveTimer=null;this.extensionInstanceId=null;this.authToken=null;this.recordingEnabled=true;this.cursorEnabled=true;this.expectedTabSwitch=new Map();this.expectedBrowserUi=null;this.navigationEpochByTab=new Map();this.started=false;
+    this.chrome=chromeApi;this.gateway=gateway;this.WebSocketImpl=WebSocketImpl;this.url=url;this.socket=null;this.reconnectTimer=null;this.keepaliveTimer=null;this.browserInstanceId=null;this.extensionInstanceId=null;this.authToken=null;this.recordingEnabled=true;this.cursorEnabled=true;this.expectedTabSwitch=new Map();this.expectedBrowserUi=null;this.navigationEpochByTab=new Map();this.started=false;
   }
-  async identity(){const saved=await this.chrome.storage.local.get({bodyDaemonExtensionInstanceId:null,bodyDaemonAuthToken:null});if(saved.bodyDaemonExtensionInstanceId)this.extensionInstanceId=saved.bodyDaemonExtensionInstanceId;if(saved.bodyDaemonAuthToken)this.authToken=saved.bodyDaemonAuthToken;if(!this.extensionInstanceId){this.extensionInstanceId=crypto.randomUUID();await this.chrome.storage.local.set({bodyDaemonExtensionInstanceId:this.extensionInstanceId});}return {extensionInstanceId:this.extensionInstanceId,authToken:this.authToken};}
+  async identity(){
+    const saved=await this.chrome.storage.local.get({bodyBrowserInstanceId:null,bodyDaemonExtensionInstanceId:null,bodyDaemonAuthToken:null});
+    const hadStoredExtension=Boolean(saved.bodyDaemonExtensionInstanceId);
+    if(saved.bodyBrowserInstanceId)this.browserInstanceId=saved.bodyBrowserInstanceId;
+    if(saved.bodyDaemonExtensionInstanceId)this.extensionInstanceId=saved.bodyDaemonExtensionInstanceId;
+    if(saved.bodyDaemonAuthToken)this.authToken=saved.bodyDaemonAuthToken;
+    if(!this.extensionInstanceId){this.extensionInstanceId=crypto.randomUUID();await this.chrome.storage.local.set({bodyDaemonExtensionInstanceId:this.extensionInstanceId});}
+    if(!this.browserInstanceId){
+      this.browserInstanceId=hadStoredExtension?`browser-${this.extensionInstanceId}`:`browser-${crypto.randomUUID()}`;
+      await this.chrome.storage.local.set({bodyBrowserInstanceId:this.browserInstanceId});
+    }
+    return {browserInstanceId:this.browserInstanceId,extensionInstanceId:this.extensionInstanceId,authToken:this.authToken};
+  }
   async instanceId(){await this.identity();return this.extensionInstanceId;}
-  send(obj){if(!this.socket||this.socket.readyState!==1)return false;this.socket.send(JSON.stringify({extensionId:this.extensionInstanceId,...obj}));return true;}
+  send(obj){if(!this.socket||this.socket.readyState!==1)return false;this.socket.send(JSON.stringify({browserInstanceId:this.browserInstanceId,extensionId:this.extensionInstanceId,...obj}));return true;}
   async tabSnapshot(){const tabs=await this.chrome.tabs.query({});return tabs.map(t=>({id:t.id,active:t.active,windowId:t.windowId,title:t.title||'',siteKey:siteKeyFromUrl(t.url),navigationToken:navigationToken(t.url),navigationEpoch:Number(this.navigationEpochByTab.get(Number(t.id))||0),urlScheme:(()=>{try{return new URL(t.url).protocol;}catch{return '';}})()}));}
   async start(){if(this.started)return this.status();this.started=true;await this.identity();this.installTabListeners();this.connect();return this.status();}
   connect(){
@@ -56,7 +68,7 @@ class DaemonBridge{
   }
   async setCursor(enabled){this.cursorEnabled=enabled===true;const tabs=await this.chrome.tabs.query({});await Promise.allSettled(tabs.filter(t=>/^https?:\/\//i.test(String(t.url||''))).map(t=>this.chrome.tabs.sendMessage(t.id,{action:'body.virtualCursorSet',enabled:this.cursorEnabled})));return {cursorEnabled:this.cursorEnabled};}
   async handle(msg){
-    if(msg.type==='PING')return {online:true,extensionId:this.extensionInstanceId,protocolVersion:PROTOCOL_VERSION,authenticated:Boolean(this.authToken),attachedTabs:[...this.gateway.attachedTabs],recordingEnabled:this.recordingEnabled,cursorEnabled:this.cursorEnabled};
+    if(msg.type==='PING')return {online:true,browserInstanceId:this.browserInstanceId,extensionId:this.extensionInstanceId,extensionInstanceId:this.extensionInstanceId,protocolVersion:PROTOCOL_VERSION,authenticated:Boolean(this.authToken),attachedTabs:[...this.gateway.attachedTabs],recordingEnabled:this.recordingEnabled,cursorEnabled:this.cursorEnabled};
     if(msg.type==='LIST_TABS')return this.tabSnapshot();
     if(msg.type==='ACTIVE_TAB'){const t=await this.activeTab();return {id:t.id,title:t.title||'',siteKey:siteKeyFromUrl(t.url),navigationToken:navigationToken(t.url),navigationEpoch:Number(this.navigationEpochByTab.get(Number(t.id))||0),active:t.active,windowId:t.windowId};}
     if(msg.type==='BODY_EXECUTE')return this.executePlan(msg);if(msg.type==='BODY_DETACH')return this.gateway.detach(Number(msg.tabId));if(msg.type==='RECORD_SET'){this.recordingEnabled=msg.enabled===true;return {recordingEnabled:this.recordingEnabled};}if(msg.type==='CURSOR_SET')return this.setCursor(msg.enabled===true);
@@ -79,7 +91,7 @@ class DaemonBridge{
     this.chrome.tabs.onUpdated?.addListener((tabId,changeInfo,tab)=>{if(changeInfo.url||changeInfo.title||changeInfo.status)this.navigationEpochByTab.set(Number(tabId),Number(this.navigationEpochByTab.get(Number(tabId))||0)+1);if(!changeInfo.url&&!changeInfo.title&&!changeInfo.status)return;this.send({type:'TAB_CONTEXT',tabId:Number(tabId),context:{siteKey:siteKeyFromUrl(tab.url),navigationToken:navigationToken(tab.url),navigationEpoch:Number(this.navigationEpochByTab.get(Number(tabId))||0),title:tab.title||'',windowId:tab.windowId,status:tab.status||changeInfo.status||null}});});
     this.chrome.tabs.onRemoved?.addListener(tabId=>{this.navigationEpochByTab.delete(Number(tabId));this.send({type:'TAB_REMOVED',tabId:Number(tabId)});});
   }
-  status(){return {url:this.url,started:this.started,connected:this.socket?.readyState===1,protocolVersion:PROTOCOL_VERSION,extensionInstanceId:this.extensionInstanceId,authenticated:Boolean(this.authToken),recordingEnabled:this.recordingEnabled,cursorEnabled:this.cursorEnabled};}
+  status(){return {url:this.url,started:this.started,connected:this.socket?.readyState===1,protocolVersion:PROTOCOL_VERSION,browserInstanceId:this.browserInstanceId,extensionInstanceId:this.extensionInstanceId,authenticated:Boolean(this.authToken),recordingEnabled:this.recordingEnabled,cursorEnabled:this.cursorEnabled};}
 }
 
 module.exports={DEFAULT_DAEMON_URL,PROTOCOL_VERSION,ALLOWED_METHODS,siteKeyFromUrl,navigationToken,observedEffect,DaemonBridge};

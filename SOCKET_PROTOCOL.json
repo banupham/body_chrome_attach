@@ -2,12 +2,18 @@
   "controlProtocolVersion": 6,
   "extensionProtocolCompatibility": [5, 6],
   "url": "ws://127.0.0.1:8765",
-  "transportRole": "internal Body runtime transport; not the product's primary command port",
+  "transportRole": "internal Company Runtime / Body transport; not the product's primary command port",
   "roles": ["extension", "brain", "debug_client"],
+  "identity": {
+    "local": ["companyId", "deviceId"],
+    "browser": ["browserInstanceId", "extensionInstanceId", "runtimeExtensionId"],
+    "applicationModel": "one Company Runtime application per Device by default; the daemon, Chrome validation, managers, data plane and later Brain are modules of the same application",
+    "legacyV5BrowserFallback": "browser-<extensionInstanceId> when an older v5 adapter has not persisted browserInstanceId yet"
+  },
   "authentication": {
     "brain": "256-bit local token from daemon/profiles/.auth/brain.token",
     "debugClient": "256-bit local token from daemon/profiles/.auth/client.token or BODY_DEBUG_TOKEN",
-    "extension": "trust-on-first-use pairing bound to extensionInstanceId + runtimeExtensionId; paired token stored in chrome.storage.local"
+    "extension": "trust-on-first-use pairing bound to extensionInstanceId + runtimeExtensionId and, when supplied, browserInstanceId; paired token stored in chrome.storage.local"
   },
   "controllerPolicy": {
     "brain": "exclusive controller",
@@ -38,7 +44,7 @@
     "resultTruth": "delivered, observed effect, verified and taskSuccess are separate concepts"
   },
   "extension": {
-    "hello": {"type": "HELLO", "role": "extension", "protocolVersion": "5 or 6", "token": "paired token or null on first pairing"},
+    "hello": {"type": "HELLO", "role": "extension", "protocolVersion": "5 or 6", "browserInstanceId": "persistent logical Chrome/Chrome-profile identity", "extensionId": "persistent extensionInstanceId", "token": "paired token or null on first pairing"},
     "authEvents": ["AUTH_PAIRED", "AUTH_ERROR"],
     "requests": ["PING", "LIST_TABS", "ACTIVE_TAB", "BODY_EXECUTE", "BODY_DETACH", "TAB_SWITCH", "FOCUS_WINDOW", "BROWSER_UI_END", "RECORD_SET", "CURSOR_SET"],
     "events": ["RECORDER_EVENT", "TAB_EVENT", "TAB_CONTEXT", "TAB_REMOVED", "KEEPALIVE"]

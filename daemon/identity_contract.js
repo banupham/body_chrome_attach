@@ -56,4 +56,8 @@ test('extension auth token is bound to Browser Instance when browser identity is
   const second=auth.authenticateExtension({extensionId:'ext-a',browserInstanceId:'browser-a',runtimeExtensionId:'runtime-a',token:first.pairedToken,origin:'chrome-extension://runtime-a'});
   assert.equal(second.ok,true);
   assert.equal(auth.authenticateExtension({extensionId:'ext-a',browserInstanceId:'browser-b',runtimeExtensionId:'runtime-a',token:first.pairedToken,origin:'chrome-extension://runtime-a'}).ok,false);
+  assert.equal(auth.forgetExtension('ext-a'),true);
+  const repaired=auth.authenticateExtension({extensionId:'ext-a',browserInstanceId:'browser-b',runtimeExtensionId:'runtime-a',token:null,origin:'chrome-extension://runtime-a'});
+  assert.equal(repaired.ok,true);
+  assert.equal(repaired.paired,true);
 });

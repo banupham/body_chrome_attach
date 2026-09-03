@@ -30,21 +30,31 @@ class LocalAuth{
   authenticateClient(value){return this.authenticateDebugClient(value);}
   authenticateBrain(value){return secureEqualHex(digest(value),digest(this.brainSecret));}
 
-  authenticateExtension({extensionId,runtimeExtensionId,token:presented,origin}){
-    const instance=String(extensionId||'').trim(),runtime=String(runtimeExtensionId||'').trim();
+  authenticateExtension({extensionId,browserInstanceId=null,runtimeExtensionId,token:presented,origin}){
+    const instance=String(extensionId||'').trim(),browser=String(browserInstanceId||'').trim(),runtime=String(runtimeExtensionId||'').trim();
     if(!instance||!runtime)return {ok:false,error:'extension_identity_required'};
     const expectedOrigin=`chrome-extension://${runtime}`;
     if(String(origin||'').replace(/\/$/,'')!==expectedOrigin)return {ok:false,error:'extension_origin_mismatch'};
     const record=this.extensions[instance];
     if(record){
       if(record.runtimeExtensionId!==runtime)return {ok:false,error:'extension_runtime_id_mismatch'};
+      if(record.browserInstanceId&&browser&&record.browserInstanceId!==browser)return {ok:false,error:'extension_browser_id_mismatch'};
       if(!presented||!secureEqualHex(digest(presented),record.tokenHash))return {ok:false,error:'extension_token_invalid'};
+      if(browser&&!record.browserInstanceId){record.browserInstanceId=browser;this._saveExtensions();}
       return {ok:true,paired:false};
     }
     const pairedToken=token();
-    this.extensions[instance]={runtimeExtensionId:runtime,tokenHash:digest(pairedToken),pairedAt:new Date().toISOString()};
+    this.extensions[instance]={runtimeExtensionId:runtime,browserInstanceId:browser||null,tokenHash:digest(pairedToken),pairedAt:new Date().toISOString()};
     this._saveExtensions();
     return {ok:true,paired:true,pairedToken};
+  }
+
+  forgetExtension(extensionId){
+    const id=String(extensionId||'').trim();
+    if(!id||!this.extensions[id])return false;
+    delete this.extensions[id];
+    this._saveExtensions();
+    return true;
   }
 
   status(){return {debugClientTokenPath:this.debugClientPath,brainTokenPath:this.brainPath,pairedExtensions:Object.keys(this.extensions).length};}
