@@ -1,41 +1,40 @@
 # body_chrome_attach
 
-Local-first **Company Runtime** for Chrome observation, Human-only motor learning, Browser/Task management and audited BODY execution.
+Local-first **Company Runtime** for Chrome observation, Human-only motor learning, Browser/Task management, read-only Browser environment validation and audited BODY execution.
 
-> Architecture/sequencing: [ROADMAP.md](ROADMAP.md)  
+> Canonical architecture/sequencing: [ROADMAP.md](ROADMAP.md)  
 > Brain data producer/consumer contract: [BRAIN_DATA_CONTRACT.md](BRAIN_DATA_CONTRACT.md)
 
 ## Product model
 
-One Company may own multiple Devices. By default, each Device runs **one Company Runtime application**. The daemon/BODY engine, Browser Manager, Task Manager, Chrome validation, Data Factory and later Brain are modules of that same application — not separate applications per Task/Tab/Chrome.
+One Company may own multiple Devices. By default each Device runs **one Company Runtime application**. The daemon/BODY engine, Local Identity, Browser Manager, Task Manager, Environment Guardian, Data Factory and later Brain are modules of this same application — never one app/daemon per Task, Tab or Chrome.
 
 ```text
 Company
   -> Device
-       -> Company Runtime
+       -> ONE Company Runtime
             -> Local Identity
             -> Browser Manager
             -> Task Manager / TaskWorkspace
-            -> later Environment Guardian
+            -> Environment Guardian / Chrome Validator
             -> Daemon / BODY
                  -> 1..N Browser Instances
                       -> 1..N Tabs / Tasks
 ```
 
-A single Chrome/Browser Instance may have many Tabs performing different legitimate Tasks. Tabs in the same Browser sharing browser/network environment is normal.
+A single Chrome/Browser Instance may have many Tabs performing different legitimate Tasks. Tabs in the same Browser naturally share that Browser's environment/network identity and are **not** treated as duplicate Browsers.
 
 ## Current roadmap state
 
 ```text
-PHASE 1 BODY CORE                              COMPLETE
-PHASE 2 LOCAL IDENTITY                         COMPLETE
-PHASE 3 BROWSER + TASK MANAGER / TASKWORKSPACE COMPLETE
-PHASE 4 ENVIRONMENT GUARDIAN / CHROME VALIDATOR NEXT
+PHASE 1 BODY CORE                                  COMPLETE
+PHASE 2 LOCAL IDENTITY                             COMPLETE
+PHASE 3 BROWSER + TASK MANAGER / TASKWORKSPACE    COMPLETE
+PHASE 4 ENVIRONMENT GUARDIAN / CHROME VALIDATOR   COMPLETE
+PHASE 5 SEMANTIC OBSERVATION + RAW EVIDENCE       NEXT
 ```
 
 ## Identity
-
-Persistent local identity chain:
 
 ```text
 companyId
@@ -45,7 +44,7 @@ companyId
           -> platform/account/channel identity
 ```
 
-Runtime identity files are local and git-ignored:
+Persistent local files:
 
 ```text
 daemon/identity/company.json
@@ -53,13 +52,11 @@ daemon/identity/device.json
 daemon/identity/browsers.json
 ```
 
-Chrome stores `bodyBrowserInstanceId`, `bodyDaemonExtensionInstanceId` and its paired auth token in `chrome.storage.local`. Existing v5 profiles without `bodyBrowserInstanceId` migrate to `browser-<extensionInstanceId>` so learned profile data is not silently detached.
+Chrome stores its persistent Browser/Extension identity and paired auth token in `chrome.storage.local`. Existing v5 profiles without `bodyBrowserInstanceId` migrate to `browser-<extensionInstanceId>`.
 
 ## Browser Manager
 
-`BrowserManager` is daemon-side authoritative Browser state keyed by `browserInstanceId`. `ExtensionRegistry` remains transport/connection state only.
-
-Browser states:
+`BrowserManager` is daemon-side authoritative state keyed by `browserInstanceId`; `ExtensionRegistry` is connection/transport state only.
 
 ```text
 REGISTERED
@@ -72,11 +69,9 @@ QUARANTINED
 ERROR
 ```
 
-Environment eligibility is intentionally `PENDING_PHASE4` until the Guardian is implemented.
+A Browser comes online in `ENV_CHECK`. It cannot receive Task work until the Guardian marks it Environment-eligible.
 
 ## Task Manager / TaskWorkspace
-
-A Task owns a workspace, not an application:
 
 ```text
 Task
@@ -91,15 +86,15 @@ Rules:
 - One Tab belongs to at most one active TaskWorkspace.
 - One Task may own multiple Tabs.
 - One Browser may host many Tasks on different Tabs.
-- Task execution cannot escape its assigned Browser or Tabs.
-- If a reconnect no longer contains an owned Tab, the Task fails instead of executing on another Tab.
-- A Task that was `RUNNING` when the daemon restarts becomes `RECOVERY_REQUIRED`; execution cannot resume blindly.
+- A Task cannot escape its assigned Browser/Tabs.
+- Missing owned Tabs after reconnect fail the Task rather than moving it elsewhere.
+- A Task that was RUNNING when daemon restarts becomes `RECOVERY_REQUIRED`.
 
-Task state is persisted locally under `daemon/state/tasks.json`.
+Task state is local at `daemon/state/tasks.json`.
 
 ## Task policy
 
-Browser eligibility and Task policy are separate gates.
+Browser eligibility and Task eligibility are separate gates.
 
 ```text
 SAFE_AUTO
@@ -114,13 +109,98 @@ RESTRICTED
   proxy/VPN concealment
 ```
 
-A RESTRICTED/spam Task is rejected without automatically quarantining an otherwise healthy Browser.
+A spam/RESTRICTED Task is rejected without automatically quarantining a healthy Browser.
+
+## Environment Guardian / Chrome Validator
+
+Phase 4 is **read-only and fail-closed**.
+
+Browser flow:
+
+```text
+Browser online
+ -> ENV_CHECK
+ -> read environment evidence
+ -> evaluate Company policy
+ -> ACTIVE        when eligible
+ -> QUARANTINED   when ineligible
+```
+
+The Guardian observes per **Browser Instance**, never per Tab. Therefore 10 Tabs in one Chrome still produce one Browser eligibility decision.
+
+Current evidence includes:
+
+```text
+browser-visible environment signature (stored as SHA-256 hash)
+public egress IP observed through that Chrome
+Chrome proxy mode (read-only chrome.proxy.settings.get)
+device proxy environment-variable presence
+Windows WinINet / WinHTTP proxy presence (read-only query/show commands)
+VPN/tunnel interface-name signals
+extension/environment probe availability
+```
+
+Default Company policy:
+
+```text
+BODY_ENV_DIRECT_ONLY=true
+BODY_ENV_REQUIRE_UNIQUE_PUBLIC_IP=true
+BODY_ENV_REQUIRE_UNIQUE_SIGNATURE=true
+BODY_ENV_STRICT_CONSISTENCY=false
+BODY_ENV_OBSERVATION_TTL_MS=300000
+BODY_PUBLIC_IP_ENDPOINT=https://api.ipify.org?format=json
+```
+
+Meaning by default:
+
+- Proxy/VPN/tunnel signals make the Browser ineligible under DIRECT_ONLY.
+- Two **different Browser Instances** with the same observed public egress are quarantined while both are online.
+- Two different Browser Instances with the same browser-visible environment signature are quarantined while both are online.
+- Tabs of the **same Browser Instance** sharing those values are normal.
+- If one duplicate Browser goes offline, remaining online Browsers are re-evaluated.
+
+`BODY_PUBLIC_IP_ENDPOINT` must be HTTPS. The request uses `credentials: omit`; only the resulting public IP/provider evidence is stored locally.
+
+Environment state is local at:
+
+```text
+daemon/state/environment.json
+```
+
+Raw browser environment fields are not persisted; only the signature hash and evidence flags are stored.
+
+### Guardian safety boundary
+
+The Guardian can only:
+
+```text
+OBSERVE
+DETECT
+SCORE/EVALUATE
+REPORT
+ALLOW
+QUARANTINE
+```
+
+It has **no** code path to:
+
+```text
+set/clear Chrome proxy
+change Windows proxy
+turn VPN on/off
+change route/DNS/IP
+spoof/change browser fingerprint
+hide proxy/VPN
+evade anti-bot/detection systems
+```
+
+VPN detection in this MVP is evidence-based/heuristic (for example tunnel interface names), not a claim of perfect VPN classification.
 
 ## Brain control protocol
 
 Production Brain control protocol is **v7**. Extension transport remains compatible with extension protocols v5/v6.
 
-Brain queries include:
+Brain can query:
 
 ```text
 BODY_STATUS
@@ -129,20 +209,18 @@ BROWSERS_LIST
 TABS_LIST
 TASKS_LIST
 TASK_GET
+ENVIRONMENT_STATUS
 ```
 
-Task lifecycle actions include:
+Manager actions include:
 
 ```text
-TASK_CREATE
-TASK_APPROVE
-TASK_START
-TASK_COMPLETE
-TASK_FAIL
-TASK_CANCEL
+TASK_CREATE / APPROVE / START / COMPLETE / FAIL / CANCEL
+ENVIRONMENT_PROBE
+ENVIRONMENT_PROBE_ALL
 ```
 
-Physical Brain actions:
+Physical actions:
 
 ```text
 INTENT_EXECUTE
@@ -151,25 +229,19 @@ TAB_SWITCH
 BROWSER_COMMAND
 ```
 
-require `taskId`. Task Manager resolves Browser/Extension/Tab ownership before BODY runs. Brain cannot use the production structured socket to bypass TaskWorkspace ownership.
+require `taskId`. Task Manager resolves Browser/Extension/Tab ownership, and Browser environment eligibility is checked before BODY execution.
 
-The daemon console, `body.cmd`, and `body_cli.js` remain diagnostic/test tools and may exercise low-level BODY directly while no Brain holds the exclusive controller lease.
+The daemon console and `body.cmd` remain diagnostic/test paths, not production Brain control.
 
 ## BODY invariants
 
 - Page actions use only `Input.dispatchMouseEvent` and `Input.dispatchKeyEvent`.
 - Browser UI actions use the separate Windows `SendInput` path.
-- Content scripts are READ/OBSERVE only; no DOM click/focus/value/dispatch/navigation mutations.
+- Content scripts observe/read only; no DOM action mutations.
 - Only `source=human` may become Human behavior/habit ground truth.
-- Agent events remain telemetry/evaluation only.
-- `delivered`, `observed`, `verified`, and `taskSuccess` remain separate truths.
-- Physical work for the same Chrome is serialized through the execution lane.
-
-## Environment Guardian boundary
-
-Phase 4 will observe Browser/device health, environment consistency, public egress/network identity and proxy/VPN/tunnel signals according to Company policy, then ALLOW or QUARANTINE a Browser.
-
-It may verify/report/quarantine only. It must not spoof browser fingerprint, conceal proxy/VPN, rotate IP/identity to evade checks, modify DNS/routes to bypass policy, or interfere with detection systems.
+- Agent data is telemetry/evaluation only.
+- `delivered`, `observed`, `verified`, `taskSuccess` are separate truths.
+- Physical work for one Chrome is serialized through the execution lane.
 
 ## Install / verify
 
@@ -180,7 +252,7 @@ npm install
 npm run verify
 ```
 
-Load `dist/` from `chrome://extensions`, then start the local Company Runtime development entrypoint:
+Load `dist/` from `chrome://extensions`, then start the development entrypoint:
 
 ```bat
 daemon.cmd
@@ -192,17 +264,19 @@ Useful read-only debug commands:
 body.cmd "status"
 body.cmd "identity"
 body.cmd "browsers"
+body.cmd "environment"
 body.cmd "tasks"
 body.cmd "taskowners"
 ```
 
-Example debug Task creation after a Browser is connected:
+Manual Guardian checks:
 
 ```bat
-body.cmd "taskcreate {\"taskId\":\"demo\",\"capability\":\"youtube.search\",\"browserInstanceId\":\"browser-id\",\"primaryTabId\":123,\"tabIds\":[123]}"
+body.cmd "envprobe <browserInstanceId>"
+body.cmd "envprobeall"
 ```
 
-`npm run verify` runs syntax checks, Body contracts, persistence/auth contracts, Local Identity contracts, Browser/Task/TaskWorkspace policy and recovery contracts, extension contracts and the production build. CI also validates the Windows native helper syntax.
+`npm run verify` checks Body contracts, persistence/auth, Local Identity, Browser/Task ownership and recovery, Task policy, Environment Guardian, read-only environment probes, extension contracts and build. CI also validates the Windows native helper syntax.
 
 ## Branch policy
 

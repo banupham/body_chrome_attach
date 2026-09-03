@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Body Chrome Attach",
-  "version": "0.6.0",
-  "description": "Authenticated Chrome adapter for the single Company Runtime with persistent Browser identity, TaskWorkspace-scoped BODY execution, and audited observation.",
+  "version": "0.7.0",
+  "description": "Authenticated Chrome adapter for the single Company Runtime with Browser identity, TaskWorkspace-scoped BODY execution, and read-only environment validation.",
   "minimum_chrome_version": "125",
-  "permissions": ["debugger", "tabs", "activeTab", "storage"],
+  "permissions": ["debugger", "tabs", "activeTab", "storage", "proxy"],
   "host_permissions": ["*://*/*"],
   "background": {"service_worker": "service_worker.js"},
   "content_scripts": [{"matches": ["*://*/*"], "js": ["virtual_cursor_content.js"], "run_at": "document_start", "all_frames": false}],

@@ -4,7 +4,7 @@
 
 ## 0. Mission
 
-Build a local-first distributed agent system in which each Company owns 1..N Devices. Each Device runs one **Company Runtime application** by default. That one application validates/manages Chrome resources, hosts the daemon/BODY runtime, manages many Tasks, learns locally, and later hosts Data Factory / Offline Analyst / Director Brain modules.
+Build a local-first distributed agent system in which each Company owns 1..N Devices. Each Device runs one **Company Runtime application** by default. That one application validates/manages Chrome resources, hosts daemon/BODY, manages many Tasks, learns locally, and later hosts Data Factory / Offline Analyst / Director Brain modules.
 
 YouTube is the first reference platform. Do not expand platforms until the YouTube path works end-to-end.
 
@@ -26,7 +26,7 @@ Company
             -> Local Identity
             -> Browser Manager
             -> Task Manager / TaskWorkspace
-            -> Chrome Validator / Environment Guardian
+            -> Environment Guardian / Chrome Validator
             -> Daemon / BODY Runtime
             -> Data Factory
             -> later Offline Analyst + Director Brain
@@ -34,15 +34,7 @@ Company
 
 Do **not** create one application or daemon per Task, Tab, Browser or Chrome profile.
 
-One Company Runtime may manage:
-
-```text
-1..N Browser Instances
-1..N Tabs per Browser
-1..N Tasks
-```
-
-A single Browser with multiple Tabs performing different legitimate Tasks is valid.
+One Company Runtime may manage 1..N Browser Instances, 1..N Tabs per Browser and 1..N Tasks. A single Browser with multiple Tabs performing different legitimate Tasks is valid.
 
 ## 2. Responsibility Boundaries
 
@@ -72,7 +64,7 @@ Owns Task lifecycle, TaskWorkspace, Task policy, Task -> Browser/Tab ownership a
 
 ### Environment Guardian / Chrome Validator
 
-Observes Browser/device/environment/network evidence and decides Browser eligibility. It may OBSERVE, DETECT, SCORE, REPORT, ALLOW and QUARANTINE. It must never spoof fingerprint, conceal proxy/VPN, rotate IP/identity for evasion, alter DNS/routes to bypass policy, or interfere with detection systems.
+Observes Browser/device/environment/network evidence and decides Browser eligibility. It may OBSERVE, DETECT, SCORE/EVALUATE, REPORT, ALLOW and QUARANTINE. It must never spoof fingerprint, conceal proxy/VPN, rotate IP/identity for evasion, alter DNS/routes to bypass policy, or interfere with detection systems.
 
 ### BODY
 
@@ -103,7 +95,7 @@ Tab != Task
 - One Company may have multiple Devices.
 - One Device/application may manage multiple Browser Instances.
 - One Browser may have many Tabs and Tasks.
-- Tabs inside one Browser naturally share the Browser's environment/network identity. This is not a duplicate Browser condition.
+- Tabs inside one Browser naturally share that Browser's environment/network identity. This is not a duplicate Browser condition.
 - Platform/account/channel identity stays separate from Browser identity.
 
 ## 4. Browser Eligibility vs Task Eligibility
@@ -112,20 +104,13 @@ These are independent gates.
 
 ### Browser/environment gate
 
-Evidence may later include:
+Evidence may include persistent Browser identity, extension authentication/binding, runtime health, browser-visible environment signature, public egress/network identity, Chrome/system proxy signals and VPN/tunnel signals.
 
 ```text
-persistent browser identity
-extension authentication/binding
-CDP/runtime health
-browser/version compatibility
-observed environment consistency
-observed public egress/network identity
-proxy/VPN/tunnel signals
-Company duplicate identity/network policy
+Browser online -> ENV_CHECK -> ACTIVE or QUARANTINED
 ```
 
-Possible Browser states include ACTIVE, QUARANTINED and ERROR. Ineligible Browser cannot receive autonomous work.
+Ineligible Browser cannot receive autonomous work.
 
 ### Task policy gate
 
@@ -179,16 +164,7 @@ one TaskWorkspace -> may own multiple Tabs
 one Browser -> may host multiple TaskWorkspaces on different Tabs
 ```
 
-Example:
-
-```text
-Browser B01
-  Tab 101 -> Task A
-  Tab 102 -> Task B
-  Tab 103 -> Task A
-```
-
-Valid. Physical BODY actions are arbitrated/serialized.
+Physical BODY actions are arbitrated/serialized.
 
 ## 6. Human vs Agent / Model Separation
 
@@ -231,29 +207,13 @@ Gate A: PASSED.
 
 **Status: COMPLETE (v0.5.0).**
 
-Implemented:
-
-```text
-companyId
-deviceId
-browserInstanceId
-extensionInstanceId
-runtimeExtensionId
-persistent identity files
-browser-extension binding
-platform/account/channel binding namespace
-identity on status/events/execution records
-```
-
-Local persistence:
+Implemented `companyId`, `deviceId`, `browserInstanceId`, `extensionInstanceId`, `runtimeExtensionId`, persistent identity files, Browser-Extension binding, platform identity namespace, and identity propagation into status/events/execution.
 
 ```text
 daemon/identity/company.json
 daemon/identity/device.json
 daemon/identity/browsers.json
 ```
-
-Restart preserves identity; multiple Browsers remain distinct; multiple Tabs in one Browser remain one Browser identity; mismatched binding fails closed.
 
 Gate B: PASSED.
 
@@ -263,97 +223,81 @@ Gate B: PASSED.
 
 **Status: COMPLETE (v0.6.0).**
 
-Implemented:
+Implemented BrowserManager keyed by `browserInstanceId`, persistent TaskManager, TaskWorkspace ownership, one-Tab/max-one-active-Task invariant, multi-Tab Task, multi-Task Browser, Task Policy Gate, reconnect reconciliation, `RECOVERY_REQUIRED`, and Brain protocol v7 requiring `taskId` for physical execution.
 
-```text
-BrowserManager keyed by browserInstanceId
-ExtensionRegistry retained as transport registry
-Browser states
-TaskManager + persistent Task state
-TaskWorkspace browser/tab ownership
-one Tab -> max one active TaskWorkspace
-one Browser -> many Tasks on different Tabs
-one Task -> many Tabs
-Task Policy Gate
-BODY task mediation
-Brain control protocol v7 requiring taskId
-reconnect reconciliation
-restart RECOVERY_REQUIRED state
-```
-
-Browser states:
-
-```text
-REGISTERED
-OFFLINE
-ENV_CHECK
-ACTIVE
-BUSY
-HUMAN_CONTROL
-QUARANTINED
-ERROR
-```
-
-Task policy/recovery guarantees:
-
-- SAFE YouTube capabilities may enter READY.
-- External/unknown work waits for Human approval.
-- Spam/restricted signals cannot be overridden to SAFE_AUTO.
-- A RESTRICTED Task does not automatically quarantine a healthy Browser.
-- A Task cannot execute outside its assigned Browser or owned Tabs.
-- Reconnect missing an owned Tab fails the Task rather than choosing another Tab.
-- A Task that was RUNNING when daemon restarts becomes `RECOVERY_REQUIRED` and cannot blindly resume.
-- Production Brain physical actions require `taskId`; debug CLI remains diagnostic/test only.
-
-Gate C: PASSED for Browser/Task ownership foundation.
+Gate C: PASSED.
 
 ---
 
 ## PHASE 4 — ENVIRONMENT GUARDIAN / CHROME VALIDATOR MVP
 
-**Status: NEXT.**
+**Status: COMPLETE (v0.7.0).**
 
-Goal: decide whether each Browser Instance is eligible for autonomous work.
+Goal: decide whether each Browser Instance is eligible before Task assignment/BODY execution.
 
-Deliverables:
+Implemented read-only evidence:
 
 ```text
-device health
-browser health
-extension/CDP health
-browser identity consistency
-observed environment signature
-network stability
-observed public egress/network identity
-proxy/VPN/tunnel signals
-environment evidence/score
-Browser-level quarantine
-Company policy such as DIRECT_ONLY / duplicate network rules
+browser-visible environment signature -> persisted as SHA-256 hash only
+public egress IP observed through each Browser
+Chrome proxy mode via chrome.proxy.settings.get
+proxy environment-variable presence
+Windows WinINet / WinHTTP proxy presence via read-only query/show commands
+VPN/tunnel interface-name signals
+extension/environment probe availability
+Browser-level quarantine and re-evaluation
+```
+
+Default policy:
+
+```text
+DIRECT_ONLY = true
+REQUIRE_UNIQUE_PUBLIC_IP = true
+REQUIRE_UNIQUE_ENVIRONMENT_SIGNATURE = true
+STRICT_SAME_BROWSER_CONSISTENCY = false
+OBSERVATION_TTL = 5 minutes
 ```
 
 Rules:
 
-- Validation is Browser-scoped, not Tab-scoped.
-- Same Browser's Tabs sharing environment/IP is expected.
-- Separate Browser Instances require distinct managed Browser identities.
-- Network uniqueness is an explicit Company policy, not inferred from Tabs.
-- Under `DIRECT_ONLY`, detected proxy/VPN/tunnel makes Browser ineligible.
-- Guardian verifies/reports/quarantines only; no spoofing, concealment or evasion.
+- Validation is Browser-scoped, never Tab-scoped.
+- Same Browser's Tabs sharing IP/environment is expected and valid.
+- Different online Browser Instances sharing public egress are ineligible under default uniqueness policy.
+- Different online Browser Instances sharing browser-visible environment signature are ineligible under default uniqueness policy.
+- Under DIRECT_ONLY, detected Browser/system proxy or VPN/tunnel evidence makes Browser ineligible.
+- Guardian fails closed while evidence is unavailable/stale.
+- Browser starts `ENV_CHECK`; only eligible Browser becomes `ACTIVE`; failures become `QUARANTINED`.
+- Taking one duplicate Browser offline re-evaluates remaining Browsers.
+- Guardian refuses live re-probe while Browser is `BUSY`.
+- Raw browser environment fields are not persisted; signature hash + evidence flags remain local.
+- Public-IP endpoint must be HTTPS and is configurable with `BODY_PUBLIC_IP_ENDPOINT`.
 
-Exit criteria:
+Safety boundary:
 
-- Unhealthy Browser can be quarantined without stopping healthy Browsers.
-- Ineligible Browser cannot receive autonomous work.
-- Every eligibility decision includes evidence/reason.
-- Browser validity remains independent from Task policy.
+```text
+Guardian MAY: observe, detect, evaluate, report, allow, quarantine
+Guardian MUST NOT: set proxy, hide proxy/VPN, change IP, change DNS/routes,
+                   spoof fingerprint, rotate identity for evasion, bypass detection
+```
+
+VPN detection is an MVP evidence heuristic and not a guarantee of perfect classification.
+
+Gate: PASSED when v0.7.0 contracts + CI are green.
 
 ---
 
 ## PHASE 5 — SEMANTIC OBSERVATION + RAW EVIDENCE
 
+**Status: NEXT.**
+
 Goal: immutable semantic evidence with Raw Evidence Store, BeforeState, Action, AfterState, ObservedEffect, Outcome, Context, demonstration timeline, YouTube page-state adapter and provenance IDs.
 
-Exit: Human `youtube.search` can be reconstructed semantically; Human/Agent provenance preserved; sensitive raw data local/redacted.
+Exit criteria:
+
+- Human `youtube.search` can be reconstructed semantically rather than from raw coordinates alone.
+- Human/Agent provenance is preserved.
+- Sensitive raw data remains local/redacted.
+- Browser/Task/Environment identity is attached to evidence.
 
 ---
 
@@ -371,7 +315,7 @@ Raw Evidence
  -> Context/Situation Pack Retriever
 ```
 
-Analyst cannot control BODY, hold lease, mutate raw evidence or unlock autonomy.
+Analyst cannot control BODY, hold controller lease, mutate raw evidence or unlock autonomy.
 
 ---
 
@@ -412,7 +356,7 @@ Autonomy is per capability; failed/novel context causes wait/downgrade/replan.
 Prove at least one YouTube capability repeatedly succeeds locally through:
 
 ```text
-Goal -> Director -> Policy -> Browser/Task Manager -> BODY
+Goal -> Director -> Policy -> Browser/Task Manager -> Guardian -> BODY
      -> Observation -> ObservedEffect -> semantic verification
 ```
 
@@ -452,7 +396,7 @@ Only after YouTube local maturity, add platform adapters. All platforms reuse th
 Gate A BODY before Brain autonomy                         PASSED
 Gate B Identity before multi-browser operation           PASSED
 Gate C Manager before complex multi-Task operation       PASSED
-Gate D Semantic Evidence before Director Brain           NEXT AFTER GUARDIAN
+Gate D Semantic Evidence before Director Brain           NEXT
 Gate E Data Factory before mature Brain
 Gate F Analyst has zero execution authority
 Gate G Local maturity before production Central Router
@@ -474,7 +418,7 @@ Gate I Policy before distributed interaction             TASK POLICY FOUNDATION 
 10. RESTRICTED Task rejection does not automatically quarantine healthy Browser.
 11. Guardian does not spoof fingerprint, conceal proxy/VPN, rotate IP for evasion or bypass detection.
 12. Browser Manager is daemon-side authoritative; Extension is Adapter/transport.
-13. Production Brain uses structured protocol and cannot bypass Task Manager.
+13. Production Brain uses structured protocol and cannot bypass Task Manager/Guardian.
 14. `daemon.cmd` / `body.cmd` are development/diagnostic entrypoints, not separate products.
 15. One Brain holds BODY controller lease at a time.
 16. Human and Agent evidence stay separate.
@@ -493,8 +437,8 @@ Gate I Policy before distributed interaction             TASK POLICY FOUNDATION 
 PHASE 1 BODY CORE                                  COMPLETE
 PHASE 2 LOCAL IDENTITY                             COMPLETE
 PHASE 3 BROWSER + TASK MANAGER / TASKWORKSPACE    COMPLETE
-PHASE 4 ENVIRONMENT GUARDIAN / CHROME VALIDATOR   NEXT
-PHASE 5 RAW + SEMANTIC EVIDENCE
+PHASE 4 ENVIRONMENT GUARDIAN / CHROME VALIDATOR   COMPLETE
+PHASE 5 RAW + SEMANTIC EVIDENCE                    NEXT
 PHASE 6 DATA FACTORY + OFFLINE ANALYST
 PHASE 7 BRAIN-READY MEMORY / NEWBORN DIRECTOR
 ```
@@ -502,12 +446,9 @@ PHASE 7 BRAIN-READY MEMORY / NEWBORN DIRECTOR
 Immediate next proof:
 
 ```text
-one Device / one Company Runtime
- -> multiple Browser Instances registered
- -> each Browser evaluated independently by Guardian
- -> one Browser may have many Tabs/Tasks
- -> same Browser tabs sharing network/environment remains valid
- -> invalid Browser is quarantined
- -> restricted/spam Task is rejected independently
- -> only eligible Browser + eligible Task reaches BODY
+Human performs youtube.search on an ELIGIBLE Browser/TaskWorkspace
+ -> immutable BeforeState / Action / AfterState / ObservedEffect created
+ -> evidence carries Company/Device/Browser/Task/provenance IDs
+ -> raw sensitive fields stay local/redacted
+ -> demonstration can later compile into Brain-ready semantic memory
 ```

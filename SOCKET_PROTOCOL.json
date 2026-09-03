@@ -23,12 +23,27 @@
   },
   "brain": {
     "hello": {"type": "HELLO", "role": "brain", "protocolVersion": 7, "controllerId": "brain-instance", "token": "required"},
-    "queries": ["BODY_STATUS", "EXTENSIONS_LIST", "BROWSERS_LIST", "TABS_LIST", "TASKS_LIST", "TASK_GET"],
-    "taskActions": ["TASK_CREATE", "TASK_APPROVE", "TASK_START", "TASK_COMPLETE", "TASK_FAIL", "TASK_CANCEL"],
+    "queries": ["BODY_STATUS", "EXTENSIONS_LIST", "BROWSERS_LIST", "TABS_LIST", "TASKS_LIST", "TASK_GET", "ENVIRONMENT_STATUS"],
+    "managerActions": ["TASK_CREATE", "TASK_APPROVE", "TASK_START", "TASK_COMPLETE", "TASK_FAIL", "TASK_CANCEL", "ENVIRONMENT_PROBE", "ENVIRONMENT_PROBE_ALL"],
     "physicalActions": ["INTENT_EXECUTE", "STRATEGY_EXECUTE", "TAB_SWITCH", "BROWSER_COMMAND"],
-    "physicalActionRequirement": "taskId is required; TaskManager resolves browserInstanceId/extension/tab ownership before BODY execution",
+    "physicalActionRequirement": "taskId is required; TaskManager resolves browserInstanceId/extension/tab ownership and Browser must be Environment-eligible before BODY execution",
     "events": ["BODY_EVENT"],
     "freeformCommandStrings": false
+  },
+  "environmentGuardian": {
+    "scope": "Browser Instance, never individual Tabs",
+    "defaultPolicy": {
+      "directOnly": true,
+      "requireUniquePublicIpAcrossOnlineBrowsers": true,
+      "requireUniqueEnvironmentSignatureAcrossOnlineBrowsers": true,
+      "strictSameBrowserEnvironmentConsistency": false
+    },
+    "browserFlow": "OFFLINE -> ENV_CHECK -> ACTIVE or QUARANTINED",
+    "signals": ["browser environment signature hash", "public egress IP", "Chrome proxy mode", "device proxy environment", "Windows system proxy", "VPN/tunnel interface heuristic", "extension/CDP availability"],
+    "readOnly": true,
+    "forbidden": ["fingerprint spoofing", "proxy/VPN concealment", "IP rotation for evasion", "proxy mutation", "DNS/route mutation", "detector evasion"],
+    "extensionRequest": "ENVIRONMENT_PROBE",
+    "publicIpEndpoint": "BODY_PUBLIC_IP_ENDPOINT; HTTPS required; default https://api.ipify.org?format=json"
   },
   "taskPolicy": {
     "classes": ["SAFE_AUTO", "HUMAN_APPROVED", "RESTRICTED"],
@@ -49,7 +64,7 @@
   "extension": {
     "hello": {"type": "HELLO", "role": "extension", "protocolVersion": "5 or 6", "browserInstanceId": "persistent logical Chrome identity", "extensionId": "persistent extensionInstanceId", "token": "paired token or null on first pairing"},
     "authEvents": ["AUTH_PAIRED", "AUTH_ERROR"],
-    "requests": ["PING", "LIST_TABS", "ACTIVE_TAB", "BODY_EXECUTE", "BODY_DETACH", "TAB_SWITCH", "FOCUS_WINDOW", "BROWSER_UI_END", "RECORD_SET", "CURSOR_SET"],
+    "requests": ["PING", "LIST_TABS", "ACTIVE_TAB", "ENVIRONMENT_PROBE", "BODY_EXECUTE", "BODY_DETACH", "TAB_SWITCH", "FOCUS_WINDOW", "BROWSER_UI_END", "RECORD_SET", "CURSOR_SET"],
     "events": ["RECORDER_EVENT", "TAB_EVENT", "TAB_CONTEXT", "TAB_REMOVED", "KEEPALIVE"]
   },
   "trainingGroundTruth": "human-only",
