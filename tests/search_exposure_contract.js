@@ -56,7 +56,7 @@ assert.ok(plan.some(x=>x.kind==='head_freshness'));
 assert.ok(plan.some(x=>x.kind==='head_plus_metadata'));
 
 const competitorScenarios=deriveCompetitorScenarios({
-  kind:'head_exact',headQuery:'bds',competitors:[
+  kind:'head_exact',isHeadQuery:true,headQuery:'bds',competitors:[
     {title:'BĐS căn hộ Hà Nội mới nhất'},
     {title:'BĐS căn hộ TP HCM giá tốt'},
     {title:'BĐS đất nền Hà Nội'}
