@@ -6,20 +6,21 @@ const {surfaceItems,surfaceScrollPoint}=require('./topic_transition_runner');
 function sleep(ms){return new Promise(resolve=>setTimeout(resolve,Math.max(0,Number(ms)||0)));}
 function clean(value){return String(value??'').normalize('NFKC').replace(/\s+/g,' ').trim();}
 function normalized(value){return clean(value).toLowerCase();}
-function terms(value){return [...new Set(normalized(value).split(/[^\p{L}\p{N}+#._-]+/gu).map(x=>x.trim()).filter(x=>x.length>=2))];}
+function folded(value){return normalized(value).normalize('NFD').replace(/\p{M}+/gu,'').replace(/đ/g,'d');}
+function terms(value){return [...new Set(folded(value).split(/[^\p{L}\p{N}+#._-]+/gu).map(x=>x.trim()).filter(x=>x.length>=2))];}
 function ageHours(iso,at=Date.now()){
   const ts=Date.parse(String(iso||''));if(!Number.isFinite(ts))return null;
   return Math.max(0,(Number(at)-ts)/3600000);
 }
 function numeric(value){const n=Number(value);return Number.isFinite(n)?n:null;}
 function matchTerms(values,queryTerms){
-  const text=normalized((values||[]).join(' '));return queryTerms.filter(term=>text.includes(term));
+  const text=folded((values||[]).join(' '));return queryTerms.filter(term=>text.includes(term));
 }
 function queryEvidence(api,query){
-  const q=normalized(query),qTerms=terms(query);
+  const q=normalized(query),qFolded=folded(query),qTerms=terms(query);
   const title=normalized(api?.title),description=normalized(api?.descriptionExcerpt),tags=(api?.tags||[]).map(normalized),topics=(api?.topicLabels||[]).map(normalized),channelKeywords=(api?.channel?.keywords||[]).map(normalized);
   const titleTerms=matchTerms([title],qTerms),tagTerms=matchTerms(tags,qTerms),descriptionTerms=matchTerms([description],qTerms),topicTerms=matchTerms(topics,qTerms),channelTerms=matchTerms(channelKeywords,qTerms);
-  const titlePhrase=Boolean(q&&title.includes(q)),tagPhrase=Boolean(q&&tags.some(x=>x.includes(q))),descriptionPhrase=Boolean(q&&description.includes(q));
+  const titlePhrase=Boolean(q&&(title.includes(q)||folded(title).includes(qFolded))),tagPhrase=Boolean(q&&tags.some(x=>x.includes(q)||folded(x).includes(qFolded))),descriptionPhrase=Boolean(q&&(description.includes(q)||folded(description).includes(qFolded)));
   const coverage=qTerms.length?titleTerms.length/qTerms.length:0;
   const heuristicScore=Number((Number(titlePhrase)*4+coverage*3+Number(tagPhrase)*1.25+Math.min(1,tagTerms.length/Math.max(1,qTerms.length))*1.25+Number(descriptionPhrase)*0.75+Math.min(1,topicTerms.length)*0.5+Math.min(1,channelTerms.length/Math.max(1,qTerms.length))*0.35).toFixed(3));
   return {query:clean(query),queryTerms:qTerms,titlePhrase,tagPhrase,descriptionPhrase,titleTerms,tagTerms,descriptionTerms,topicTerms,channelKeywordTerms:channelTerms,heuristicScore,heuristicOnly:true};
@@ -97,7 +98,7 @@ class SearchExposureRunner extends YouTubeEnrichedTopicTransitionRunner {
     const at=Date.now(),trackApi=this.trackedVideoApi;
     const competitors=all.slice(0,this.config.competitorSampleLimit).map(row=>({rank:Number(row.position||0)||null,videoId:String(row.videoId),title:row.youtubeApi?.title||row.title||null,channelTitle:row.youtubeApi?.channelTitle||row.channel||null,categoryId:row.youtubeApi?.categoryId||null,publishedAt:row.youtubeApi?.publishedAt||null,videoAgeHours:ageHours(row.youtubeApi?.publishedAt,at),viewCount:numeric(row.youtubeApi?.statistics?.viewCount),queryEvidence:queryEvidence(row.youtubeApi,query)}));
     const result={
-      sampleIndex,queryIndex,query:clean(query),isHeadQuery:normalized(query)===normalized(this.config.headQuery),at,atIso:new Date(at).toISOString(),trackedVideoId:String(this.config.trackVideoId),seen:Boolean(target),rank:target?Number(target.position||0)||null:null,surface:target?.surface||null,firstSeenPass:target?.firstSeenPass??null,
+      sampleIndex,queryIndex,query:clean(query),isHeadQuery:folded(query)===folded(this.config.headQuery),at,atIso:new Date(at).toISOString(),trackedVideoId:String(this.config.trackVideoId),seen:Boolean(target),rank:target?Number(target.position||0)||null:null,surface:target?.surface||null,firstSeenPass:target?.firstSeenPass??null,
       scannedUniqueVideos:all.length,maxObservedRank:all.reduce((m,x)=>Math.max(m,Number(x.position||0)),0),scrolls,queryEvidence:queryEvidence(trackApi,query),trackedVideo:compactApi(trackApi,at),competitors
     };
     this.searchScans.push(result);this.log('search_exposure_snapshot',{query:result.query,sampleIndex,seen:result.seen,rank:result.rank,maxObservedRank:result.maxObservedRank,scrolls:result.scrolls,isHeadQuery:result.isHeadQuery});return result;
@@ -126,4 +127,4 @@ class SearchExposureRunner extends YouTubeEnrichedTopicTransitionRunner {
   }
 }
 
-module.exports={SearchExposureRunner,queryEvidence,compactApi,canonicalSearchRows,ageHours};
+module.exports={SearchExposureRunner,queryEvidence,compactApi,canonicalSearchRows,ageHours,folded};
