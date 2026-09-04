@@ -3,6 +3,7 @@
 const { installVirtualCursorOverlay } = require('./virtual_cursor_overlay');
 const { youtubeObservation } = require('./youtube_semantic_observer');
 const { youtubeAuthObservation } = require('./youtube_auth_observer');
+const { enrichObservationRoute } = require('./youtube_route_context');
 
 let overlay = installVirtualCursorOverlay({ chromeApi: chrome, documentRef: document });
 let enabled = true;
@@ -46,7 +47,8 @@ function environmentObservation(){
 }
 
 function enrichedYoutubeObservation(maxItems=50){
-  const result=youtubeObservation({documentRef:document,windowRef:window,locationRef:location,maxItems});
+  let result=youtubeObservation({documentRef:document,windowRef:window,locationRef:location,maxItems});
+  result=enrichObservationRoute(result,location);
   const auth=youtubeAuthObservation({documentRef:document,windowRef:window,fallbackState:result?.signedInState||'unknown'});
   result.signedInState=auth.state;
   result.signInEvidence={conflict:auth.conflict,signedInSignals:auth.signedInSignals,signedOutSignals:auth.signedOutSignals,privacy:auth.privacy};
@@ -68,4 +70,4 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   sendResponse({ok:true,result:{enabled,...(enabled?overlay.status():{installed:false,visible:false})}});return false;
 });
 
-module.exports={describeTarget,pageObservation,environmentObservation,youtubeObservation,youtubeAuthObservation,enrichedYoutubeObservation};
+module.exports={describeTarget,pageObservation,environmentObservation,youtubeObservation,youtubeAuthObservation,enrichObservationRoute,enrichedYoutubeObservation};
