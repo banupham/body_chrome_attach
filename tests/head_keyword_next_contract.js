@@ -4,6 +4,7 @@ const assert=require('node:assert/strict');
 const {replaceSearchIntents}=require('../research/youtube_search_input');
 const {publicFactorComparison,canonicalHomeRows,sameHeadSearch,safeClickGeometry,chooseNaturalNext}=require('../research/head_keyword_next_runner');
 const {classifyTopic,classifySurface,transitionEvidence,chooseSourceBridge,topicMatchEvidence,buildAppearanceConclusion}=require('../research/topic_route_runner');
+const {pristineSnapshot,pristineDecision}=require('../research/fast_browser_ui_route_runner');
 const {parseHeadKeywordNextArgs,bindDynamicFreshBrowser}=require('../research/head_keyword_next_entry');
 
 const control={actionRect:{centerX:500,centerY:40,width:420,height:34}};
@@ -36,10 +37,17 @@ assert.equal(config.homeExplore,true);
 assert.equal(config.homeSeedCount,3);
 assert.equal(config.safeClickTopPx,80);
 assert.equal(config.safeClickBottomPx,48);
+assert.equal(config.pristineSettleMs,12000);
+assert.equal(config.pristinePollMs,400);
+assert.equal(config.pristineStableSamples,2);
 
 const strictDefault=parseHeadKeywordNextArgs(['--track-video-id','qXy0iyni-xk','--head-queries','bds']);
 assert.deepEqual(strictDefault.branchModes,['source_bridge']);
 assert.equal(strictDefault.targetTopic,null);
+const tunedPristine=parseHeadKeywordNextArgs(['--track-video-id','qXy0iyni-xk','--head-queries','bds','--pristine-settle-ms','9000','--pristine-poll-ms','250','--pristine-stable-samples','3']);
+assert.equal(tunedPristine.pristineSettleMs,9000);
+assert.equal(tunedPristine.pristinePollMs,250);
+assert.equal(tunedPristine.pristineStableSamples,3);
 
 const staleConfig=parseHeadKeywordNextArgs(['--track-video-id','qXy0iyni-xk&t','--head-queries','bds','--browser','browser-old','--tab','111']);
 const binding=bindDynamicFreshBrowser(staleConfig,{browserInstanceId:'browser-fresh',youtubeTabs:[{id:222,active:true,title:'YouTube'}]});
@@ -47,6 +55,20 @@ assert.equal(binding.previous.browser,'browser-old');
 assert.equal(binding.previous.tab,111);
 assert.equal(staleConfig.browser,'browser-fresh');
 assert.equal(staleConfig.tab,222);
+
+const pristineTabs=[{id:222,siteKey:'www.youtube.com',active:true}];
+const unknownPristine=pristineSnapshot({signedInState:'unknown',route:{pageType:'home'},controls:{searchInput:null},surfaces:[{diagnostics:{rootSelector:null},items:[]}]},pristineTabs);
+assert.equal(unknownPristine.shapeOk,true);
+assert.equal(pristineDecision(unknownPristine,{stableSignedOutSamples:0,requiredStableSamples:2}).status,'pending','unknown auth must wait, not fail and not pass');
+const signedInPristine=pristineSnapshot({signedInState:'signed_in',route:{pageType:'home'},controls:{searchInput:{actionRect:{x:1}}},surfaces:[]},pristineTabs);
+assert.equal(pristineDecision(signedInPristine,{stableSignedOutSamples:0,requiredStableSamples:2}).status,'fail');
+const signedOutPristine=pristineSnapshot({signedInState:'signed_out',route:{pageType:'home'},controls:{searchInput:{actionRect:{x:1}}},surfaces:[{diagnostics:{rootSelector:'ytd-rich-grid-renderer'},items:[]}]},pristineTabs);
+const signedOutFirst=pristineDecision(signedOutPristine,{stableSignedOutSamples:0,requiredStableSamples:2});
+assert.equal(signedOutFirst.status,'pending');
+assert.equal(signedOutFirst.stableSignedOutSamples,1);
+const signedOutSecond=pristineDecision(signedOutPristine,{stableSignedOutSamples:signedOutFirst.stableSignedOutSamples,requiredStableSamples:2});
+assert.equal(signedOutSecond.status,'pass');
+assert.equal(signedOutSecond.reason,'signed_out_stable');
 
 assert.equal(sameHeadSearch({route:{pageType:'search'}},'bds','bds'),true);
 assert.equal(sameHeadSearch({route:{pageType:'watch'}},'bds','bds'),false);
