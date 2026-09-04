@@ -5,7 +5,11 @@ const fs=require('node:fs');
 const os=require('node:os');
 const path=require('node:path');
 const {EventEmitter}=require('node:events');
-const {BrainClient}=require('../research/topic_transition_runner');
+const {BrainClient,semanticArrivalReady}=require('../research/topic_transition_runner');
+
+assert.equal(semanticArrivalReady({route:{videoId:'target1'},currentVideo:{title:'NHẠC REMIX',semanticTitle:true}},{videoId:'target1',title:'ROBLOX +1 SPEED VS GIANT'}),false,'route change alone must not accept stale previous-video metadata');
+assert.equal(semanticArrivalReady({route:{videoId:'target1'},currentVideo:{title:'ROBLOX +1 SPEED VS GIANT',semanticTitle:true}},{videoId:'target1',title:'ROBLOX +1 SPEED VS GIANT'}),true);
+assert.equal(semanticArrivalReady({route:{videoId:'target1'},currentVideo:{title:'ROBLOX +1 SPEED VS GIANT',semanticTitle:true}},{videoId:'target1',title:'ROBLOX +1 SPEED VS GIANT 12 phút, 10 giây'}),true,'duration-decorated candidate titles may settle to the shorter watch title');
 
 class FakeWebSocket extends EventEmitter {
   static OPEN=1;
