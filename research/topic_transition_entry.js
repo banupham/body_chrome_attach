@@ -4,6 +4,7 @@ const { BrainClient, parseArgs } = require('./topic_transition_runner');
 const { YouTubeEnrichedTopicTransitionRunner } = require('./youtube_enriched_runner');
 
 const UNIQUENESS_REASONS = new Set(['DUPLICATE_PUBLIC_EGRESS', 'DUPLICATE_ENVIRONMENT_SIGNATURE']);
+const BLOCKED_STATES = new Set(['QUARANTINED', 'ERROR', 'OFFLINE']);
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0))); }
 function waitSeconds(argv = process.argv.slice(2)) {
@@ -23,6 +24,8 @@ function diagnosticRows(status) {
     online: browser.online === true,
     state: browser.state || null,
     stateReason: browser.stateReason || null,
+    connectedAt: Number(browser.connectedAt || 0) || null,
+    lastSeenAt: Number(browser.lastSeenAt || 0) || null,
     environmentStatus: browser.environment?.status || null,
     environmentEligible: browser.environment?.eligible === true,
     publicIp: browser.environment?.publicIp || null,
@@ -33,20 +36,27 @@ function diagnosticRows(status) {
   }));
 }
 
-function hasEligibleBrowser(status, explicitBrowser = null) {
-  return (status?.browsers || []).some(browser =>
-    browser.online === true &&
-    browser.environment?.eligible === true &&
-    !['QUARANTINED', 'ERROR', 'OFFLINE'].includes(String(browser.state || '')) &&
-    (!explicitBrowser || browser.browserInstanceId === explicitBrowser)
+function chooseEligibleBrowser(status, explicitBrowser = null) {
+  const rows = diagnosticRows(status).filter(row =>
+    row.online === true &&
+    row.environmentEligible === true &&
+    !BLOCKED_STATES.has(String(row.state || '')) &&
+    row.youtubeTabs.length > 0 &&
+    (!explicitBrowser || row.browserInstanceId === explicitBrowser)
   );
+  rows.sort((a,b) => Number(b.connectedAt || 0) - Number(a.connectedAt || 0) || Number(b.lastSeenAt || 0) - Number(a.lastSeenAt || 0));
+  return rows[0] || null;
+}
+
+function hasEligibleBrowser(status, explicitBrowser = null) {
+  return Boolean(chooseEligibleBrowser(status, explicitBrowser));
 }
 
 function chooseProbeTarget(status, explicitBrowser = null) {
   const online = diagnosticRows(status).filter(row => row.online);
   if (explicitBrowser) return online.find(row => row.browserInstanceId === explicitBrowser)?.browserInstanceId || null;
-  const youtube = online.filter(row => row.youtubeTabs.length > 0);
-  if (youtube.length === 1) return youtube[0].browserInstanceId;
+  const youtube = online.filter(row => row.youtubeTabs.length > 0).sort((a,b) => Number(b.connectedAt || 0) - Number(a.connectedAt || 0));
+  if (youtube.length >= 1) return youtube[0].browserInstanceId;
   if (online.length === 1) return online[0].browserInstanceId;
   return null;
 }
@@ -85,6 +95,7 @@ function compactDiagnostics(status) {
     online: rows.filter(row => row.online).map(row => ({
       browserInstanceId: row.browserInstanceId,
       state: row.state,
+      connectedAt: row.connectedAt,
       environmentStatus: row.environmentStatus,
       environmentEligible: row.environmentEligible,
       reasons: row.reasons,
@@ -104,20 +115,21 @@ function conflictHint(conflict) {
   return `Environment Guardian blocked ${conflict.targetBrowserInstanceId}: DUPLICATE_ENVIRONMENT_SIGNATURE with ${peers}. Close the duplicate BODY-managed Browser instance(s) or correct the Browser identity/environment separation. The research runner will not disable this guardrail.`;
 }
 
-async function waitForEligibleBrowser(config, { waitSec = waitSeconds() } = {}) {
+async function waitForEligibleBrowser(config, { waitSec = waitSeconds(), probeIntervalMs = 2000 } = {}) {
   const client = new BrainClient({ url: config.url, tokenPath: config.tokenPath, controllerId: 'topic-transition-preflight' });
   const deadline = Date.now() + waitSec * 1000;
+  const lastProbeAt = new Map();
+  let lastProbeAllAt = 0;
   let lastStatus = null;
-  let probeAttempted = false;
   let lastPrinted = null;
   let lastConflictText = null;
   try {
     while (Date.now() <= deadline) {
       lastStatus = await client.request('BODY_STATUS');
-      if (hasEligibleBrowser(lastStatus, config.browser)) {
-        const row = diagnosticRows(lastStatus).find(x => x.environmentEligible && (!config.browser || x.browserInstanceId === config.browser));
-        console.log('[PREFLIGHT] eligible browser ready:', JSON.stringify(row));
-        return row;
+      const eligible = chooseEligibleBrowser(lastStatus, config.browser);
+      if (eligible) {
+        console.log('[PREFLIGHT] eligible browser ready:', JSON.stringify(eligible));
+        return eligible;
       }
 
       const compact = compactDiagnostics(lastStatus);
@@ -127,21 +139,21 @@ async function waitForEligibleBrowser(config, { waitSec = waitSeconds() } = {}) 
         console.log('[PREFLIGHT] waiting for eligible browser:', signature);
       }
 
+      const now = Date.now();
       const online = compact.online;
-      if (!probeAttempted && online.length) {
-        probeAttempted = true;
-        const probeTarget = chooseProbeTarget(lastStatus, config.browser);
-        try {
-          if (probeTarget) {
-            await client.request('ENVIRONMENT_PROBE', { browserInstanceId: probeTarget });
-            console.log(`[PREFLIGHT] requested Environment Guardian re-probe for ${probeTarget}.`);
-          } else {
-            await client.request('ENVIRONMENT_PROBE_ALL');
-            console.log('[PREFLIGHT] requested Environment Guardian re-probe for all online Browsers.');
-          }
-        } catch (error) {
-          console.log('[PREFLIGHT] Guardian re-probe did not complete:', String(error?.message || error));
+      const probeTarget = chooseProbeTarget(lastStatus, config.browser);
+      try {
+        if (probeTarget && now - Number(lastProbeAt.get(probeTarget) || 0) >= probeIntervalMs) {
+          lastProbeAt.set(probeTarget, now);
+          await client.request('ENVIRONMENT_PROBE', { browserInstanceId: probeTarget });
+          console.log(`[PREFLIGHT] requested Environment Guardian re-probe for ${probeTarget}.`);
+        } else if (!probeTarget && online.length && now - lastProbeAllAt >= Math.max(3000, probeIntervalMs)) {
+          lastProbeAllAt = now;
+          await client.request('ENVIRONMENT_PROBE_ALL');
+          console.log('[PREFLIGHT] requested Environment Guardian re-probe for all online Browsers.');
         }
+      } catch (error) {
+        console.log('[PREFLIGHT] Guardian re-probe did not complete:', String(error?.message || error));
       }
 
       const conflict = uniquenessConflict(lastStatus, config.browser);
@@ -179,4 +191,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { UNIQUENESS_REASONS, diagnosticRows, hasEligibleBrowser, chooseProbeTarget, uniquenessConflict, compactDiagnostics, conflictHint, waitForEligibleBrowser, waitSeconds, main };
+module.exports = { UNIQUENESS_REASONS, diagnosticRows, chooseEligibleBrowser, hasEligibleBrowser, chooseProbeTarget, uniquenessConflict, compactDiagnostics, conflictHint, waitForEligibleBrowser, waitSeconds, main };
