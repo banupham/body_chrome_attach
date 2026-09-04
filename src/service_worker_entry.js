@@ -22,19 +22,24 @@ async function youtubeObservationForTab(tabId, maxItems = 50) {
   const tab = await chrome.tabs.get(id);
   let host = '';
   try { host = new URL(String(tab?.url || '')).hostname.toLowerCase(); } catch {}
-  if (!/(^|\.)youtube\.com$/.test(host)) throw new Error(`youtube_observation_wrong_site:${host || 'unknown'}`);
+  if (!/(^|\.)youtube\.com$/.test(host)) return null;
   const response = await chrome.tabs.sendMessage(id, { action:'body.youtubeObservation', maxItems });
   if (!response?.ok || !response.result) throw new Error(response?.error || 'youtube_observation_unavailable');
-  return { tabId:id, ...response.result };
+  return response.result;
 }
 
-const baseDaemonHandle = daemon.handle.bind(daemon);
-daemon.handle = async message => {
-  if (message?.type === 'YOUTUBE_OBSERVE') {
-    const tabId = Number.isInteger(Number(message.tabId)) ? Number(message.tabId) : await activeTabId();
-    return youtubeObservationForTab(tabId, message.maxItems);
-  }
-  return baseDaemonHandle(message);
+// Extend the existing read-only LIST_TABS response instead of adding a new control endpoint.
+const baseTabSnapshot = daemon.tabSnapshot.bind(daemon);
+daemon.tabSnapshot = async () => {
+  const tabs = await baseTabSnapshot();
+  return Promise.all(tabs.map(async tab => {
+    if (!String(tab.siteKey || '').includes('youtube.com')) return tab;
+    try {
+      return { ...tab, youtubeObservation:await youtubeObservationForTab(tab.id, 50), youtubeObservationError:null };
+    } catch (error) {
+      return { ...tab, youtubeObservation:null, youtubeObservationError:String(error?.message || error) };
+    }
+  }));
 };
 
 function rememberUserMotor(tabId, payload) {
