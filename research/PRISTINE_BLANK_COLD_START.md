@@ -1,6 +1,6 @@
 # BODY pristine blank cold-start research
 
-This mode starts the experiment from a newly-created Chrome user-data-dir at `about:blank`, before any HTTPS page has been opened in that Browser session.
+This mode is **attach-first**. BODY does not need to know where `chrome.exe` is installed and does not require the repository launcher. You may start any Chrome/Chromium build yourself from any path, as long as the BODY extension is loaded and the newest BODY-managed Browser is still on `about:blank` or a blank/new-tab page.
 
 ## Why bootstrap happens before the research Task
 
@@ -8,34 +8,40 @@ This mode starts the experiment from a newly-created Chrome user-data-dir at `ab
 
 The cold-start sequence is therefore:
 
-1. Launch a fresh signed-out Chrome at `about:blank` with only the BODY unpacked extension.
-2. BODY debug Browser UI selects that newly-connected blank Browser.
-3. BODY Browser UI performs address-bar navigation to `https://www.youtube.com/`.
-4. Wait for the YouTube content script and request Environment Guardian re-probes until the Browser is eligible.
-5. Close the debug bootstrap client.
-6. Attach the research Brain, dynamically bind the same newly-discovered Browser for this run, create the research Task, and begin target-blind topic-route discovery.
+1. The operator launches the Chrome/Chromium executable that should be tested, from any filesystem path, with BODY loaded. The research code does not inspect or assume the executable path.
+2. Leave the newest BODY-managed Browser on `about:blank`, `chrome://newtab`, or another blank/new-tab state, with no YouTube tab already open.
+3. `research:search:cold` discovers the newest online blank Browser from BODY Browser Manager identity/tabs, not from the executable path.
+4. BODY debug Browser UI selects that Browser and performs address-bar navigation to `https://www.youtube.com/`.
+5. Wait for the YouTube content script and request Environment Guardian re-probes until the Browser is eligible.
+6. Close the debug bootstrap client.
+7. Attach the research Brain, bind the same Browser for this run, create the research Task, and begin target-blind topic-route discovery.
 
 No CDP gateway method is added or changed by this cold-start mode. Page motor remains BODY HUMAN_MOTOR; browser chrome navigation remains BODY Browser UI.
 
-## One-command run
+## Recommended attach-first run
 
-From the repository root, after `daemon.cmd` is running and every other BODY-managed Chrome is closed:
+Start `daemon.cmd`, close unrelated BODY-managed Browsers, then launch the Chrome/Chromium build you want to test yourself. Its executable may be anywhere, for example a portable build on `D:` or `E:`. Leave it on a blank/new-tab page and run:
 
 ```cmd
 research\run_pristine_blank_search.cmd --track-video-id "qXy0iyni-xk&t" --head-queries "bds" --target-topic "gaming" --seed-count 4 --max-hops 4 --branch-modes "source_bridge" --max-related-rank 40 --dwell-sec 5
 ```
 
-The wrapper resets only `research\profiles\pristine-blank-search`, launches `about:blank`, waits for BODY to connect, bootstraps YouTube through BODY Browser UI, then starts `research:search:cold`.
+The wrapper no longer launches Chrome. It only starts `research:search:cold`, which discovers the newest blank BODY Browser dynamically.
 
-## Manual two-stage run
+You can also call npm directly:
 
 ```cmd
-research\launch_pristine_blank_chrome.cmd
-npm run research:blank-bootstrap
+npm run research:search:cold -- --track-video-id "qXy0iyni-xk&t" --head-queries "bds" --target-topic "gaming" --seed-count 4 --max-hops 4 --branch-modes "source_bridge" --max-related-rank 40 --dwell-sec 5
 ```
 
-After bootstrap succeeds, a normal `npm run research:search -- ...` can be used. For report provenance, prefer `research:search:cold`, which records `coldStartMode=about_blank_body_browser_ui` in the research config.
+## Optional repository launcher
+
+`research\launch_pristine_blank_chrome.cmd` remains only as a convenience for standard local Chrome installs. It is not part of the research requirement and is not needed when Chrome executables live in different locations.
+
+## Selection rule
+
+The bootstrap selects the newest online Browser whose tabs are all blank/new-tab and that has no YouTube tab. If several BODY Browsers are open, close the unrelated ones or make sure the intended blank Browser is the newest one before starting the command.
 
 ## Interpretation
 
-This mode controls the start-navigation state of the dedicated experiment profile. It does not claim to remove network-level YouTube context, global platform state, or every source of recommendation variation. The report should compare cold-start runs against the existing pristine-YouTube launcher rather than treat one run as causal proof.
+This mode controls the start-navigation state of the selected experiment Browser. It does not claim to remove network-level YouTube context, global platform state, or every source of recommendation variation. The report should compare cold-start runs against other controlled runs rather than treat one run as causal proof.
