@@ -5,11 +5,18 @@ const fs=require('node:fs');
 const os=require('node:os');
 const path=require('node:path');
 const {EventEmitter}=require('node:events');
-const {BrainClient,semanticArrivalReady}=require('../research/topic_transition_runner');
+const {BrainClient,semanticArrivalReady,isGenericActionTitle,usableSeedCandidate,arrivalExpectedTitle}=require('../research/topic_transition_runner');
 
 assert.equal(semanticArrivalReady({route:{videoId:'target1'},currentVideo:{title:'NHẠC REMIX',semanticTitle:true}},{videoId:'target1',title:'ROBLOX +1 SPEED VS GIANT'}),false,'route change alone must not accept stale previous-video metadata');
 assert.equal(semanticArrivalReady({route:{videoId:'target1'},currentVideo:{title:'ROBLOX +1 SPEED VS GIANT',semanticTitle:true}},{videoId:'target1',title:'ROBLOX +1 SPEED VS GIANT'}),true);
 assert.equal(semanticArrivalReady({route:{videoId:'target1'},currentVideo:{title:'ROBLOX +1 SPEED VS GIANT',semanticTitle:true}},{videoId:'target1',title:'ROBLOX +1 SPEED VS GIANT 12 phút, 10 giây'}),true,'duration-decorated candidate titles may settle to the shorter watch title');
+assert.equal(arrivalExpectedTitle({title:'Xem',youtubeApi:{title:'1920x1080_Academy-EP02_EN_15s.mp4'}}),'1920x1080_Academy-EP02_EN_15s.mp4');
+assert.equal(semanticArrivalReady({route:{videoId:'ad1'},currentVideo:{title:'1920x1080_Academy-EP02_EN_15s.mp4',semanticTitle:true,youtubeApi:{title:'1920x1080_Academy-EP02_EN_15s.mp4'}}},{videoId:'ad1',title:'Xem',youtubeApi:{title:'1920x1080_Academy-EP02_EN_15s.mp4'}}),true,'API-enriched canonical title must settle even when the search anchor was a CTA label');
+assert.equal(isGenericActionTitle('Xem'),true);
+assert.equal(isGenericActionTitle('Watch now'),true);
+assert.equal(isGenericActionTitle('NHẠC REMIX TIKTOK TRIỆU VIEW'),false);
+assert.equal(usableSeedCandidate({videoId:'ad1',title:'Xem',semanticTitle:true}),false,'generic CTA anchors must not become research seeds');
+assert.equal(usableSeedCandidate({videoId:'music1',title:'NHẠC REMIX TIKTOK TRIỆU VIEW',semanticTitle:true}),true);
 
 class FakeWebSocket extends EventEmitter {
   static OPEN=1;
