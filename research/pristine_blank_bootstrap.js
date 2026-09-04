@@ -62,7 +62,7 @@ async function issueBrowserUiAddress(debug,target,url,attempt){
 
 async function bootstrapBlankBrowser({url='https://www.youtube.com/',waitSec=40,probeIntervalMs=1500,navigationRetryMs=2200,maxNavigationAttempts=3,semanticStableSamples=2,client=null}={}){
   const ownClient=!client,debug=client||new BodyDebugClient(),deadline=Date.now()+Math.max(5,Number(waitSec)||40)*1000;
-  const maxAttempts=Math.max(1,Math.min(6,Math.floor(Number(maxNavigationAttempts)||3))),retryMs=Math.max(500,Number(navigationRetryMs)||2200),requiredSemanticStable=Math.max(1,Math.min(5,Math.floor(Number(semanticStableSamples)||2));
+  const maxAttempts=Math.max(1,Math.min(6,Math.floor(Number(maxNavigationAttempts)||3))),retryMs=Math.max(500,Number(navigationRetryMs)||2200),requiredSemanticStable=Math.max(1,Math.min(5,Math.floor(Number(semanticStableSamples)||2)));
   let target=null,last=null,lastProbeAt=0,lastNavigationAt=0,navigationAttempts=0,semanticSignedOutStable=0,semanticWaitLogged=false,lastSemantic=null;
   try{
     while(Date.now()<deadline&&!target){
@@ -87,7 +87,7 @@ async function bootstrapBlankBrowser({url='https://www.youtube.com/',waitSec=40,
           if(lastSemantic.signedInState==='signed_in')throw new Error(`pristine_blank_signed_in:tab=${youtubeTab.id}:pageType=${lastSemantic.pageType}`);
           if(lastSemantic.signedInState==='signed_out'&&lastSemantic.routeReady)semanticSignedOutStable++;else semanticSignedOutStable=0;
           if(semanticSignedOutStable>=requiredSemanticStable){
-            const result={browserInstanceId:current.browserInstanceId,extensionInstanceId:current.extensionInstanceId,tabId:Number(youtubeTab.id),url,environment:current.environment,coldStartMode:'about_blank_body_browser_ui',navigationAttempts,semanticSignedOutStable,semantic: lastSemantic};
+            const result={browserInstanceId:current.browserInstanceId,extensionInstanceId:current.extensionInstanceId,tabId:Number(youtubeTab.id),url,environment:current.environment,coldStartMode:'about_blank_body_browser_ui',navigationAttempts,semanticSignedOutStable,semantic:lastSemantic};
             console.log('[COLD START] YouTube Browser eligible and semantic signed-out state stable:',JSON.stringify({browserInstanceId:result.browserInstanceId,tabId:result.tabId,status:result.environment?.status||null,reasons:result.environment?.reasons||[],navigationAttempts,semanticSignedOutStable,signedInState:lastSemantic.signedInState,pageType:lastSemantic.pageType,uiReady:lastSemantic.uiReady}));
             return result;
           }
