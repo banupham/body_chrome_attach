@@ -2,91 +2,134 @@
 
 ## Research question
 
-Measure when and under what observable conditions a public video from a newly created channel begins appearing in YouTube Search for a competitive head query such as `nhạc`, `bds`, `tin tức`, or `bóng đá`.
+Measure how a public video from a newly created channel becomes discoverable in YouTube Search, starting from exact/indexing queries and progressively testing long-tail, freshness, competitor-neighborhood, spelling and competitive head queries such as `nhạc`, `bds`, `tin tức`, or `bóng đá`.
 
-This is a Search experiment, not a recommendation-graph experiment. DOM search results are the ranking ground truth; YouTube Data API v3 is only used to enrich the tracked video and visible competitors with metadata such as publish time, channel creation time, category, topics, tags, and public statistics.
+This is a Search experiment, not a recommendation-graph experiment. DOM search results are the ranking ground truth. YouTube Data API v3 only enriches the tracked video and visible competitors with public metadata.
 
-## Important interpretation boundary
+## Clean-browser condition
 
-YouTube does not expose its Search feature weights. The lab can observe correlation between rank and public signals, but must not claim a causal ranking formula. It does not create synthetic views, clicks, watch time, likes, comments, subscribers, or traffic.
+For a clean baseline, close every other BODY-managed Chrome first, keep the daemon running, then launch the dedicated disposable profile:
 
-Official YouTube documentation describes Search around relevance, engagement, and quality. Music/entertainment may use extra freshness/popularity signals, while news and other credibility-sensitive topics place more emphasis on authoritative sources. Tags are secondary compared with title, description, video content, and viewer response.
+```cmd
+research\launch_pristine_search_chrome.cmd
+```
 
-## Recommended query ladder
+The launcher deletes only `research\profiles\pristine-search`, creates a brand-new `--user-data-dir`, loads only the local BODY unpacked extension from `dist`, disables Chrome sync, and opens YouTube signed out.
 
-For a new channel, test the same video on a ladder from specific to broad. Example for real estate:
+The runner also performs a fail-closed `pristine_browser_check`. By default it requires:
 
-- long-tail: `căn hộ quận 7 giá 5 tỷ`
-- mid-tail: `bds tphcm`
-- head: `bds`
+- YouTube `signed_out`
+- one YouTube tab
+- no more than two tabs in the selected Browser
 
-For music:
+This is observable evidence, not proof that arbitrary Chrome internals are empty. The dedicated launcher is what supplies the fresh user-data-dir.
 
-- long-tail: `nhạc remix việt 2026`
-- mid-tail: `nhạc remix`
-- head: `nhạc`
+## Video ID normalization
 
-For football:
+The CLI accepts a raw ID or a normal YouTube URL. Extra URL parameters are stripped. For example:
 
-- long-tail: a specific match/team/event query
-- mid-tail: a league/team query
-- head: `bóng đá`
+```text
+qXy0iyni-xk&t
+```
 
-For news, use event-specific and topic-specific queries as controls before the head query `tin tức`; broad news Search is credibility-sensitive and a brand-new channel should not be expected to rank simply because metadata matches.
+is normalized to:
 
-## Run
+```text
+qXy0iyni-xk
+```
 
-Set the YouTube Data API key in the same CMD process:
+## Automatic discovery scenarios
+
+With `--auto-explore true` (default), BODY first fetches public metadata for the tracked video, then builds a query plan. It never searches the target video ID itself as a ranking shortcut and never clicks the tracked video.
+
+The plan can include:
+
+1. `indexing_exact_title` — full title baseline.
+2. `indexing_title_phrase` — compact title phrase.
+3. `semantic_keywords` — strongest public metadata terms.
+4. `tag_probe` — primary uploader tag when available.
+5. `channel_topic_probe` — channel name plus strong topic term.
+6. `head_plus_metadata` — head query plus terms derived from this exact video.
+7. `head_freshness` — `hôm nay`, `mới nhất`, current year variants.
+8. `head_spelling_variant` — diacritic-folded variant such as `bong da` for `bóng đá`.
+9. `head_exact` — the competitive broad query itself.
+10. `competitor_neighborhood` — after observing a head query, derive a small number of recurring terms from the actual top-result titles and test `head + recurring term`.
+
+`queryEvidence.heuristicScore` is only a BODY diagnostic for metadata overlap. It is not a YouTube ranking score.
+
+## Recommended run for qXy0iyni-xk
+
+Update and build first:
+
+```cmd
+npm install
+npm run verify
+```
+
+Set API enrichment in the same CMD process:
 
 ```cmd
 set "YOUTUBE_DATA_API_KEY=YOUR_KEY"
 set "BODY_YOUTUBE_API_ENRICH=1"
 ```
 
-Track one new public video against one head query:
+Launch a clean Browser:
 
 ```cmd
-npm run research:search -- --query "bds" --track-video-id VIDEO_ID --max-search-rank 80
+research\launch_pristine_search_chrome.cmd
 ```
 
-Run a query ladder in one session:
+Wait until `body.cmd "browsers"` shows the new Browser as `ACTIVE` and environment-eligible.
+
+### Scenario A — broad discovery across several large keywords
 
 ```cmd
-npm run research:search -- --query "bds" --head-query "bds" --queries "căn hộ quận 7 giá 5 tỷ;bds tphcm;bds" --track-video-id VIDEO_ID --max-search-rank 80
+npm run research:search -- --track-video-id "qXy0iyni-xk&t" --head-queries "nhạc;bds;tin tức;bóng đá" --max-search-rank 80 --max-auto-queries 32 --competitor-expansion true
 ```
 
-Repeat snapshots in the same Browser session:
+This is deliberately exploratory. It is useful for discovering which large keyword family, if any, already has a natural relation to the video.
+
+### Scenario B — one chosen keyword family, deeper scan
+
+If the video belongs to one topic, prefer one primary head query and let metadata create narrower probes. Example:
 
 ```cmd
-npm run research:search -- --query "bds" --head-query "bds" --queries "bds tphcm;bds" --track-video-id VIDEO_ID --samples 3 --sample-interval-sec 300 --max-search-rank 80
+npm run research:search -- --track-video-id "qXy0iyni-xk&t" --head-query "bóng đá" --max-search-rank 120 --max-search-scrolls 18 --competitor-expansion true
 ```
 
-For clean A/B comparisons across IP/browser/session conditions, prefer one query per fresh run instead of many queries in one session.
+### Scenario C — add manually chosen control queries
+
+```cmd
+npm run research:search -- --track-video-id "qXy0iyni-xk&t" --head-query "bóng đá" --queries "bóng đá hôm nay;tin bóng đá mới nhất;nhận định bóng đá" --max-search-rank 100
+```
+
+Manual queries are kept in addition to the automatic exploration plan.
+
+### Scenario D — temporal movement in the same clean session
+
+```cmd
+npm run research:search -- --track-video-id "qXy0iyni-xk&t" --head-query "bóng đá" --samples 3 --sample-interval-sec 300 --max-search-rank 80
+```
+
+This lets the report distinguish `not seen <= rank 80`, first appearance, and rank movement over time.
 
 ## Report fields
 
-The report records:
+The report now records:
 
 - `environmentCondition.publicIp`
-- tracked video age and public statistics
-- tracked channel creation time, age, subscriber/video counts when public
-- exact Search rank if observed
-- maximum Search rank actually scanned
-- query/title/tag/description/topic/channel-keyword overlap diagnostics
-- top visible competitors with age, views, category, and query evidence
-- first observed rank on the head query
+- `pristineEvidence`
+- normalized tracked video ID
+- tracked video title, tags, topics, publish age and public statistics
+- channel creation time, channel age, subscriber count and video count when public
+- `scenarioPlan[]` with kind/source/query
+- `searchScans[]` with observed rank and maximum rank actually scanned
+- top visible competitors for each query
+- `competitor_neighborhood` scenarios derived from actual Search results
+- `searchExposure.indexingBaseline`
+- `searchExposure.headKeywords`
+- per-query and per-scenario timelines
 
-`queryEvidence.heuristicScore` is a lab diagnostic only. It is not a YouTube ranking score.
+## Interpretation boundary
 
-## What a useful longitudinal result looks like
-
-A strong new-channel dataset may show a progression such as:
-
-```text
-T+0h   exact/long-tail: rank 14   mid-tail: absent   head: absent
-T+6h   exact/long-tail: rank 4    mid-tail: rank 42  head: absent
-T+24h  exact/long-tail: rank 2    mid-tail: rank 18  head: rank 67
-T+48h  exact/long-tail: rank 2    mid-tail: rank 9   head: rank 31
-```
-
-That supports analysis of how exposure broadens from a highly relevant query toward a competitive head term without inventing a hidden YouTube formula.
+The lab observes public Search behavior. It does not create views, clicks, likes, comments, subscriptions, watch time or other synthetic engagement. A rank change can be correlated with observed public metadata and time, but the report must not claim a hidden YouTube ranking formula or a causal feature weight that YouTube does not expose.
