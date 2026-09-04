@@ -4,4 +4,5 @@ daemon/node_modules/
 daemon/profiles/
 daemon/identity/
 daemon/state/
+research/results/
 *.log
