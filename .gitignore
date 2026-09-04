@@ -5,4 +5,5 @@ daemon/profiles/
 daemon/identity/
 daemon/state/
 research/results/
+research/profiles/
 *.log
