@@ -26,7 +26,8 @@ function parseHeadKeywordNextArgs(argv=process.argv.slice(2)){
     searchScrollDelta:820,
     searchSettleMs:650,
     requirePristine:true,
-    stopOnTarget:false
+    stopOnTarget:false,
+    dynamicFreshBrowser:true
   });
   if(!hasArg(argv,'dwell-sec'))config.dwellSec=5;
   let explicitHeads=null,explicitModes=null;
@@ -60,10 +61,27 @@ function parseHeadKeywordNextArgs(argv=process.argv.slice(2)){
   return config;
 }
 
+function bindDynamicFreshBrowser(config,eligibleRow){
+  if(!config||!eligibleRow?.browserInstanceId)throw new Error('dynamic_browser_binding_requires_eligible_browser');
+  const tabs=Array.isArray(eligibleRow.youtubeTabs)?eligibleRow.youtubeTabs:[];
+  const tab=tabs.find(x=>x.active===true)||tabs[0];
+  if(!tab||!Number.isInteger(Number(tab.id)))throw new Error('dynamic_browser_binding_requires_youtube_tab');
+  const previous={browser:config.browser||null,tab:Number.isInteger(Number(config.tab))?Number(config.tab):null};
+  config.browser=eligibleRow.browserInstanceId;
+  config.tab=Number(tab.id);
+  config.dynamicFreshBrowser=true;
+  return {previous,browserInstanceId:config.browser,tabId:config.tab};
+}
+
 async function main(){
   const argv=process.argv.slice(2),config=parseHeadKeywordNextArgs(argv);
-  await waitForEligibleBrowser(config,{waitSec:waitSeconds(argv)});
+  const supplied={browser:config.browser||null,tab:Number.isInteger(Number(config.tab))?Number(config.tab):null};
+  if(supplied.browser||supplied.tab!=null)console.log('[PREFLIGHT] research:search uses a fresh Chrome each run; ignoring supplied --browser/--tab and selecting the current eligible YouTube Browser dynamically.');
+  config.browser=null;config.tab=null;
+  const eligible=await waitForEligibleBrowser(config,{waitSec:waitSeconds(argv)});
+  const binding=bindDynamicFreshBrowser(config,eligible);
+  console.log('[PREFLIGHT] dynamically bound this run:',JSON.stringify(binding));
   const runner=new HeadKeywordNextRunner(config);return runner.run();
 }
 if(require.main===module)main().catch(error=>{console.error(error);process.exitCode=1;});
-module.exports={splitList,asBool,hasArg,parseHeadKeywordNextArgs,main};
+module.exports={splitList,asBool,hasArg,parseHeadKeywordNextArgs,bindDynamicFreshBrowser,main};
