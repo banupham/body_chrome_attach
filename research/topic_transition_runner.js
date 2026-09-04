@@ -95,7 +95,12 @@ class TopicTransitionRunner {
     await this.req('TAB_SWITCH',{taskId:this.taskId,tabId:this.tabId});
   }
   async observe(reason='observe') {
-    const obs=await this.req('YOUTUBE_OBSERVE',{taskId:this.taskId,tabId:this.tabId});
+    const tabs=await this.req('TABS_LIST',{extensionId:this.browser.extensionInstanceId});
+    const tab=(tabs||[]).find(t=>Number(t.id)===this.tabId);
+    if(!tab)throw new Error(`research_tab_missing:${this.tabId}`);
+    if(tab.youtubeObservationError)throw new Error(`youtube_observation_error:${tab.youtubeObservationError}`);
+    const obs=tab.youtubeObservation;
+    if(!obs)throw new Error('youtube_observation_missing');
     const checkpoint={at:Date.now(),reason,route:obs.route,currentVideo:obs.currentVideo,signedInState:obs.signedInState,diagnostics:surfaceDiagnostics(obs),surfaces:obs.surfaces};
     this.checkpoints.push(checkpoint);this.log('observe',{reason,pageType:obs.route?.pageType,videoId:obs.route?.videoId,surfaces:checkpoint.diagnostics.map(x=>`${x.surface}:${x.extractedItems}/${x.candidateAnchors}`).join(',')});
     return obs;
