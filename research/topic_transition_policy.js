@@ -42,6 +42,28 @@ function textOf(candidate) {
   ].filter(Boolean).join(' | '));
 }
 
+function tokenSet(value) {
+  const stop = new Set(['the','and','for','with','hay','nhat','nhất','top','2026','official','video','mix','playlist']);
+  return new Set(normalize(value).split(/[^a-z0-9À-ỹ]+/iu).filter(x => x.length >= 3 && !stop.has(x)));
+}
+
+function jaccardDistance(a, b) {
+  const aa = a instanceof Set ? a : tokenSet(a), bb = b instanceof Set ? b : tokenSet(b);
+  if (!aa.size && !bb.size) return 0;
+  let intersection = 0;
+  for (const x of aa) if (bb.has(x)) intersection++;
+  const union = aa.size + bb.size - intersection;
+  return union ? 1 - intersection / union : 0;
+}
+
+function pathNovelty(candidate, recentTitles = []) {
+  const current = tokenSet(textOf(candidate));
+  if (!current.size) return 0;
+  const recent = (recentTitles || []).map(tokenSet).filter(x => x.size);
+  if (!recent.length) return 0.5;
+  return Math.min(1, Math.max(0, Math.min(...recent.map(x => jaccardDistance(current, x)))));
+}
+
 function matchTerms(text, terms) {
   const matched = [];
   for (const term of terms || []) {
@@ -111,14 +133,17 @@ function annotateCandidate(candidate, context = {}) {
   const radio = isRadioCandidate(candidate);
   const rankScore = 1 / Math.sqrt(rank);
   const semanticBonus = topic.semantic ? 0.18 : -0.7;
+  const trajectoryNovelty = pathNovelty(candidate, context.recentTitles || []);
   return {
     ...candidate,
     topic,
     radio,
+    trajectoryNovelty,
     objective:
       topic.targetScore * 6.0 +
       topic.bridgeScore * 3.0 +
       topic.noveltyScore * 1.25 +
+      trajectoryNovelty * 0.85 +
       surfaceWeight(candidate?.surface) +
       rankScore * 0.15 +
       semanticBonus -
@@ -176,12 +201,18 @@ function chooseCandidate(candidates, context = {}) {
 }
 
 function bestScores(rows) {
+  const all=rows || [], semantic=all.filter(x => x.topic?.semantic);
+  const crossTopic=semantic.filter(x => Number(x.topic?.sourceTopicScore || 0) < 0.25 || Number(x.topic?.targetScore || 0) > 0 || Number(x.topic?.bridgeScore || 0) > 0);
   return {
-    bestTargetScore:Math.max(0, ...(rows || []).map(x => Number(x.topic?.targetScore || 0))),
-    bestBridgeScore:Math.max(0, ...(rows || []).map(x => Number(x.topic?.bridgeScore || 0))),
-    bestNoveltyScore:Math.max(0, ...(rows || []).map(x => Number(x.topic?.noveltyScore || 0))),
-    semanticCandidateCount:(rows || []).filter(x => x.topic?.semantic).length,
-    radioCandidateCount:(rows || []).filter(x => x.radio).length
+    bestTargetScore:Math.max(0, ...all.map(x => Number(x.topic?.targetScore || 0))),
+    bestBridgeScore:Math.max(0, ...all.map(x => Number(x.topic?.bridgeScore || 0))),
+    bestNoveltyScore:Math.max(0, ...all.map(x => Number(x.topic?.noveltyScore || 0))),
+    bestTrajectoryNovelty:Math.max(0, ...all.map(x => Number(x.trajectoryNovelty || 0))),
+    semanticCandidateCount:semantic.length,
+    radioCandidateCount:all.filter(x => x.radio).length,
+    radioShare:all.length ? all.filter(x => x.radio).length / all.length : 0,
+    crossTopicCandidateCount:crossTopic.length,
+    crossTopicExposureRate:semantic.length ? crossTopic.length / semantic.length : 0
   };
 }
 
@@ -205,6 +236,9 @@ module.exports = {
   SOURCE_MUSIC_TERMS,
   normalize,
   textOf,
+  tokenSet,
+  jaccardDistance,
+  pathNovelty,
   scoreTopic,
   isRadioCandidate,
   annotateCandidate,
