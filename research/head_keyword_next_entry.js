@@ -17,7 +17,7 @@ function parseHeadKeywordNextArgs(argv=process.argv.slice(2)){
     headQueries:[config.query],
     seedCount:3,
     maxHops:2,
-    branchModes:['natural','source_bridge'],
+    branchModes:['source_bridge'],
     maxRelatedRank:40,
     relatedScrolls:8,
     relatedScrollDelta:760,
