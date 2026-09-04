@@ -40,28 +40,59 @@ function loadToken(file) {
 }
 
 class BrainClient {
-  constructor({url=DEFAULT_URL,tokenPath=DEFAULT_TOKEN_PATH,controllerId='topic-transition-lab',timeoutMs=70000}={}) {
-    this.url=url; this.tokenPath=tokenPath; this.controllerId=controllerId; this.timeoutMs=timeoutMs; this.ws=null; this.pending=new Map(); this.seq=0;
+  constructor({url=DEFAULT_URL,tokenPath=DEFAULT_TOKEN_PATH,controllerId='topic-transition-lab',timeoutMs=70000,WebSocketImpl=WebSocket}={}) {
+    this.url=url; this.tokenPath=tokenPath; this.controllerId=controllerId; this.timeoutMs=timeoutMs; this.WebSocketImpl=WebSocketImpl;
+    this.ws=null; this.pending=new Map(); this.seq=0; this.closing=false;
   }
+  openState(){return Number(this.WebSocketImpl.OPEN ?? WebSocket.OPEN ?? 1);}
+  _rejectPending(requestId,error){const p=this.pending.get(String(requestId));if(!p)return false;clearTimeout(p.timer);this.pending.delete(String(requestId));p.reject(error instanceof Error?error:new Error(String(error)));return true;}
+  _rejectAll(error){for(const requestId of [...this.pending.keys()])this._rejectPending(requestId,error);}
   async connect() {
-    if (this.ws?.readyState===WebSocket.OPEN) return;
+    if (this.ws?.readyState===this.openState()) return;
+    this.closing=false;
     const token=loadToken(this.tokenPath);
     await new Promise((resolve,reject)=>{
-      const ws=this.ws=new WebSocket(this.url); let settled=false;
-      const timer=setTimeout(()=>{ if(!settled){settled=true;reject(new Error('brain_connect_timeout'));}},8000);
-      ws.once('open',()=>ws.send(JSON.stringify({type:'HELLO',role:'brain',protocolVersion:PROTOCOL_VERSION,token,controllerId:this.controllerId})));
-      ws.once('error',e=>{if(!settled){settled=true;clearTimeout(timer);reject(e);}});
+      const ws=this.ws=new this.WebSocketImpl(this.url); let settled=false;
+      const failConnect=error=>{if(settled)return;settled=true;clearTimeout(timer);reject(error instanceof Error?error:new Error(String(error)));};
+      const timer=setTimeout(()=>failConnect(new Error('brain_connect_timeout')),8000);
+      ws.once('open',()=>{try{ws.send(JSON.stringify({type:'HELLO',role:'brain',protocolVersion:PROTOCOL_VERSION,token,controllerId:this.controllerId}));}catch(error){failConnect(error);}});
+      ws.once('error',e=>failConnect(e));
       ws.on('message',raw=>{ let msg; try{msg=JSON.parse(String(raw));}catch{return;}
         if(msg.type==='HELLO_ACK'&&msg.authenticated===true&&!settled){settled=true;clearTimeout(timer);resolve();return;}
-        if(msg.type==='AUTH_ERROR'&&!settled){settled=true;clearTimeout(timer);reject(new Error(`brain_auth_failed:${msg.error||'unknown'}`));return;}
+        if(msg.type==='AUTH_ERROR'&&!settled){failConnect(new Error(`brain_auth_failed:${msg.error||'unknown'}`));return;}
         this._onMessage(msg);
       });
-      ws.on('close',()=>{const e=new Error('brain_disconnected');for(const p of this.pending.values()){clearTimeout(p.timer);p.reject(e);}this.pending.clear();});
+      ws.on('close',()=>{
+        const intentional=this.closing||this.ws!==ws;
+        if(this.ws===ws)this.ws=null;
+        const error=new Error(intentional?'brain_client_closed':'brain_disconnected');
+        if(!settled)failConnect(error);
+        this._rejectAll(error);
+      });
     });
   }
   _onMessage(msg){const rid=String(msg?.requestId||'');if(!rid||!this.pending.has(rid))return;const p=this.pending.get(rid);clearTimeout(p.timer);this.pending.delete(rid);if(msg.ok===false||msg.type==='BRAIN_ERROR')p.reject(new Error(String(msg.error?.message||msg.error||'brain_request_failed')));else p.resolve(msg.result??msg);}
-  async request(type,payload={}){await this.connect();const requestId=`research-${Date.now()}-${++this.seq}`;const result=new Promise((resolve,reject)=>{const timer=setTimeout(()=>{this.pending.delete(requestId);reject(new Error(`brain_request_timeout:${type}`));},this.timeoutMs);this.pending.set(requestId,{resolve,reject,timer});});this.ws.send(JSON.stringify({type,requestId,...payload}));return result;}
-  async close(){if(!this.ws)return;const ws=this.ws;this.ws=null;await new Promise(resolve=>{ws.once('close',resolve);ws.close();setTimeout(resolve,250);});}
+  async request(type,payload={}){
+    await this.connect();
+    const ws=this.ws;if(!ws||ws.readyState!==this.openState())throw new Error('brain_not_connected');
+    const requestId=`research-${Date.now()}-${++this.seq}`;
+    const result=new Promise((resolve,reject)=>{const timer=setTimeout(()=>{this.pending.delete(requestId);reject(new Error(`brain_request_timeout:${type}`));},this.timeoutMs);this.pending.set(requestId,{resolve,reject,timer});});
+    const frame=JSON.stringify({type,requestId,...payload});
+    try{ws.send(frame,error=>{if(error)this._rejectPending(requestId,error);});}
+    catch(error){const p=this.pending.get(requestId);if(p)clearTimeout(p.timer);this.pending.delete(requestId);throw error;}
+    return result;
+  }
+  async close(){
+    const ws=this.ws;this.closing=true;
+    if(!ws){this._rejectAll(new Error('brain_client_closed'));this.closing=false;return;}
+    if(this.ws===ws)this.ws=null;
+    this._rejectAll(new Error('brain_client_closed'));
+    await new Promise(resolve=>{
+      if(Number(ws.readyState)===Number(this.WebSocketImpl.CLOSED ?? WebSocket.CLOSED ?? 3)){resolve();return;}
+      ws.once('close',resolve);try{ws.close();}catch{}setTimeout(resolve,250);
+    });
+    this.closing=false;
+  }
 }
 
 function surfaceItems(obs) { return (obs?.surfaces || []).flatMap(s => (s.items || []).map(x => ({...x, surface:x.surface||s.surface}))); }
@@ -89,7 +120,7 @@ class TopicTransitionRunner {
   constructor(config, client = new BrainClient({url:config.url,tokenPath:config.tokenPath})) {
     this.config=config; this.client=client; this.experimentId=id('topic'); this.taskId=`task-${this.experimentId}`;
     this.browser=null; this.tabId=null; this.startedAt=Date.now(); this.endedAt=null; this.visited=new Set(); this.rejected=new Set(); this.maxTarget=0; this.maxBridge=0;
-    this.stagnationCount=0; this.stepsSinceHome=999; this.backtracks=0; this.homeReentries=0; this.events=[]; this.path=[]; this.checkpoints=[]; this.commandIds=[];
+    this.stagnationCount=0; this.stepsSinceHome=999; this.backtracks=0; this.homeReentries=0; this.events=[]; this.path=[]; this.checkpoints=[]; this.commandIds=[];this.taskFinalize=null;
   }
   log(type,payload={}) { const row={at:Date.now(),atIso:nowIso(),type,...payload}; this.events.push(row); console.log(`[${row.atIso}] ${type}`, payload.reason||payload.videoId||''); return row; }
   async req(type,payload={}){const started=Date.now();const result=await this.client.request(type,payload);this.log('body_request',{requestType:type,durationMs:Date.now()-started,requestSummary:this._requestSummary(type,payload),resultSummary:this._resultSummary(type,result)});return result;}
@@ -219,14 +250,19 @@ class TopicTransitionRunner {
       }
       return this.complete('max_steps',{step:this.config.maxSteps});
     } catch(error) {
-      this.log('runner_error',{error:String(error?.stack||error)});await this.req('TASK_FAIL',{taskId:this.taskId,error:String(error?.message||error)}).catch(()=>{});this.endedAt=Date.now();const report=this.report('error',{error:String(error?.stack||error)});this.writeReport(report);throw error;
+      this.log('runner_error',{error:String(error?.stack||error)});await this.req('TASK_FAIL',{taskId:this.taskId,error:String(error?.message||error)}).catch(finalizeError=>this.log('task_finalize_error',{operation:'TASK_FAIL',error:String(finalizeError?.message||finalizeError)}));this.endedAt=Date.now();const report=this.report('error',{error:String(error?.stack||error)});this.writeReport(report);throw error;
     } finally { await this.client.close().catch(()=>{}); }
   }
   async complete(outcome,extra={}) {
-    this.endedAt=Date.now();const result={outcome,...extra,steps:this.path.length,durationMs:this.endedAt-this.startedAt,bestTargetScore:this.maxTarget,bestBridgeScore:this.maxBridge,homeReentries:this.homeReentries,backtracks:this.backtracks,rejectedCandidates:this.rejected.size,motorUsage:this.motorUsage()};
-    await this.req('TASK_COMPLETE',{taskId:this.taskId,result}).catch(()=>{});const report=this.report(outcome,extra);this.writeReport(report);this.log('runner_complete',result);return report;
+    this.endedAt=Date.now();
+    const result={outcome,...extra,steps:this.path.length,durationMs:this.endedAt-this.startedAt,bestTargetScore:this.maxTarget,bestBridgeScore:this.maxBridge,homeReentries:this.homeReentries,backtracks:this.backtracks,rejectedCandidates:this.rejected.size,motorUsage:this.motorUsage()};
+    try{const response=await this.req('TASK_COMPLETE',{taskId:this.taskId,result});this.taskFinalize={ok:true,operation:'TASK_COMPLETE',responseState:response?.state||null};}
+    catch(error){this.taskFinalize={ok:false,operation:'TASK_COMPLETE',error:String(error?.message||error)};this.log('task_finalize_error',this.taskFinalize);}
+    const completed={...result,taskFinalize:this.taskFinalize};
+    this.log('runner_complete',completed);
+    const report=this.report(outcome,{...extra,taskFinalize:this.taskFinalize});this.writeReport(report);return report;
   }
-  report(outcome,extra={}) {return {schemaVersion:1,tool:'BODY Topic Transition Lab',experimentId:this.experimentId,taskId:this.taskId,config:this.config,browserInstanceId:this.browser?.browserInstanceId||null,tabId:this.tabId,startedAt:this.startedAt,endedAt:this.endedAt,outcome,result:{...extra,durationMs:(this.endedAt||Date.now())-this.startedAt,bestTargetScore:this.maxTarget,bestBridgeScore:this.maxBridge,homeReentries:this.homeReentries,backtracks:this.backtracks,rejectedCandidateCount:this.rejected.size,motorUsage:this.motorUsage()},path:this.path,rejectedCandidates:[...this.rejected],checkpoints:this.checkpoints,events:this.events,bodyCommandIds:this.commandIds,guardrails:{stealth:false,detectorEvasion:false,fingerprintSpoofing:false,proxyManipulation:false,engagementActions:false,searchOnlyAtStart:true,directTargetVideoNavigation:false}};}
+  report(outcome,extra={}) {return {schemaVersion:1,tool:'BODY Topic Transition Lab',experimentId:this.experimentId,taskId:this.taskId,config:this.config,browserInstanceId:this.browser?.browserInstanceId||null,tabId:this.tabId,startedAt:this.startedAt,endedAt:this.endedAt,outcome,result:{...extra,durationMs:(this.endedAt||Date.now())-this.startedAt,bestTargetScore:this.maxTarget,bestBridgeScore:this.maxBridge,homeReentries:this.homeReentries,backtracks:this.backtracks,rejectedCandidateCount:this.rejected.size,motorUsage:this.motorUsage(),taskFinalize:this.taskFinalize},path:this.path,rejectedCandidates:[...this.rejected],checkpoints:this.checkpoints,events:this.events,bodyCommandIds:this.commandIds,guardrails:{stealth:false,detectorEvasion:false,fingerprintSpoofing:false,proxyManipulation:false,engagementActions:false,searchOnlyAtStart:true,directTargetVideoNavigation:false}};}
   writeReport(report){const out=this.config.output||path.join(__dirname,'results',`${this.experimentId}.json`);fs.mkdirSync(path.dirname(out),{recursive:true});fs.writeFileSync(out,JSON.stringify(report,null,2));console.log(`Report: ${out}`);}
 }
 
