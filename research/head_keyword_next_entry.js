@@ -27,7 +27,16 @@ function parseHeadKeywordNextArgs(argv=process.argv.slice(2)){
     searchSettleMs:650,
     requirePristine:true,
     stopOnTarget:false,
-    dynamicFreshBrowser:true
+    dynamicFreshBrowser:true,
+    safeClickTopPx:80,
+    safeClickBottomPx:48,
+    safeClickSidePx:8,
+    homeExplore:true,
+    homeSeedCount:3,
+    homeScrolls:2,
+    homeScrollDelta:760,
+    homeSettleMs:900,
+    homeWaitMs:8000
   });
   if(!hasArg(argv,'dwell-sec'))config.dwellSec=5;
   let explicitHeads=null,explicitModes=null;
@@ -39,7 +48,8 @@ function parseHeadKeywordNextArgs(argv=process.argv.slice(2)){
     else if(key==='headQueries')explicitHeads=splitList(value);
     else if(key==='branchModes')explicitModes=splitList(value,/[;,|\n]+/).map(x=>x.toLowerCase());
     else if(key==='requirePristine')config.requirePristine=asBool(value,true);
-    else if(['seedCount','maxHops','maxRelatedRank','relatedScrolls','relatedScrollDelta','relatedSettleMs','relatedSampleLimit','searchSeedScrolls','searchScrollDelta','searchSettleMs'].includes(key))config[key]=Number(value);
+    else if(key==='homeExplore')config.homeExplore=asBool(value,true);
+    else if(['seedCount','maxHops','maxRelatedRank','relatedScrolls','relatedScrollDelta','relatedSettleMs','relatedSampleLimit','searchSeedScrolls','searchScrollDelta','searchSettleMs','safeClickTopPx','safeClickBottomPx','safeClickSidePx','homeSeedCount','homeScrolls','homeScrollDelta','homeSettleMs','homeWaitMs'].includes(key))config[key]=Number(value);
   }
   if(!config.trackVideoId)throw new Error('track_video_id_required');
   config.headQueries=(explicitHeads?.length?explicitHeads:[config.query]).map(x=>String(x).trim()).filter(Boolean);
@@ -57,6 +67,14 @@ function parseHeadKeywordNextArgs(argv=process.argv.slice(2)){
   config.searchSeedScrolls=Math.max(0,Math.min(8,Math.floor(Number(config.searchSeedScrolls)||1)));
   config.searchScrollDelta=Math.max(120,Math.min(1200,Number(config.searchScrollDelta)||820));
   config.searchSettleMs=Math.max(250,Math.min(5000,Number(config.searchSettleMs)||650));
+  config.safeClickTopPx=Math.max(56,Math.min(240,Number(config.safeClickTopPx)||80));
+  config.safeClickBottomPx=Math.max(16,Math.min(180,Number(config.safeClickBottomPx)||48));
+  config.safeClickSidePx=Math.max(0,Math.min(120,Number(config.safeClickSidePx)||8));
+  config.homeSeedCount=Math.max(1,Math.min(10,Math.floor(Number(config.homeSeedCount)||3)));
+  config.homeScrolls=Math.max(0,Math.min(10,Math.floor(Number(config.homeScrolls)||2)));
+  config.homeScrollDelta=Math.max(120,Math.min(1200,Number(config.homeScrollDelta)||760));
+  config.homeSettleMs=Math.max(250,Math.min(5000,Number(config.homeSettleMs)||900));
+  config.homeWaitMs=Math.max(1000,Math.min(20000,Number(config.homeWaitMs)||8000));
   config.stopOnTarget=false;
   return config;
 }
