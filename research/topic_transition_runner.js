@@ -130,7 +130,7 @@ class TopicTransitionRunner {
     await this.clickCandidate(seed,{reason:'search_seed'});this.visited.add(seed.videoId);this.path.push(this.pathRow(1,seed,'search_seed'));
     return this.waitFor(o=>Boolean(o.route?.videoId===seed.videoId),{timeoutMs:10000,reason:'seed_arrival'});
   }
-  pathRow(step,candidate,reason,topic=null){return {at:Date.now(),step,fromVideoId:this.path.at(-1)?.selectedVideoId||null,selectedVideoId:candidate.videoId,surface:candidate.surface,position:candidate.position,title:candidate.title||null,reason,policy:this.config.policy,topic:topic||scoreTopic(candidate,this.config.target),isRadio:candidate.isRadio===true};}
+  pathRow(step,candidate,reason,topic=null){const rank=Number(candidate.position||0);return {at:Date.now(),step,fromVideoId:this.path.at(-1)?.selectedVideoId||null,selectedVideoId:candidate.videoId,surface:candidate.surface,position:candidate.position,rankBucket:rank<=3?'top3':rank<=10?'4-10':rank<=20?'11-20':'21+',title:candidate.title||null,reason,policy:this.config.policy,topic:topic||scoreTopic(candidate,this.config.target),isRadio:candidate.isRadio===true};}
   async clickCandidate(candidate,{reason='candidate'}={}) {
     let obs=await this.observe(`pre_click_${reason}`); let current=findCandidate(obs,candidate.videoId)||candidate;
     for(let i=0;i<this.config.maxScrolls && (!current?.visible||!current?.actionRect);i++){
@@ -154,7 +154,7 @@ class TopicTransitionRunner {
     const started=Date.now();this.log('dwell_start',{step,dwellSec:this.config.dwellSec});await sleep(this.config.dwellSec*1000);const obs=await this.observe(`dwell_complete_${step}`);return {obs,dwellMs:Date.now()-started};
   }
   async selectNext(obs, step) {
-    let candidates=surfaceItems(obs); let context={targetTopic:this.config.target,targetThreshold:this.config.targetThreshold,visited:this.visited,policy:this.config.policy,radioPenalty:0.85};
+    let candidates=surfaceItems(obs); let context={targetTopic:this.config.target,targetThreshold:this.config.targetThreshold,visited:this.visited,policy:this.config.policy,radioPenalty:0.85,recentTitles:this.path.slice(-5).map(x=>x.title).filter(Boolean)};
     let decision=chooseCandidate(candidates,context); let progress=this.updateProgress(decision.rows);
     if(this.config.policy==='portfolio'){
       const action=choosePortfolioAction({rows:decision.rows,state:{stagnationCount:this.stagnationCount,stepsSinceHome:this.stepsSinceHome,homeEscapeAfter:this.config.homeEscapeAfter,longTailAfter:this.config.longTailAfter,targetThreshold:this.config.targetThreshold,pageType:obs.route?.pageType},selection:decision.candidate});
@@ -166,7 +166,7 @@ class TopicTransitionRunner {
         await this.browserCommand('back');this.backtracks++;await sleep(700);obs=await this.observe('portfolio_backtrack');candidates=surfaceItems(obs);decision=chooseCandidate(candidates,{...context,policy:'semantic_escape'});decision.reason=`backtrack:${decision.reason}`;
       }
     }
-    this.log('selection_decision',{step,reason:decision.reason,bestTargetScore:progress.bestTargetScore,bestBridgeScore:progress.bestBridgeScore,semanticCandidateCount:progress.semanticCandidateCount,radioCandidateCount:progress.radioCandidateCount,stagnationCount:this.stagnationCount,selectedVideoId:decision.candidate?.videoId||null});
+    this.log('selection_decision',{step,reason:decision.reason,bestTargetScore:progress.bestTargetScore,bestBridgeScore:progress.bestBridgeScore,semanticCandidateCount:progress.semanticCandidateCount,radioCandidateCount:progress.radioCandidateCount,crossTopicExposureRate:progress.crossTopicExposureRate,bestTrajectoryNovelty:progress.bestTrajectoryNovelty,stagnationCount:this.stagnationCount,selectedVideoId:decision.candidate?.videoId||null});
     return {obs,decision,progress};
   }
   async run() {
