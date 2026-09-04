@@ -30,6 +30,7 @@ function parseHeadKeywordNextArgs(argv=process.argv.slice(2)){
     requirePristine:true,
     stopOnTarget:false,
     dynamicFreshBrowser:true,
+    coldStartMode:String(process.env.BODY_RESEARCH_COLD_START||'').trim()||null,
     safeClickTopPx:80,
     safeClickBottomPx:48,
     safeClickSidePx:8,
@@ -93,16 +94,18 @@ function bindDynamicFreshBrowser(config,eligibleRow){
   config.browser=eligibleRow.browserInstanceId;
   config.tab=Number(tab.id);
   config.dynamicFreshBrowser=true;
-  return {previous,browserInstanceId:config.browser,tabId:config.tab};
+  return {previous,browserInstanceId:config.browser,tabId:config.tab,coldStartMode:config.coldStartMode||null};
 }
 
 async function main(){
   const argv=process.argv.slice(2),config=parseHeadKeywordNextArgs(argv);
   const supplied={browser:config.browser||null,tab:Number.isInteger(Number(config.tab))?Number(config.tab):null};
+  const coldStartBrowser=String(process.env.BODY_RESEARCH_COLD_START_BROWSER||'').trim()||null;
   if(supplied.browser||supplied.tab!=null)console.log('[PREFLIGHT] research:search uses a fresh Chrome each run; ignoring supplied --browser/--tab and selecting the current eligible YouTube Browser dynamically.');
   console.log('[RESEARCH] target-blind route mode: target video/topic metadata is evaluation-only and is never used to choose the next video.');
   console.log('[RESEARCH] history restore uses BODY Browser UI fast Back; CDP gateway is unchanged.');
-  config.browser=null;config.tab=null;
+  if(config.coldStartMode)console.log(`[RESEARCH] cold start mode: ${config.coldStartMode}; Browser id was discovered dynamically during this run.`);
+  config.browser=coldStartBrowser;config.tab=null;
   const eligible=await waitForEligibleBrowser(config,{waitSec:waitSeconds(argv)});
   const binding=bindDynamicFreshBrowser(config,eligible);
   console.log('[PREFLIGHT] dynamically bound this run:',JSON.stringify(binding));
