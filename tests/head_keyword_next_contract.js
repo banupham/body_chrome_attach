@@ -29,7 +29,7 @@ assert.equal(config.maxHops,2);
 assert.deepEqual(config.branchModes,['natural','metadata_bridge']);
 assert.equal(config.dwellSec,5);
 
-const source={videoId:'source00001',path:'/watch?v=source00001',surface:'related',position:1,semanticTitle:true,youtubeApi:{
+const source={videoId:'source00001',title:'Tin bóng đá Việt Nam hôm nay',path:'/watch?v=source00001',surface:'related',position:1,semanticTitle:true,isRadio:false,youtubeApi:{
   videoId:'source00001',title:'Tin bóng đá Việt Nam hôm nay',tags:['bóng đá','việt nam'],categoryId:'17',defaultAudioLanguage:'vi',topicLabels:['Association football'],statistics:{viewCount:'10000'},publishedAt:'2026-09-04T10:00:00Z',channelId:'c1',channel:{country:'VN',keywords:['bóng đá','tin thể thao'],topicLabels:['Sports'],statistics:{subscriberCount:'1000',videoCount:'100'}}
 }};
 const target={videoId:'qXy0iyni-xk',youtubeApi:{
@@ -46,7 +46,7 @@ assert.equal(factors.heuristicOnly,true);
 
 const rows=[
   {...source,videoId:'a1234567890',position:1},
-  {videoId:'b1234567890',path:'/watch?v=b1234567890',surface:'related',position:2,semanticTitle:true,isRadio:false,youtubeApi:{videoId:'b1234567890',title:'Khác chủ đề',tags:[],categoryId:'22',statistics:{viewCount:'1'},channel:{keywords:[],topicLabels:[]}}}
+  {videoId:'b1234567890',title:'Khác chủ đề',path:'/watch?v=b1234567890',surface:'related',position:2,semanticTitle:true,isRadio:false,youtubeApi:{videoId:'b1234567890',title:'Khác chủ đề',tags:[],categoryId:'22',statistics:{viewCount:'1'},channel:{keywords:[],topicLabels:[]}}}
 ];
 assert.equal(chooseNaturalNext(rows,new Set()).videoId,'a1234567890');
 const bridge=chooseMetadataBridge(rows,target.youtubeApi,new Set());
