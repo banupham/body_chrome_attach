@@ -8,6 +8,7 @@ const {TopicRouteRunner}=require('./topic_route_runner');
 function splitList(value,pattern=/[;|\n]+/){return [...new Set(String(value||'').split(pattern).map(x=>x.trim()).filter(Boolean))];}
 function asBool(value,fallback=false){if(value==null)return fallback;return !['0','false','no','off'].includes(String(value).toLowerCase());}
 function hasArg(argv,name){return argv.some(x=>String(x)===`--${name}`||String(x).startsWith(`--${name}=`));}
+function norm(value){return String(value||'').normalize('NFKC').toLowerCase().normalize('NFD').replace(/\p{M}+/gu,'').replace(/đ/g,'d').replace(/\s+/g,' ').trim();}
 
 function parseHeadKeywordNextArgs(argv=process.argv.slice(2)){
   const config=parseArgs(argv);
@@ -56,6 +57,7 @@ function parseHeadKeywordNextArgs(argv=process.argv.slice(2)){
   if(!config.trackVideoId)throw new Error('track_video_id_required');
   config.headQueries=(explicitHeads?.length?explicitHeads:[config.query]).map(x=>String(x).trim()).filter(Boolean);
   config.headQueries=[...new Set(config.headQueries)];if(!config.headQueries.length)throw new Error('head_keyword_required');
+  if(config.targetTopic&&config.headQueries.some(query=>norm(query)===norm(config.targetTopic)))throw new Error('direct_target_topic_search_forbidden');
   config.query=config.headQueries[0];
   config.branchModes=explicitModes?.length?explicitModes:config.branchModes;
   config.branchModes=[...new Set(config.branchModes.map(mode=>mode==='metadata_bridge'?'source_bridge':mode))];
@@ -106,4 +108,4 @@ async function main(){
   const runner=new TopicRouteRunner(config);return runner.run();
 }
 if(require.main===module)main().catch(error=>{console.error(error);process.exitCode=1;});
-module.exports={splitList,asBool,hasArg,parseHeadKeywordNextArgs,bindDynamicFreshBrowser,main};
+module.exports={splitList,asBool,hasArg,norm,parseHeadKeywordNextArgs,bindDynamicFreshBrowser,main};
