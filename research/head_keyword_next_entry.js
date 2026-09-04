@@ -3,7 +3,7 @@
 const {parseArgs}=require('./topic_transition_runner');
 const {waitForEligibleBrowser,waitSeconds}=require('./topic_transition_entry');
 const {normalizeVideoId}=require('./search_exposure_runner');
-const {TopicRouteRunner}=require('./topic_route_runner');
+const {FastBrowserUiRouteRunner}=require('./fast_browser_ui_route_runner');
 
 function splitList(value,pattern=/[;|\n]+/){return [...new Set(String(value||'').split(pattern).map(x=>x.trim()).filter(Boolean))];}
 function asBool(value,fallback=false){if(value==null)return fallback;return !['0','false','no','off'].includes(String(value).toLowerCase());}
@@ -101,11 +101,12 @@ async function main(){
   const supplied={browser:config.browser||null,tab:Number.isInteger(Number(config.tab))?Number(config.tab):null};
   if(supplied.browser||supplied.tab!=null)console.log('[PREFLIGHT] research:search uses a fresh Chrome each run; ignoring supplied --browser/--tab and selecting the current eligible YouTube Browser dynamically.');
   console.log('[RESEARCH] target-blind route mode: target video/topic metadata is evaluation-only and is never used to choose the next video.');
+  console.log('[RESEARCH] history restore uses BODY Browser UI fast Back; CDP gateway is unchanged.');
   config.browser=null;config.tab=null;
   const eligible=await waitForEligibleBrowser(config,{waitSec:waitSeconds(argv)});
   const binding=bindDynamicFreshBrowser(config,eligible);
   console.log('[PREFLIGHT] dynamically bound this run:',JSON.stringify(binding));
-  const runner=new TopicRouteRunner(config);return runner.run();
+  const runner=new FastBrowserUiRouteRunner(config);return runner.run();
 }
 if(require.main===module)main().catch(error=>{console.error(error);process.exitCode=1;});
 module.exports={splitList,asBool,hasArg,norm,parseHeadKeywordNextArgs,bindDynamicFreshBrowser,main};
