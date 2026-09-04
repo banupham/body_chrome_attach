@@ -1,6 +1,6 @@
 'use strict';
 const assert = require('node:assert/strict');
-const {isDurationOnly,stripDurationNoise,youtubeRoute,chooseSemanticTitle} = require('../src/youtube_semantic_observer');
+const {isDurationOnly,stripDurationNoise,youtubeRoute,chooseSemanticTitle,rectIntersects} = require('../src/youtube_semantic_observer');
 
 assert.equal(isDurationOnly('1:31:49'), true);
 assert.equal(isDurationOnly('1:31:49 Đang phát'), true);
@@ -23,4 +23,6 @@ const anchor={getAttribute(name){return name==='aria-label'?'1:31:49':null;},par
 const title=chooseSemanticTitle(card,anchor);
 assert.equal(title.title,'PLAYLIST BALLAD ĐƯỢC NGHE NHIỀU NHẤT 2026');
 assert.equal(title.semantic,true);
+assert.equal(rectIntersects({x:10,y:10,width:30,height:30},{x:20,y:20,width:50,height:50}),true);
+assert.equal(rectIntersects({x:10,y:10,width:5,height:5},{x:20,y:20,width:50,height:50}),false);
 console.log('youtube_semantic_observer_contract: PASS');
