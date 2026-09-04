@@ -3,7 +3,7 @@
 const assert=require('node:assert/strict');
 const {replaceSearchIntents}=require('../research/youtube_search_input');
 const {publicFactorComparison,chooseNaturalNext,chooseMetadataBridge}=require('../research/head_keyword_next_runner');
-const {parseHeadKeywordNextArgs}=require('../research/head_keyword_next_entry');
+const {parseHeadKeywordNextArgs,bindDynamicFreshBrowser}=require('../research/head_keyword_next_entry');
 
 const control={actionRect:{centerX:500,centerY:40,width:420,height:34}};
 const intents=replaceSearchIntents(control,'bóng đá');
@@ -28,6 +28,14 @@ assert.equal(config.seedCount,4);
 assert.equal(config.maxHops,2);
 assert.deepEqual(config.branchModes,['natural','metadata_bridge']);
 assert.equal(config.dwellSec,5);
+assert.equal(config.dynamicFreshBrowser,true);
+
+const staleConfig=parseHeadKeywordNextArgs(['--track-video-id','qXy0iyni-xk&t','--head-queries','bds','--browser','browser-old','--tab','111']);
+const binding=bindDynamicFreshBrowser(staleConfig,{browserInstanceId:'browser-fresh',youtubeTabs:[{id:222,active:true,title:'YouTube'}]});
+assert.equal(binding.previous.browser,'browser-old');
+assert.equal(binding.previous.tab,111);
+assert.equal(staleConfig.browser,'browser-fresh');
+assert.equal(staleConfig.tab,222);
 
 const source={videoId:'source00001',title:'Tin bóng đá Việt Nam hôm nay',path:'/watch?v=source00001',surface:'related',position:1,semanticTitle:true,isRadio:false,youtubeApi:{
   videoId:'source00001',title:'Tin bóng đá Việt Nam hôm nay',tags:['bóng đá','việt nam'],categoryId:'17',defaultAudioLanguage:'vi',topicLabels:['Association football'],statistics:{viewCount:'10000'},publishedAt:'2026-09-04T10:00:00Z',channelId:'c1',channel:{country:'VN',keywords:['bóng đá','tin thể thao'],topicLabels:['Sports'],statistics:{subscriberCount:'1000',videoCount:'100'}}
