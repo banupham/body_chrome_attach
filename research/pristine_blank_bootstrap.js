@@ -30,11 +30,26 @@ function shouldRetryAddressNavigation({browser,attempts,maxAttempts,lastAttemptA
   if(Number(attempts||0)>=Math.max(1,Number(maxAttempts)||1))return false;
   return Number(now)-Number(lastAttemptAt||0)>=Math.max(250,Number(retryMs)||2200);
 }
+function semanticPristineSnapshot(tab){
+  const obs=tab?.youtubeObservation||null,diagnostics=(obs?.surfaces||[]).map(s=>s?.diagnostics||{}),controls=obs?.controls||{},pageType=obs?.route?.pageType||'unknown';
+  const signedInState=String(obs?.signedInState||'unknown');
+  const routeReady=pageType!=='unknown'&&pageType!=='other';
+  const searchControlReady=Boolean(controls?.searchInput?.actionRect);
+  const surfaceRootReady=diagnostics.some(x=>Boolean(x?.rootSelector));
+  const candidateReady=(obs?.surfaces||[]).some(s=>Array.isArray(s?.items)&&s.items.length>0);
+  return {available:Boolean(obs),signedInState,pageType,routeReady,searchControlReady,surfaceRootReady,candidateReady,uiReady:routeReady&&(searchControlReady||surfaceRootReady||candidateReady||signedInState!=='unknown'),observationError:tab?.youtubeObservationError||null};
+}
+async function semanticSnapshotForTab(debug,tabId){
+  try{
+    const rows=await debug.command('tabs'),tab=(rows||[]).find(x=>Number(x?.id)===Number(tabId));
+    return semanticPristineSnapshot(tab);
+  }catch(error){return {available:false,signedInState:'unknown',pageType:'unknown',routeReady:false,searchControlReady:false,surfaceRootReady:false,candidateReady:false,uiReady:false,observationError:String(error?.message||error)};}
+}
 async function issueBrowserUiAddress(debug,target,url,attempt){
   await debug.command(`use ${target.extensionInstanceId}`);
   try{
     const navigation=await debug.command(`browseraddress ${url}`);
-    const summary={browserInstanceId:target.browserInstanceId,url,attempt,delivered:navigation?.delivered??null,verified:navigation?.verified??null,verificationReason:navigation?.verification?.reason||navigation?.observedEffect?.reason||null};
+    const summary={browserInstanceId:target.browserInstanceId,url,attempt,delivered:navigation?.delivered??null,verified:navigation?.verified??null,verificationReason:navigation?.verification?.reason||navigation?.observedEffect?.reason||null,browserApiFastPath:navigation?.executionAudit?.browserApiFastPath===true,nativeInputUsed:navigation?.executionAudit?.nativeInputUsed===true,fastTransport:navigation?.executionAudit?.fastTransport||null};
     console.log('[COLD START] BODY Browser UI address navigation issued:',JSON.stringify(summary));
     if(navigation?.verified!==true)console.log('[COLD START] address navigation not verified yet; polling actual Browser route and retrying only if YouTube does not appear.');
     return {ok:true,navigation,summary};
@@ -45,10 +60,10 @@ async function issueBrowserUiAddress(debug,target,url,attempt){
   }
 }
 
-async function bootstrapBlankBrowser({url='https://www.youtube.com/',waitSec=40,probeIntervalMs=1500,navigationRetryMs=2200,maxNavigationAttempts=3,client=null}={}){
+async function bootstrapBlankBrowser({url='https://www.youtube.com/',waitSec=40,probeIntervalMs=1500,navigationRetryMs=2200,maxNavigationAttempts=3,semanticStableSamples=2,client=null}={}){
   const ownClient=!client,debug=client||new BodyDebugClient(),deadline=Date.now()+Math.max(5,Number(waitSec)||40)*1000;
-  const maxAttempts=Math.max(1,Math.min(6,Math.floor(Number(maxNavigationAttempts)||3))),retryMs=Math.max(500,Number(navigationRetryMs)||2200);
-  let target=null,last=null,lastProbeAt=0,lastNavigationAt=0,navigationAttempts=0;
+  const maxAttempts=Math.max(1,Math.min(6,Math.floor(Number(maxNavigationAttempts)||3))),retryMs=Math.max(500,Number(navigationRetryMs)||2200),requiredSemanticStable=Math.max(1,Math.min(5,Math.floor(Number(semanticStableSamples)||2));
+  let target=null,last=null,lastProbeAt=0,lastNavigationAt=0,navigationAttempts=0,semanticSignedOutStable=0,semanticWaitLogged=false,lastSemantic=null;
   try{
     while(Date.now()<deadline&&!target){
       const browsers=await debug.command('browsers');target=chooseNewestBlankBrowser(browsers);last=browsers;
@@ -66,15 +81,25 @@ async function bootstrapBlankBrowser({url='https://www.youtube.com/',waitSec=40,
       const browsers=await debug.command('browsers'),current=(browsers||[]).find(row=>row.browserInstanceId===target.browserInstanceId);last=browsers;
       if(!current||current.online!==true){await sleep(300);continue;}
       const youtubeTab=youtubeTabOf(current);
-      if(youtubeTab&&current.environment?.eligible===true){
-        const result={browserInstanceId:current.browserInstanceId,extensionInstanceId:current.extensionInstanceId,tabId:Number(youtubeTab.id),url,environment:current.environment,coldStartMode:'about_blank_body_browser_ui',navigationAttempts};
-        console.log('[COLD START] YouTube Browser eligible:',JSON.stringify({browserInstanceId:result.browserInstanceId,tabId:result.tabId,status:result.environment?.status||null,reasons:result.environment?.reasons||[],navigationAttempts}));
-        return result;
-      }
-      if(youtubeTab&&Date.now()-lastProbeAt>=Math.max(500,Number(probeIntervalMs)||1500)){
-        lastProbeAt=Date.now();
-        try{await debug.command(`envprobe ${target.browserInstanceId}`);console.log(`[COLD START] Guardian re-probe requested for ${target.browserInstanceId}.`);}catch(error){console.log('[COLD START] Guardian probe pending:',String(error?.message||error));}
-      }else if(!youtubeTab&&shouldRetryAddressNavigation({browser:current,attempts:navigationAttempts,maxAttempts,lastAttemptAt:lastNavigationAt,now:Date.now(),retryMs})){
+      if(youtubeTab){
+        if(current.environment?.eligible===true){
+          lastSemantic=await semanticSnapshotForTab(debug,youtubeTab.id);
+          if(lastSemantic.signedInState==='signed_in')throw new Error(`pristine_blank_signed_in:tab=${youtubeTab.id}:pageType=${lastSemantic.pageType}`);
+          if(lastSemantic.signedInState==='signed_out'&&lastSemantic.routeReady)semanticSignedOutStable++;else semanticSignedOutStable=0;
+          if(semanticSignedOutStable>=requiredSemanticStable){
+            const result={browserInstanceId:current.browserInstanceId,extensionInstanceId:current.extensionInstanceId,tabId:Number(youtubeTab.id),url,environment:current.environment,coldStartMode:'about_blank_body_browser_ui',navigationAttempts,semanticSignedOutStable,semantic: lastSemantic};
+            console.log('[COLD START] YouTube Browser eligible and semantic signed-out state stable:',JSON.stringify({browserInstanceId:result.browserInstanceId,tabId:result.tabId,status:result.environment?.status||null,reasons:result.environment?.reasons||[],navigationAttempts,semanticSignedOutStable,signedInState:lastSemantic.signedInState,pageType:lastSemantic.pageType,uiReady:lastSemantic.uiReady}));
+            return result;
+          }
+          if(!semanticWaitLogged||lastSemantic.signedInState!=='unknown'){
+            semanticWaitLogged=true;
+            console.log('[COLD START] Guardian is eligible; waiting for YouTube semantic/auth hydration:',JSON.stringify({signedInState:lastSemantic.signedInState,pageType:lastSemantic.pageType,uiReady:lastSemantic.uiReady,searchControlReady:lastSemantic.searchControlReady,surfaceRootReady:lastSemantic.surfaceRootReady,candidateReady:lastSemantic.candidateReady,stableSignedOutSamples:semanticSignedOutStable,requiredStableSamples:requiredSemanticStable,observationError:lastSemantic.observationError}));
+          }
+        }else if(Date.now()-lastProbeAt>=Math.max(500,Number(probeIntervalMs)||1500)){
+          lastProbeAt=Date.now();
+          try{await debug.command(`envprobe ${target.browserInstanceId}`);console.log(`[COLD START] Guardian re-probe requested for ${target.browserInstanceId}.`);}catch(error){console.log('[COLD START] Guardian probe pending:',String(error?.message||error));}
+        }
+      }else if(shouldRetryAddressNavigation({browser:current,attempts:navigationAttempts,maxAttempts,lastAttemptAt:lastNavigationAt,now:Date.now(),retryMs})){
         navigationAttempts++;
         lastNavigationAt=Date.now();
         const active=activeTabOf(current);
@@ -84,10 +109,10 @@ async function bootstrapBlankBrowser({url='https://www.youtube.com/',waitSec=40,
       await sleep(350);
     }
     const current=(last||[]).find(row=>row.browserInstanceId===target.browserInstanceId);
-    throw new Error(`pristine_blank_bootstrap_timeout:navigationAttempts=${navigationAttempts}:${JSON.stringify(compactBrowser(current))}`);
+    throw new Error(`pristine_blank_bootstrap_timeout:navigationAttempts=${navigationAttempts}:semantic=${JSON.stringify(lastSemantic)}:${JSON.stringify(compactBrowser(current))}`);
   }finally{if(ownClient)await debug.close().catch(()=>{});}
 }
 
 async function main(){const waitSec=Math.max(5,Number(process.env.BODY_RESEARCH_BROWSER_WAIT_SEC||40)||40);const result=await bootstrapBlankBrowser({waitSec});console.log(JSON.stringify(result,null,2));return result;}
 if(require.main===module)main().catch(error=>{console.error(error);process.exitCode=1;});
-module.exports={sleep,tabsOf,isYoutubeTab,isBlankTab,blankBrowserCandidates,chooseNewestBlankBrowser,youtubeTabOf,activeTabOf,compactBrowser,shouldRetryAddressNavigation,issueBrowserUiAddress,bootstrapBlankBrowser,main};
+module.exports={sleep,tabsOf,isYoutubeTab,isBlankTab,blankBrowserCandidates,chooseNewestBlankBrowser,youtubeTabOf,activeTabOf,compactBrowser,shouldRetryAddressNavigation,semanticPristineSnapshot,semanticSnapshotForTab,issueBrowserUiAddress,bootstrapBlankBrowser,main};
