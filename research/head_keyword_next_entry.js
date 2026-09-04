@@ -28,6 +28,9 @@ function parseHeadKeywordNextArgs(argv=process.argv.slice(2)){
     searchScrollDelta:820,
     searchSettleMs:650,
     requirePristine:true,
+    pristineSettleMs:12000,
+    pristinePollMs:400,
+    pristineStableSamples:2,
     stopOnTarget:false,
     dynamicFreshBrowser:true,
     coldStartMode:String(process.env.BODY_RESEARCH_COLD_START||'').trim()||null,
@@ -53,7 +56,7 @@ function parseHeadKeywordNextArgs(argv=process.argv.slice(2)){
     else if(key==='branchModes')explicitModes=splitList(value,/[;,|\n]+/).map(x=>x.toLowerCase());
     else if(key==='requirePristine')config.requirePristine=asBool(value,true);
     else if(key==='homeExplore')config.homeExplore=asBool(value,true);
-    else if(['seedCount','maxHops','maxRelatedRank','relatedScrolls','relatedScrollDelta','relatedSettleMs','relatedSampleLimit','searchSeedScrolls','searchScrollDelta','searchSettleMs','safeClickTopPx','safeClickBottomPx','safeClickSidePx','homeSeedCount','homeScrolls','homeScrollDelta','homeSettleMs','homeWaitMs'].includes(key))config[key]=Number(value);
+    else if(['seedCount','maxHops','maxRelatedRank','relatedScrolls','relatedScrollDelta','relatedSettleMs','relatedSampleLimit','searchSeedScrolls','searchScrollDelta','searchSettleMs','pristineSettleMs','pristinePollMs','pristineStableSamples','safeClickTopPx','safeClickBottomPx','safeClickSidePx','homeSeedCount','homeScrolls','homeScrollDelta','homeSettleMs','homeWaitMs'].includes(key))config[key]=Number(value);
   }
   if(!config.trackVideoId)throw new Error('track_video_id_required');
   config.headQueries=(explicitHeads?.length?explicitHeads:[config.query]).map(x=>String(x).trim()).filter(Boolean);
@@ -73,6 +76,9 @@ function parseHeadKeywordNextArgs(argv=process.argv.slice(2)){
   config.searchSeedScrolls=Math.max(0,Math.min(8,Math.floor(Number(config.searchSeedScrolls)||1)));
   config.searchScrollDelta=Math.max(120,Math.min(1200,Number(config.searchScrollDelta)||820));
   config.searchSettleMs=Math.max(250,Math.min(5000,Number(config.searchSettleMs)||650));
+  config.pristineSettleMs=Math.max(2000,Math.min(30000,Number(config.pristineSettleMs)||12000));
+  config.pristinePollMs=Math.max(100,Math.min(2000,Number(config.pristinePollMs)||400));
+  config.pristineStableSamples=Math.max(1,Math.min(5,Math.floor(Number(config.pristineStableSamples)||2)));
   config.safeClickTopPx=Math.max(56,Math.min(240,Number(config.safeClickTopPx)||80));
   config.safeClickBottomPx=Math.max(16,Math.min(180,Number(config.safeClickBottomPx)||48));
   config.safeClickSidePx=Math.max(0,Math.min(120,Number(config.safeClickSidePx)||8));
@@ -104,6 +110,7 @@ async function main(){
   if(supplied.browser||supplied.tab!=null)console.log('[PREFLIGHT] research:search uses a fresh Chrome each run; ignoring supplied --browser/--tab and selecting the current eligible YouTube Browser dynamically.');
   console.log('[RESEARCH] target-blind route mode: target video/topic metadata is evaluation-only and is never used to choose the next video.');
   console.log('[RESEARCH] history restore uses BODY Browser UI fast Back; CDP gateway is unchanged.');
+  console.log(`[RESEARCH] pristine auth preflight waits up to ${config.pristineSettleMs}ms and requires ${config.pristineStableSamples} consecutive signed_out observations; unknown is never treated as signed_out.`);
   if(config.coldStartMode)console.log(`[RESEARCH] cold start mode: ${config.coldStartMode}; Browser id was discovered dynamically during this run.`);
   config.browser=coldStartBrowser;config.tab=null;
   const eligible=await waitForEligibleBrowser(config,{waitSec:waitSeconds(argv)});
