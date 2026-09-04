@@ -16,6 +16,27 @@ async function activeTabId() {
   return id;
 }
 
+async function youtubeObservationForTab(tabId, maxItems = 50) {
+  const id = Number(tabId);
+  if (!Number.isInteger(id)) throw new Error('youtube_observation_tab_required');
+  const tab = await chrome.tabs.get(id);
+  let host = '';
+  try { host = new URL(String(tab?.url || '')).hostname.toLowerCase(); } catch {}
+  if (!/(^|\.)youtube\.com$/.test(host)) throw new Error(`youtube_observation_wrong_site:${host || 'unknown'}`);
+  const response = await chrome.tabs.sendMessage(id, { action:'body.youtubeObservation', maxItems });
+  if (!response?.ok || !response.result) throw new Error(response?.error || 'youtube_observation_unavailable');
+  return { tabId:id, ...response.result };
+}
+
+const baseDaemonHandle = daemon.handle.bind(daemon);
+daemon.handle = async message => {
+  if (message?.type === 'YOUTUBE_OBSERVE') {
+    const tabId = Number.isInteger(Number(message.tabId)) ? Number(message.tabId) : await activeTabId();
+    return youtubeObservationForTab(tabId, message.maxItems);
+  }
+  return baseDaemonHandle(message);
+};
+
 function rememberUserMotor(tabId, payload) {
   const id = Number(tabId);
   if (!Number.isInteger(id)) return;
