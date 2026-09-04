@@ -157,6 +157,13 @@ function isVisibleRect(rect, windowRef = globalThis.window) {
   return rect.width > 1 && rect.height > 1 && rect.x < w && rect.y < h && rect.x + rect.width > 0 && rect.y + rect.height > 0;
 }
 
+function rectIntersects(a,b) {
+  if (!a || !b) return false;
+  return a.width > 1 && a.height > 1 && b.width > 1 && b.height > 1 &&
+    a.x < b.x + b.width && a.x + a.width > b.x &&
+    a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
 function candidateFromAnchor(anchor, surface, position, { windowRef = globalThis.window } = {}) {
   const href = anchor?.getAttribute?.('href') || anchor?.href || '';
   const u = safeUrl(href);
@@ -253,6 +260,7 @@ function cardModelCounts(anchors) {
 
 function extractSurface(documentRef, surface, options = {}) {
   const { root, rootSelector } = rootsForSurface(documentRef, surface);
+  const rootRect = rectOf(root);
   const anchors = anchorsIn(root, surface);
   const maxItems = Math.max(1, Math.min(100, Number(options.maxItems || 50)));
   const items = [];
@@ -262,12 +270,14 @@ function extractSurface(documentRef, surface, options = {}) {
     if (!item || seen.has(item.videoId)) continue;
     seen.add(item.videoId);
     item.position = items.length + 1;
+    if (surface === 'mix_queue' && rootRect && item.actionRect) item.visible = item.visible && rectIntersects(item.actionRect, rootRect);
     items.push(item);
     if (items.length >= maxItems) break;
   }
   const semanticCount = items.filter(x => x.semanticTitle && x.title).length;
   return {
     surface,
+    scrollRect:surface === 'mix_queue' ? rootRect : null,
     diagnostics:{
       rootSelector,
       candidateAnchors:anchors.length,
@@ -275,7 +285,7 @@ function extractSurface(documentRef, surface, options = {}) {
       semanticTitleItems:semanticCount,
       semanticCoverage:items.length ? semanticCount / items.length : 0,
       cardModels:cardModelCounts(anchors),
-      extractorVersion:3
+      extractorVersion:4
     },
     items
   };
@@ -395,6 +405,7 @@ module.exports = {
   stripDurationNoise,
   youtubeRoute,
   chooseSemanticTitle,
+  rectIntersects,
   candidateFromAnchor,
   extractSurface,
   extractControls,
