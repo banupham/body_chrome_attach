@@ -3,7 +3,7 @@
 const {parseArgs}=require('./topic_transition_runner');
 const {waitForEligibleBrowser,waitSeconds}=require('./topic_transition_entry');
 const {normalizeVideoId}=require('./search_exposure_runner');
-const {HeadKeywordNextRunner}=require('./head_keyword_next_runner');
+const {TopicRouteRunner}=require('./topic_route_runner');
 
 function splitList(value,pattern=/[;|\n]+/){return [...new Set(String(value||'').split(pattern).map(x=>x.trim()).filter(Boolean))];}
 function asBool(value,fallback=false){if(value==null)return fallback;return !['0','false','no','off'].includes(String(value).toLowerCase());}
@@ -13,10 +13,11 @@ function parseHeadKeywordNextArgs(argv=process.argv.slice(2)){
   const config=parseArgs(argv);
   Object.assign(config,{
     trackVideoId:null,
+    targetTopic:null,
     headQueries:[config.query],
     seedCount:3,
     maxHops:2,
-    branchModes:['natural','metadata_bridge'],
+    branchModes:['natural','source_bridge'],
     maxRelatedRank:40,
     relatedScrolls:8,
     relatedScrollDelta:760,
@@ -45,6 +46,7 @@ function parseHeadKeywordNextArgs(argv=process.argv.slice(2)){
     const [k0,v0]=raw.slice(2).split('=',2),key=k0.replace(/-([a-z])/g,(_,c)=>c.toUpperCase());let value=v0;
     if(value==null&&argv[i+1]&&!String(argv[i+1]).startsWith('--'))value=argv[++i];
     if(key==='trackVideoId')config.trackVideoId=normalizeVideoId(value);
+    else if(key==='targetTopic')config.targetTopic=String(value||'').trim()||null;
     else if(key==='headQueries')explicitHeads=splitList(value);
     else if(key==='branchModes')explicitModes=splitList(value,/[;,|\n]+/).map(x=>x.toLowerCase());
     else if(key==='requirePristine')config.requirePristine=asBool(value,true);
@@ -56,9 +58,10 @@ function parseHeadKeywordNextArgs(argv=process.argv.slice(2)){
   config.headQueries=[...new Set(config.headQueries)];if(!config.headQueries.length)throw new Error('head_keyword_required');
   config.query=config.headQueries[0];
   config.branchModes=explicitModes?.length?explicitModes:config.branchModes;
-  config.branchModes=[...new Set(config.branchModes)];for(const mode of config.branchModes)if(!['natural','metadata_bridge'].includes(mode))throw new Error(`unsupported_branch_mode:${mode}`);
+  config.branchModes=[...new Set(config.branchModes.map(mode=>mode==='metadata_bridge'?'source_bridge':mode))];
+  for(const mode of config.branchModes)if(!['natural','source_bridge'].includes(mode))throw new Error(`unsupported_branch_mode:${mode}`);
   config.seedCount=Math.max(1,Math.min(10,Math.floor(Number(config.seedCount)||3)));
-  config.maxHops=Math.max(1,Math.min(4,Math.floor(Number(config.maxHops)||2)));
+  config.maxHops=Math.max(1,Math.min(6,Math.floor(Number(config.maxHops)||2)));
   config.maxRelatedRank=Math.max(5,Math.min(100,Math.floor(Number(config.maxRelatedRank)||40)));
   config.relatedScrolls=Math.max(0,Math.min(20,Math.floor(Number(config.relatedScrolls)||8)));
   config.relatedScrollDelta=Math.max(120,Math.min(1200,Number(config.relatedScrollDelta)||760));
@@ -95,11 +98,12 @@ async function main(){
   const argv=process.argv.slice(2),config=parseHeadKeywordNextArgs(argv);
   const supplied={browser:config.browser||null,tab:Number.isInteger(Number(config.tab))?Number(config.tab):null};
   if(supplied.browser||supplied.tab!=null)console.log('[PREFLIGHT] research:search uses a fresh Chrome each run; ignoring supplied --browser/--tab and selecting the current eligible YouTube Browser dynamically.');
+  console.log('[RESEARCH] target-blind route mode: target video/topic metadata is evaluation-only and is never used to choose the next video.');
   config.browser=null;config.tab=null;
   const eligible=await waitForEligibleBrowser(config,{waitSec:waitSeconds(argv)});
   const binding=bindDynamicFreshBrowser(config,eligible);
   console.log('[PREFLIGHT] dynamically bound this run:',JSON.stringify(binding));
-  const runner=new HeadKeywordNextRunner(config);return runner.run();
+  const runner=new TopicRouteRunner(config);return runner.run();
 }
 if(require.main===module)main().catch(error=>{console.error(error);process.exitCode=1;});
 module.exports={splitList,asBool,hasArg,parseHeadKeywordNextArgs,bindDynamicFreshBrowser,main};
