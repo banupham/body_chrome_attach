@@ -5,7 +5,7 @@ const TOPICS = Object.freeze({
     direct: [
       'gameplay','gaming','gamer','esports','e-sports','minecraft','roblox','valorant','pubg','free fire',
       'liên quân','lien quan','mobile legends','genshin','fortnite','call of duty','warzone','cs2','counter strike',
-      'league of legends','liên minh huyền thoại','lien minh huyen thoai','dota','gta','game review','walkthrough','speedrun'
+      'league of legends','liên minh huyền thoại','lien minh huyen thoai','dota','gta','game','game review','walkthrough','speedrun'
     ],
     bridge: [
       'gaming music','game music','game ost','game soundtrack','soundtrack game','nhạc game','ost game',
@@ -64,11 +64,21 @@ function pathNovelty(candidate, recentTitles = []) {
   return Math.min(1, Math.max(0, Math.min(...recent.map(x => jaccardDistance(current, x)))));
 }
 
+function containsTerm(text, term) {
+  const key=normalize(term);
+  if(!key)return false;
+  if(/^[a-z0-9]{2,4}$/i.test(key)){
+    const escaped=key.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`,'i').test(text);
+  }
+  return text.includes(key);
+}
+
 function matchTerms(text, terms) {
   const matched = [];
   for (const term of terms || []) {
     const key = normalize(term);
-    if (key && text.includes(key)) matched.push(key);
+    if (key && containsTerm(text,key)) matched.push(key);
   }
   return [...new Set(matched)];
 }
@@ -239,6 +249,7 @@ module.exports = {
   tokenSet,
   jaccardDistance,
   pathNovelty,
+  containsTerm,
   scoreTopic,
   isRadioCandidate,
   annotateCandidate,
