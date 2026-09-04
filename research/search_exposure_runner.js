@@ -44,10 +44,10 @@ function canonicalSearchRows(obs){
   return [...byId.values()].sort((a,b)=>Number(a.position||9999)-Number(b.position||9999));
 }
 function addScenario(plan,index,scenario){
-  const query=clean(scenario.query),key=folded(query);if(!key)return;
+  const query=clean(scenario.query),key=normalized(query);if(!key)return;
   if(index.has(key)){
     const row=plan[index.get(key)];row.roles=[...new Set([...(row.roles||[row.kind]),scenario.kind])];
-    if(scenario.kind==='head_exact'){row.kind='head_exact';row.headQuery=clean(scenario.headQuery||query);row.source='head_keyword';}
+    if(scenario.kind==='head_exact'){row.id=scenario.id;row.kind='head_exact';row.query=query;row.headQuery=clean(scenario.headQuery||query);row.source='head_keyword';}
     return;
   }
   index.set(key,plan.length);plan.push({...scenario,query,headQuery:scenario.headQuery?clean(scenario.headQuery):null,roles:[scenario.kind]});
