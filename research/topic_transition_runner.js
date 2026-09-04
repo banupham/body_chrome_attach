@@ -19,13 +19,13 @@ function parseArgs(argv = process.argv.slice(2)) {
   const out = {
     query:'nhạc', target:'gaming', policy:'portfolio', dwellSec:30, maxSteps:18, maxRuntimeSec:1200,
     targetThreshold:0.6, seedRank:1, browser:null, tab:null, homeEscapeAfter:2, longTailAfter:4,
-    backtrackLimit:3, maxScrolls:8, output:null, url:DEFAULT_URL, tokenPath:DEFAULT_TOKEN_PATH, stopOnTarget:true
+    backtrackLimit:3, maxScrolls:8, candidateRetryLimit:5, output:null, url:DEFAULT_URL, tokenPath:DEFAULT_TOKEN_PATH, stopOnTarget:true
   };
   for (let i=0;i<argv.length;i++) {
     const raw=argv[i]; if (!raw.startsWith('--')) continue;
     const [k0,v0] = raw.slice(2).split('=',2); const k=k0.replace(/-([a-z])/g,(_,c)=>c.toUpperCase());
     let v=v0; if (v == null && argv[i+1] && !argv[i+1].startsWith('--')) v=argv[++i];
-    if (['dwellSec','maxSteps','maxRuntimeSec','seedRank','homeEscapeAfter','longTailAfter','backtrackLimit','maxScrolls','targetThreshold'].includes(k)) out[k]=Number(v);
+    if (['dwellSec','maxSteps','maxRuntimeSec','seedRank','homeEscapeAfter','longTailAfter','backtrackLimit','maxScrolls','candidateRetryLimit','targetThreshold'].includes(k)) out[k]=Number(v);
     else if (k==='tab') out.tab=Number(v);
     else if (k==='stopOnTarget') out.stopOnTarget=asBool(v,true);
     else if (k in out) out[k]=v;
@@ -65,20 +65,37 @@ class BrainClient {
 }
 
 function surfaceItems(obs) { return (obs?.surfaces || []).flatMap(s => (s.items || []).map(x => ({...x, surface:x.surface||s.surface}))); }
-function surfaceDiagnostics(obs){return (obs?.surfaces||[]).map(s=>({surface:s.surface,...(s.diagnostics||{})}));}
-function findCandidate(obs, videoId) { return surfaceItems(obs).find(x => String(x.videoId)===String(videoId)) || null; }
+function surfaceDescriptor(obs,surface) { return (obs?.surfaces||[]).find(s=>String(s.surface)===String(surface)) || null; }
+function surfaceDiagnostics(obs){return (obs?.surfaces||[]).map(s=>({surface:s.surface,scrollRectAvailable:Boolean(s.scrollRect),...(s.diagnostics||{})}));}
+function findCandidate(obs, candidate) {
+  const videoId=typeof candidate==='object'?candidate?.videoId:candidate;
+  const surface=typeof candidate==='object'?candidate?.surface:null;
+  const matches=surfaceItems(obs).filter(x=>String(x.videoId)===String(videoId));
+  return matches.find(x=>surface&&x.surface===surface&&x.visible&&x.actionRect) ||
+    matches.find(x=>surface&&x.surface===surface&&x.actionRect) ||
+    matches.find(x=>surface&&x.surface===surface) ||
+    matches.find(x=>x.visible&&x.actionRect) ||
+    matches.find(x=>x.actionRect) || matches[0] || null;
+}
+function surfaceScrollPoint(obs,surface) {
+  const vw=Math.max(4,Number(obs?.viewport?.width||1000)),vh=Math.max(4,Number(obs?.viewport?.height||800));
+  const r=surfaceDescriptor(obs,surface)?.scrollRect;
+  if(r&&Number.isFinite(Number(r.centerX))&&Number.isFinite(Number(r.centerY)))return {x:clamp(Number(r.centerX),2,vw-2),y:clamp(Number(r.centerY),2,vh-2),scoped:true};
+  return {x:clamp(vw*0.5,2,vw-2),y:clamp(vh*0.55,2,vh-2),scoped:false};
+}
 function rectIntent(type, descriptor, extra={}) { const r=descriptor?.actionRect; if(!r) throw new Error(`action_rect_required:${type}`); return {type,x:r.centerX,y:r.centerY,width:r.width,height:r.height,...extra}; }
 
 class TopicTransitionRunner {
   constructor(config, client = new BrainClient({url:config.url,tokenPath:config.tokenPath})) {
     this.config=config; this.client=client; this.experimentId=id('topic'); this.taskId=`task-${this.experimentId}`;
-    this.browser=null; this.tabId=null; this.startedAt=Date.now(); this.endedAt=null; this.visited=new Set(); this.maxTarget=0; this.maxBridge=0;
+    this.browser=null; this.tabId=null; this.startedAt=Date.now(); this.endedAt=null; this.visited=new Set(); this.rejected=new Set(); this.maxTarget=0; this.maxBridge=0;
     this.stagnationCount=0; this.stepsSinceHome=999; this.backtracks=0; this.homeReentries=0; this.events=[]; this.path=[]; this.checkpoints=[]; this.commandIds=[];
   }
   log(type,payload={}) { const row={at:Date.now(),atIso:nowIso(),type,...payload}; this.events.push(row); console.log(`[${row.atIso}] ${type}`, payload.reason||payload.videoId||''); return row; }
   async req(type,payload={}){const started=Date.now();const result=await this.client.request(type,payload);this.log('body_request',{requestType:type,durationMs:Date.now()-started,requestSummary:this._requestSummary(type,payload),resultSummary:this._resultSummary(type,result)});return result;}
   _requestSummary(type,p){return {taskId:p.taskId||null,tabId:p.tabId??null,action:p.action||null,intentType:p.intent?.type||null};}
-  _resultSummary(type,r){return {commandId:r?.commandId||r?.execution?.commandId||null,delivered:r?.execution?.execution?.delivered??r?.execution?.delivered??null,verified:r?.execution?.execution?.verified??r?.execution?.verified??null,type};}
+  _resultSummary(type,r){return {commandId:r?.commandId||r?.execution?.commandId||null,delivered:r?.execution?.execution?.delivered??r?.execution?.delivered??null,verified:r?.execution?.execution?.verified??r?.execution?.verified??null,behaviorSource:r?.behaviorSource??r?.execution?.behaviorSource??null,learnedGroup:r?.learnedGroup??r?.execution?.learnedGroup??null,learnedTemplateCount:r?.learnedTemplateCount??r?.execution?.learnedTemplateCount??0,type};}
+  motorUsage(){const rows=this.events.filter(x=>x.type==='body_request'&&x.requestType==='INTENT_EXECUTE');const sources={},groups={};for(const row of rows){const s=String(row.resultSummary?.behaviorSource||'unknown');sources[s]=(sources[s]||0)+1;const g=row.resultSummary?.learnedGroup;if(g)groups[g]=(groups[g]||0)+1;}return {intentCount:rows.length,sources,learnedGroups:groups};}
   async selectBrowser() {
     const status=await this.req('BODY_STATUS');
     const rows=(status.browsers||[]).filter(b=>b.online&&b.environment?.eligible===true&&!['QUARANTINED','ERROR','OFFLINE'].includes(b.state));
@@ -125,22 +142,32 @@ class TopicTransitionRunner {
     await this.intent({type:'pressKey',key:'Enter'});
     obs=await this.waitFor(o=>o.route?.pageType==='search'&&surfaceItems(o).filter(x=>x.surface==='search_results').length>0,{timeoutMs:12000,reason:'search_results'});
     const results=surfaceItems(obs).filter(x=>x.surface==='search_results');
-    const seed=results.find(x=>Number(x.position)===Number(this.config.seedRank))||results[0];
-    if(!seed)throw new Error('search_seed_missing');
-    await this.clickCandidate(seed,{reason:'search_seed'});this.visited.add(seed.videoId);this.path.push(this.pathRow(1,seed,'search_seed'));
+    const preferred=results.filter(x=>x.isRadio!==true&&x.semanticTitle!==false&&x.title);
+    const rankSeed=preferred.find(x=>Number(x.position)===Number(this.config.seedRank));
+    const seedOrder=[rankSeed,...preferred,...results.filter(x=>x.isRadio!==true),...results].filter(Boolean).filter((x,i,a)=>a.findIndex(y=>y.videoId===x.videoId)===i);
+    let seed=null;
+    for(const candidate of seedOrder.slice(0,Math.max(1,this.config.candidateRetryLimit))){
+      if(await this.clickCandidate(candidate,{reason:'search_seed'})){seed=candidate;break;}
+      this.rejected.add(candidate.videoId);this.log('candidate_rejected',{reason:'search_seed_unactionable',videoId:candidate.videoId,surface:candidate.surface});
+    }
+    if(!seed)throw new Error('search_seed_unactionable');
+    this.visited.add(seed.videoId);this.path.push(this.pathRow(1,seed,'search_seed'));
     return this.waitFor(o=>Boolean(o.route?.videoId===seed.videoId),{timeoutMs:10000,reason:'seed_arrival'});
   }
   pathRow(step,candidate,reason,topic=null){const rank=Number(candidate.position||0);return {at:Date.now(),step,fromVideoId:this.path.at(-1)?.selectedVideoId||null,selectedVideoId:candidate.videoId,surface:candidate.surface,position:candidate.position,rankBucket:rank<=3?'top3':rank<=10?'4-10':rank<=20?'11-20':'21+',title:candidate.title||null,reason,policy:this.config.policy,topic:topic||scoreTopic(candidate,this.config.target),isRadio:candidate.isRadio===true};}
   async clickCandidate(candidate,{reason='candidate'}={}) {
-    let obs=await this.observe(`pre_click_${reason}`); let current=findCandidate(obs,candidate.videoId)||candidate;
+    let obs=await this.observe(`pre_click_${reason}`); let current=findCandidate(obs,candidate)||candidate;
     for(let i=0;i<this.config.maxScrolls && (!current?.visible||!current?.actionRect);i++){
-      const rect=current?.actionRect; const vh=Number(obs.viewport?.height||800); let delta=650;
-      if(rect&&Number.isFinite(rect.centerY))delta=clamp(rect.centerY-vh*0.55,-850,850);
+      const point=surfaceScrollPoint(obs,candidate.surface);const rect=current?.actionRect;let delta=650;
+      if(rect&&Number.isFinite(Number(rect.centerY)))delta=clamp(Number(rect.centerY)-point.y,-850,850);
       if(Math.abs(delta)<120)delta=delta>=0?300:-300;
-      await this.intent({type:'scrollVertical',delta}); await sleep(250);obs=await this.observe(`scroll_for_${candidate.videoId}`);current=findCandidate(obs,candidate.videoId)||current;
+      await this.intent({type:'moveTo',x:point.x,y:point.y,role:point.scoped?'scroll_container':'page'});
+      await this.intent({type:'scrollVertical',delta});
+      this.log('candidate_scroll',{reason,videoId:candidate.videoId,surface:candidate.surface,attempt:i+1,delta,scrollX:point.x,scrollY:point.y,scoped:point.scoped});
+      await sleep(250);obs=await this.observe(`scroll_for_${candidate.videoId}`);current=findCandidate(obs,candidate)||current;
     }
-    if(!current?.actionRect)throw new Error(`candidate_rect_missing:${candidate.videoId}`);
-    await this.intent(rectIntent('click',current,{role:'link'}));this.log('candidate_clicked',{reason,videoId:candidate.videoId,surface:candidate.surface,position:candidate.position,title:candidate.title||null});
+    if(!current?.visible||!current?.actionRect){this.log('candidate_unactionable',{reason:'action_rect_unavailable_after_scroll',videoId:candidate.videoId,surface:candidate.surface,visible:current?.visible===true,hasActionRect:Boolean(current?.actionRect)});return false;}
+    await this.intent(rectIntent('click',current,{role:'link'}));this.log('candidate_clicked',{reason,videoId:candidate.videoId,surface:current.surface||candidate.surface,position:current.position||candidate.position,title:current.title||candidate.title||null});return true;
   }
   updateProgress(rows) {
     const scores=bestScores(rows); const improved=scores.bestTargetScore>this.maxTarget+0.04||scores.bestBridgeScore>this.maxBridge+0.04;
@@ -154,7 +181,7 @@ class TopicTransitionRunner {
     const started=Date.now();this.log('dwell_start',{step,dwellSec:this.config.dwellSec});await sleep(this.config.dwellSec*1000);const obs=await this.observe(`dwell_complete_${step}`);return {obs,dwellMs:Date.now()-started};
   }
   async selectNext(obs, step) {
-    let candidates=surfaceItems(obs); let context={targetTopic:this.config.target,targetThreshold:this.config.targetThreshold,visited:this.visited,policy:this.config.policy,radioPenalty:0.85,recentTitles:this.path.slice(-5).map(x=>x.title).filter(Boolean)};
+    let candidates=surfaceItems(obs); const excluded=new Set([...this.visited,...this.rejected]);let context={targetTopic:this.config.target,targetThreshold:this.config.targetThreshold,visited:excluded,policy:this.config.policy,radioPenalty:0.85,recentTitles:this.path.slice(-5).map(x=>x.title).filter(Boolean)};
     let decision=chooseCandidate(candidates,context); let progress=this.updateProgress(decision.rows);
     if(this.config.policy==='portfolio'){
       const action=choosePortfolioAction({rows:decision.rows,state:{stagnationCount:this.stagnationCount,stepsSinceHome:this.stepsSinceHome,homeEscapeAfter:this.config.homeEscapeAfter,longTailAfter:this.config.longTailAfter,targetThreshold:this.config.targetThreshold,pageType:obs.route?.pageType},selection:decision.candidate});
@@ -176,9 +203,17 @@ class TopicTransitionRunner {
         if(Date.now()-this.startedAt>this.config.maxRuntimeSec*1000) return this.complete('max_runtime',{step:step-1});
         const dwell=await this.dwell(step);obs=dwell.obs;const currentTarget=this.targetReached(obs);
         if(currentTarget.reached&&this.config.stopOnTarget)return this.complete('target_reached',{step,currentVideo:obs.currentVideo,target:currentTarget.score});
-        const {decision}=await this.selectNext(obs,step+1);const candidate=decision.candidate;
-        if(!candidate){if(this.backtracks<this.config.backtrackLimit){await this.browserCommand('back');this.backtracks++;continue;}return this.complete('no_candidate',{step});}
-        await this.clickCandidate(candidate,{reason:decision.reason});this.visited.add(candidate.videoId);this.path.push(this.pathRow(step+1,candidate,decision.reason,candidate.topic));this.stepsSinceHome++;
+        let chosen=null;
+        for(let attempt=1;attempt<=Math.max(1,this.config.candidateRetryLimit);attempt++){
+          const selected=await this.selectNext(obs,step+1);obs=selected.obs;const candidate=selected.decision.candidate;
+          if(!candidate)break;
+          const clicked=await this.clickCandidate(candidate,{reason:selected.decision.reason});
+          if(clicked){chosen={decision:selected.decision,candidate};break;}
+          this.rejected.add(candidate.videoId);this.log('candidate_rejected',{reason:'unactionable_candidate',videoId:candidate.videoId,surface:candidate.surface,attempt});
+          obs=await this.observe(`candidate_retry_${attempt}`);
+        }
+        if(!chosen){if(this.backtracks<this.config.backtrackLimit){await this.browserCommand('back');this.backtracks++;continue;}return this.complete('no_actionable_candidate',{step,rejectedCandidates:[...this.rejected]});}
+        const {decision,candidate}=chosen;this.visited.add(candidate.videoId);this.path.push(this.pathRow(step+1,candidate,decision.reason,candidate.topic));this.stepsSinceHome++;
         obs=await this.waitFor(o=>o.route?.videoId===candidate.videoId,{timeoutMs:10000,reason:`arrival_${step+1}`}).catch(async()=>this.observe(`arrival_timeout_${step+1}`));
         const arrivalTarget=this.targetReached(obs);if(arrivalTarget.reached&&this.config.stopOnTarget)return this.complete('target_reached',{step:step+1,currentVideo:obs.currentVideo,target:arrivalTarget.score});
       }
@@ -188,13 +223,13 @@ class TopicTransitionRunner {
     } finally { await this.client.close().catch(()=>{}); }
   }
   async complete(outcome,extra={}) {
-    this.endedAt=Date.now();const result={outcome,...extra,steps:this.path.length,durationMs:this.endedAt-this.startedAt,bestTargetScore:this.maxTarget,bestBridgeScore:this.maxBridge,homeReentries:this.homeReentries,backtracks:this.backtracks};
+    this.endedAt=Date.now();const result={outcome,...extra,steps:this.path.length,durationMs:this.endedAt-this.startedAt,bestTargetScore:this.maxTarget,bestBridgeScore:this.maxBridge,homeReentries:this.homeReentries,backtracks:this.backtracks,rejectedCandidates:this.rejected.size,motorUsage:this.motorUsage()};
     await this.req('TASK_COMPLETE',{taskId:this.taskId,result}).catch(()=>{});const report=this.report(outcome,extra);this.writeReport(report);this.log('runner_complete',result);return report;
   }
-  report(outcome,extra={}) {return {schemaVersion:1,tool:'BODY Topic Transition Lab',experimentId:this.experimentId,taskId:this.taskId,config:this.config,browserInstanceId:this.browser?.browserInstanceId||null,tabId:this.tabId,startedAt:this.startedAt,endedAt:this.endedAt,outcome,result:{...extra,durationMs:(this.endedAt||Date.now())-this.startedAt,bestTargetScore:this.maxTarget,bestBridgeScore:this.maxBridge,homeReentries:this.homeReentries,backtracks:this.backtracks},path:this.path,checkpoints:this.checkpoints,events:this.events,bodyCommandIds:this.commandIds,guardrails:{stealth:false,detectorEvasion:false,fingerprintSpoofing:false,proxyManipulation:false,engagementActions:false,searchOnlyAtStart:true,directTargetVideoNavigation:false}};}
+  report(outcome,extra={}) {return {schemaVersion:1,tool:'BODY Topic Transition Lab',experimentId:this.experimentId,taskId:this.taskId,config:this.config,browserInstanceId:this.browser?.browserInstanceId||null,tabId:this.tabId,startedAt:this.startedAt,endedAt:this.endedAt,outcome,result:{...extra,durationMs:(this.endedAt||Date.now())-this.startedAt,bestTargetScore:this.maxTarget,bestBridgeScore:this.maxBridge,homeReentries:this.homeReentries,backtracks:this.backtracks,rejectedCandidateCount:this.rejected.size,motorUsage:this.motorUsage()},path:this.path,rejectedCandidates:[...this.rejected],checkpoints:this.checkpoints,events:this.events,bodyCommandIds:this.commandIds,guardrails:{stealth:false,detectorEvasion:false,fingerprintSpoofing:false,proxyManipulation:false,engagementActions:false,searchOnlyAtStart:true,directTargetVideoNavigation:false}};}
   writeReport(report){const out=this.config.output||path.join(__dirname,'results',`${this.experimentId}.json`);fs.mkdirSync(path.dirname(out),{recursive:true});fs.writeFileSync(out,JSON.stringify(report,null,2));console.log(`Report: ${out}`);}
 }
 
 async function main(){const config=parseArgs();const runner=new TopicTransitionRunner(config);await runner.run();}
 if(require.main===module)main().catch(error=>{console.error(error);process.exitCode=1;});
-module.exports={parseArgs,BrainClient,TopicTransitionRunner,main};
+module.exports={parseArgs,BrainClient,TopicTransitionRunner,surfaceItems,surfaceDescriptor,findCandidate,surfaceScrollPoint,main};
