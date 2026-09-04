@@ -1,6 +1,7 @@
 'use strict';
 
-const { BrainClient, TopicTransitionRunner, parseArgs } = require('./topic_transition_runner');
+const { BrainClient, parseArgs } = require('./topic_transition_runner');
+const { YouTubeEnrichedTopicTransitionRunner } = require('./youtube_enriched_runner');
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0))); }
 function waitSeconds(argv = process.argv.slice(2)) {
@@ -77,7 +78,7 @@ async function waitForEligibleBrowser(config, { waitSec = waitSeconds() } = {}) 
 async function main() {
   const config = parseArgs();
   await waitForEligibleBrowser(config);
-  const runner = new TopicTransitionRunner(config);
+  const runner = new YouTubeEnrichedTopicTransitionRunner(config);
   return runner.run();
 }
 
