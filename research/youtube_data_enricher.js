@@ -42,6 +42,12 @@ function deriveKeywords(video,channel,{limit=30}={}){
 function compactStatistics(raw={}){
   const out={};for(const key of ['viewCount','likeCount','commentCount','favoriteCount'])if(raw[key]!=null)out[key]=String(raw[key]);return out;
 }
+function compactChannelStatistics(raw={}){
+  const out={};
+  for(const key of ['viewCount','subscriberCount','videoCount'])if(raw[key]!=null)out[key]=String(raw[key]);
+  if(raw.hiddenSubscriberCount!=null)out.hiddenSubscriberCount=Boolean(raw.hiddenSubscriberCount);
+  return out;
+}
 function compactVideo(item){
   const s=item?.snippet||{},t=item?.topicDetails||{},c=item?.contentDetails||{};
   return {
@@ -55,8 +61,9 @@ function compactVideo(item){
 function compactChannel(item){
   const s=item?.snippet||{},t=item?.topicDetails||{},b=item?.brandingSettings?.channel||{};
   return {
-    channelId:String(item?.id||''),title:clean(s.title)||null,descriptionExcerpt:clean(s.description).slice(0,500),country:s.country||b.country||null,
-    keywords:parseChannelKeywords(b.keywords).slice(0,80),topicIds:uniq(t.topicIds),topicCategories:uniq(t.topicCategories),topicLabels:uniq((t.topicCategories||[]).map(topicLabel))
+    channelId:String(item?.id||''),title:clean(s.title)||null,descriptionExcerpt:clean(s.description).slice(0,500),publishedAt:s.publishedAt||null,country:s.country||b.country||null,
+    keywords:parseChannelKeywords(b.keywords).slice(0,80),topicIds:uniq(t.topicIds),topicCategories:uniq(t.topicCategories),topicLabels:uniq((t.topicCategories||[]).map(topicLabel)),
+    statistics:compactChannelStatistics(item?.statistics||{})
   };
 }
 function scoringEvidence(api){
@@ -102,7 +109,7 @@ class YouTubeDataEnricher {
     const ids=uniq(channelIds).filter(id=>!this.channelCache.has(id));
     for(const batch of chunks(ids,50)){
       this.metrics.channelCalls++;this.metrics.channelIdsRequested+=batch.length;
-      const data=await this._safeGet('channels',{part:'snippet,topicDetails,brandingSettings',id:batch.join(',')});
+      const data=await this._safeGet('channels',{part:'snippet,topicDetails,brandingSettings,statistics',id:batch.join(',')});
       if(!data)continue;
       const seen=new Set();for(const item of data.items||[]){const row=compactChannel(item);if(!row.channelId)continue;seen.add(row.channelId);this.channelCache.set(row.channelId,row);}
       for(const id of batch)if(!seen.has(id))this.channelCache.set(id,null);
