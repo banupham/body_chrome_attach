@@ -14,6 +14,17 @@ function nowIso() { return new Date().toISOString(); }
 function id(prefix='exp') { return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2,8)}`; }
 function clamp(v,a,b) { return Math.max(a, Math.min(b, v)); }
 function asBool(v, fallback=false) { if (v == null) return fallback; return !['0','false','no','off'].includes(String(v).toLowerCase()); }
+function normalizedTitle(value){return String(value??'').replace(/\s+/g,' ').trim().toLowerCase();}
+function semanticArrivalReady(obs,candidate){
+  if(String(obs?.route?.videoId||'')!==String(candidate?.videoId||''))return false;
+  const actual=normalizedTitle(obs?.currentVideo?.title),expected=normalizedTitle(candidate?.title);
+  if(!actual||obs?.currentVideo?.semanticTitle!==true)return false;
+  if(!expected)return true;
+  if(actual===expected)return true;
+  const shorter=actual.length<=expected.length?actual:expected;
+  const longer=actual.length>expected.length?actual:expected;
+  return shorter.length>=16&&longer.includes(shorter);
+}
 
 function parseArgs(argv = process.argv.slice(2)) {
   const out = {
@@ -183,7 +194,7 @@ class TopicTransitionRunner {
     }
     if(!seed)throw new Error('search_seed_unactionable');
     this.visited.add(seed.videoId);this.path.push(this.pathRow(1,seed,'search_seed'));
-    return this.waitFor(o=>Boolean(o.route?.videoId===seed.videoId),{timeoutMs:10000,reason:'seed_arrival'});
+    return this.waitFor(o=>semanticArrivalReady(o,seed),{timeoutMs:10000,intervalMs:250,reason:'seed_arrival'});
   }
   pathRow(step,candidate,reason,topic=null){const rank=Number(candidate.position||0);return {at:Date.now(),step,fromVideoId:this.path.at(-1)?.selectedVideoId||null,selectedVideoId:candidate.videoId,surface:candidate.surface,position:candidate.position,rankBucket:rank<=3?'top3':rank<=10?'4-10':rank<=20?'11-20':'21+',title:candidate.title||null,reason,policy:this.config.policy,topic:topic||scoreTopic(candidate,this.config.target),isRadio:candidate.isRadio===true};}
   async clickCandidate(candidate,{reason='candidate'}={}) {
@@ -245,7 +256,7 @@ class TopicTransitionRunner {
         }
         if(!chosen){if(this.backtracks<this.config.backtrackLimit){await this.browserCommand('back');this.backtracks++;continue;}return this.complete('no_actionable_candidate',{step,rejectedCandidates:[...this.rejected]});}
         const {decision,candidate}=chosen;this.visited.add(candidate.videoId);this.path.push(this.pathRow(step+1,candidate,decision.reason,candidate.topic));this.stepsSinceHome++;
-        obs=await this.waitFor(o=>o.route?.videoId===candidate.videoId,{timeoutMs:10000,reason:`arrival_${step+1}`}).catch(async()=>this.observe(`arrival_timeout_${step+1}`));
+        obs=await this.waitFor(o=>semanticArrivalReady(o,candidate),{timeoutMs:10000,intervalMs:250,reason:`arrival_${step+1}`}).catch(async()=>this.observe(`arrival_metadata_timeout_${step+1}`));
         const arrivalTarget=this.targetReached(obs);if(arrivalTarget.reached&&this.config.stopOnTarget)return this.complete('target_reached',{step:step+1,currentVideo:obs.currentVideo,target:arrivalTarget.score});
       }
       return this.complete('max_steps',{step:this.config.maxSteps});
@@ -268,4 +279,4 @@ class TopicTransitionRunner {
 
 async function main(){const config=parseArgs();const runner=new TopicTransitionRunner(config);await runner.run();}
 if(require.main===module)main().catch(error=>{console.error(error);process.exitCode=1;});
-module.exports={parseArgs,BrainClient,TopicTransitionRunner,surfaceItems,surfaceDescriptor,findCandidate,surfaceScrollPoint,main};
+module.exports={parseArgs,BrainClient,TopicTransitionRunner,surfaceItems,surfaceDescriptor,findCandidate,surfaceScrollPoint,normalizedTitle,semanticArrivalReady,main};
