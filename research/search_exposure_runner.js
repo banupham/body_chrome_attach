@@ -22,7 +22,7 @@ function queryEvidence(api,query){
   const titlePhrase=Boolean(q&&title.includes(q)),tagPhrase=Boolean(q&&tags.some(x=>x.includes(q))),descriptionPhrase=Boolean(q&&description.includes(q));
   const coverage=qTerms.length?titleTerms.length/qTerms.length:0;
   const heuristicScore=Number((Number(titlePhrase)*4+coverage*3+Number(tagPhrase)*1.25+Math.min(1,tagTerms.length/Math.max(1,qTerms.length))*1.25+Number(descriptionPhrase)*0.75+Math.min(1,topicTerms.length)*0.5+Math.min(1,channelTerms.length/Math.max(1,qTerms.length))*0.35).toFixed(3));
-  return {query:clean(query),queryTerms:qTerms,titlePhrase,tagPhrase,descriptionPhrase,titleTerms,tagTerms,descriptionTerms,topicTerms,channelKeywordTerms,heuristicScore,heuristicOnly:true};
+  return {query:clean(query),queryTerms:qTerms,titlePhrase,tagPhrase,descriptionPhrase,titleTerms,tagTerms,descriptionTerms,topicTerms,channelKeywordTerms:channelTerms,heuristicScore,heuristicOnly:true};
 }
 function compactApi(api,at=Date.now()){
   if(!api)return null;
@@ -93,7 +93,7 @@ class SearchExposureRunner extends YouTubeEnrichedTopicTransitionRunner {
     obs=await this.observe(`search_${sampleIndex}_${queryIndex}_final`);
     for(const row of canonicalSearchRows(obs)){const id=String(row.videoId);const current=seen.get(id);if(!current||Number(row.position||9999)<Number(current.position||9999))seen.set(id,row);}
     const all=[...seen.values()].sort((a,b)=>Number(a.position||9999)-Number(b.position||9999));
-    target=all.find(x=>String(x.videoId)===String(this.config.trackVideoId))||target;
+    const finalTarget=all.find(x=>String(x.videoId)===String(this.config.trackVideoId));if(finalTarget)target={...finalTarget,firstSeenPass:target?.firstSeenPass??null};
     const at=Date.now(),trackApi=this.trackedVideoApi;
     const competitors=all.slice(0,this.config.competitorSampleLimit).map(row=>({rank:Number(row.position||0)||null,videoId:String(row.videoId),title:row.youtubeApi?.title||row.title||null,channelTitle:row.youtubeApi?.channelTitle||row.channel||null,categoryId:row.youtubeApi?.categoryId||null,publishedAt:row.youtubeApi?.publishedAt||null,videoAgeHours:ageHours(row.youtubeApi?.publishedAt,at),viewCount:numeric(row.youtubeApi?.statistics?.viewCount),queryEvidence:queryEvidence(row.youtubeApi,query)}));
     const result={
