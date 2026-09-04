@@ -8,6 +8,7 @@ const { chooseCandidate, choosePortfolioAction, scoreTopic, bestScores } = requi
 const DEFAULT_URL = 'ws://127.0.0.1:8765';
 const PROTOCOL_VERSION = 7;
 const DEFAULT_TOKEN_PATH = path.join(__dirname, '..', 'daemon', 'profiles', '.auth', 'brain.token');
+const GENERIC_ACTION_TITLE_RE = /^(?:xem(?: ngay)?|watch(?: now)?|play(?: video)?|phat|phát|mo|mở|open|learn more|tim hieu them|tìm hiểu thêm|youtube)$/iu;
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0))); }
 function nowIso() { return new Date().toISOString(); }
@@ -15,9 +16,15 @@ function id(prefix='exp') { return `${prefix}-${Date.now()}-${Math.random().toSt
 function clamp(v,a,b) { return Math.max(a, Math.min(b, v)); }
 function asBool(v, fallback=false) { if (v == null) return fallback; return !['0','false','no','off'].includes(String(v).toLowerCase()); }
 function normalizedTitle(value){return String(value??'').replace(/\s+/g,' ').trim().toLowerCase();}
+function isGenericActionTitle(value){return GENERIC_ACTION_TITLE_RE.test(normalizedTitle(value));}
+function arrivalExpectedTitle(candidate){return candidate?.youtubeApi?.title||candidate?.title||'';}
+function usableSeedCandidate(candidate){
+  const title=String(candidate?.title||'').trim();
+  return Boolean(candidate?.videoId&&candidate?.semanticTitle!==false&&title&&!isGenericActionTitle(title));
+}
 function semanticArrivalReady(obs,candidate){
   if(String(obs?.route?.videoId||'')!==String(candidate?.videoId||''))return false;
-  const actual=normalizedTitle(obs?.currentVideo?.title),expected=normalizedTitle(candidate?.title);
+  const actual=normalizedTitle(obs?.currentVideo?.youtubeApi?.title||obs?.currentVideo?.title),expected=normalizedTitle(arrivalExpectedTitle(candidate));
   if(!actual||obs?.currentVideo?.semanticTitle!==true)return false;
   if(!expected)return true;
   if(actual===expected)return true;
@@ -184,9 +191,13 @@ class TopicTransitionRunner {
     await this.intent({type:'pressKey',key:'Enter'});
     obs=await this.waitFor(o=>o.route?.pageType==='search'&&surfaceItems(o).filter(x=>x.surface==='search_results').length>0,{timeoutMs:12000,reason:'search_results'});
     const results=surfaceItems(obs).filter(x=>x.surface==='search_results');
-    const preferred=results.filter(x=>x.isRadio!==true&&x.semanticTitle!==false&&x.title);
+    const skipped=results.filter(x=>!usableSeedCandidate(x));
+    for(const candidate of skipped)this.log('candidate_skipped',{reason:isGenericActionTitle(candidate?.title)?'generic_action_label':'non_semantic_search_result',videoId:candidate?.videoId||null,surface:candidate?.surface||'search_results',position:candidate?.position||null,title:candidate?.title||null});
+    const usable=results.filter(usableSeedCandidate);
+    if(!usable.length)throw new Error('search_results_no_usable_video_candidate');
+    const preferred=usable.filter(x=>x.isRadio!==true);
     const rankSeed=preferred.find(x=>Number(x.position)===Number(this.config.seedRank));
-    const seedOrder=[rankSeed,...preferred,...results.filter(x=>x.isRadio!==true),...results].filter(Boolean).filter((x,i,a)=>a.findIndex(y=>y.videoId===x.videoId)===i);
+    const seedOrder=[rankSeed,...preferred,...usable.filter(x=>x.isRadio!==true),...usable].filter(Boolean).filter((x,i,a)=>a.findIndex(y=>y.videoId===x.videoId)===i);
     let seed=null;
     for(const candidate of seedOrder.slice(0,Math.max(1,this.config.candidateRetryLimit))){
       if(await this.clickCandidate(candidate,{reason:'search_seed'})){seed=candidate;break;}
@@ -279,4 +290,4 @@ class TopicTransitionRunner {
 
 async function main(){const config=parseArgs();const runner=new TopicTransitionRunner(config);await runner.run();}
 if(require.main===module)main().catch(error=>{console.error(error);process.exitCode=1;});
-module.exports={parseArgs,BrainClient,TopicTransitionRunner,surfaceItems,surfaceDescriptor,findCandidate,surfaceScrollPoint,normalizedTitle,semanticArrivalReady,main};
+module.exports={parseArgs,BrainClient,TopicTransitionRunner,surfaceItems,surfaceDescriptor,findCandidate,surfaceScrollPoint,normalizedTitle,isGenericActionTitle,arrivalExpectedTitle,usableSeedCandidate,semanticArrivalReady,main};
