@@ -3,7 +3,7 @@
 const {parseArgs}=require('./topic_transition_runner');
 const {waitForEligibleBrowser,waitSeconds}=require('./topic_transition_entry');
 const {normalizeVideoId}=require('./search_exposure_runner');
-const {FastBrowserUiRouteRunner}=require('./fast_browser_ui_route_runner');
+const {KeyGraphRouteRunner}=require('./key_graph_route_runner');
 
 function splitList(value,pattern=/[;|\n]+/){return [...new Set(String(value||'').split(pattern).map(x=>x.trim()).filter(Boolean))];}
 function asBool(value,fallback=false){if(value==null)return fallback;return !['0','false','no','off'].includes(String(value).toLowerCase());}
@@ -42,7 +42,11 @@ function parseHeadKeywordNextArgs(argv=process.argv.slice(2)){
     homeScrolls:2,
     homeScrollDelta:760,
     homeSettleMs:900,
-    homeWaitMs:8000
+    homeWaitMs:8000,
+    homeObserveOnTopicShift:true,
+    bridgeKeySearch:true,
+    bridgeKeySearchCount:2,
+    bridgeKeySeedCount:1
   });
   if(!hasArg(argv,'dwell-sec'))config.dwellSec=5;
   let explicitHeads=null,explicitModes=null;
@@ -56,7 +60,9 @@ function parseHeadKeywordNextArgs(argv=process.argv.slice(2)){
     else if(key==='branchModes')explicitModes=splitList(value,/[;,|\n]+/).map(x=>x.toLowerCase());
     else if(key==='requirePristine')config.requirePristine=asBool(value,true);
     else if(key==='homeExplore')config.homeExplore=asBool(value,true);
-    else if(['seedCount','maxHops','maxRelatedRank','relatedScrolls','relatedScrollDelta','relatedSettleMs','relatedSampleLimit','searchSeedScrolls','searchScrollDelta','searchSettleMs','pristineSettleMs','pristinePollMs','pristineStableSamples','safeClickTopPx','safeClickBottomPx','safeClickSidePx','homeSeedCount','homeScrolls','homeScrollDelta','homeSettleMs','homeWaitMs'].includes(key))config[key]=Number(value);
+    else if(key==='homeObserveOnTopicShift')config.homeObserveOnTopicShift=asBool(value,true);
+    else if(key==='bridgeKeySearch')config.bridgeKeySearch=asBool(value,true);
+    else if(['seedCount','maxHops','maxRelatedRank','relatedScrolls','relatedScrollDelta','relatedSettleMs','relatedSampleLimit','searchSeedScrolls','searchScrollDelta','searchSettleMs','pristineSettleMs','pristinePollMs','pristineStableSamples','safeClickTopPx','safeClickBottomPx','safeClickSidePx','homeSeedCount','homeScrolls','homeScrollDelta','homeSettleMs','homeWaitMs','bridgeKeySearchCount','bridgeKeySeedCount'].includes(key))config[key]=Number(value);
   }
   if(!config.trackVideoId)throw new Error('track_video_id_required');
   config.headQueries=(explicitHeads?.length?explicitHeads:[config.query]).map(x=>String(x).trim()).filter(Boolean);
@@ -87,6 +93,8 @@ function parseHeadKeywordNextArgs(argv=process.argv.slice(2)){
   config.homeScrollDelta=Math.max(120,Math.min(1200,Number(config.homeScrollDelta)||760));
   config.homeSettleMs=Math.max(250,Math.min(5000,Number(config.homeSettleMs)||900));
   config.homeWaitMs=Math.max(1000,Math.min(20000,Number(config.homeWaitMs)||8000));
+  config.bridgeKeySearchCount=Math.max(0,Math.min(6,Math.floor(Number(config.bridgeKeySearchCount)||2)));
+  config.bridgeKeySeedCount=Math.max(1,Math.min(4,Math.floor(Number(config.bridgeKeySeedCount)||1)));
   config.stopOnTarget=false;
   return config;
 }
@@ -108,7 +116,10 @@ async function main(){
   const supplied={browser:config.browser||null,tab:Number.isInteger(Number(config.tab))?Number(config.tab):null};
   const coldStartBrowser=String(process.env.BODY_RESEARCH_COLD_START_BROWSER||'').trim()||null;
   if(supplied.browser||supplied.tab!=null)console.log('[PREFLIGHT] research:search uses a fresh Chrome each run; ignoring supplied --browser/--tab and selecting the current eligible YouTube Browser dynamically.');
-  console.log('[RESEARCH] target-blind route mode: target video/topic metadata is evaluation-only and is never used to choose the next video.');
+  console.log('[RESEARCH] target-blind key-graph mode: target title/id/topic never supplies a positive search or traversal key.');
+  console.log('[RESEARCH] source_bridge prefers meaningful cross-channel keys over same-channel loops; target metadata is evaluation-only.');
+  console.log(`[RESEARCH] observed bridge-key search: ${config.bridgeKeySearch?'enabled':'disabled'}, max ${config.bridgeKeySearchCount} derived queries, ${config.bridgeKeySeedCount} seed(s) each. Demand ranking is an observed video-statistics proxy, not YouTube query volume.`);
+  console.log(`[RESEARCH] Home checkpoints after distinct topic branches: ${config.homeObserveOnTopicShift?'enabled':'disabled'}.`);
   console.log('[RESEARCH] history restore uses BODY Browser UI fast Back; CDP gateway is unchanged.');
   console.log(`[RESEARCH] pristine auth preflight waits up to ${config.pristineSettleMs}ms and requires ${config.pristineStableSamples} consecutive signed_out observations; unknown is never treated as signed_out.`);
   if(config.coldStartMode)console.log(`[RESEARCH] cold start mode: ${config.coldStartMode}; Browser id was discovered dynamically during this run.`);
@@ -116,7 +127,7 @@ async function main(){
   const eligible=await waitForEligibleBrowser(config,{waitSec:waitSeconds(argv)});
   const binding=bindDynamicFreshBrowser(config,eligible);
   console.log('[PREFLIGHT] dynamically bound this run:',JSON.stringify(binding));
-  const runner=new FastBrowserUiRouteRunner(config);return runner.run();
+  const runner=new KeyGraphRouteRunner(config);return runner.run();
 }
 if(require.main===module)main().catch(error=>{console.error(error);process.exitCode=1;});
 module.exports={splitList,asBool,hasArg,norm,parseHeadKeywordNextArgs,bindDynamicFreshBrowser,main};
