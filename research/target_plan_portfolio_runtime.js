@@ -3,8 +3,7 @@
 const {
   TargetPlanPortfolioRunner,
   buildTargetPlanPortfolio,
-  buildTargetFingerprint,
-  comparePlanResults
+  buildTargetFingerprint
 }=require('./target_plan_portfolio');
 const {canonicalSearchRows,summarizeRuns}=require('./head_keyword_next_runner');
 const {searchResultSignature,searchQuerySupport}=require('./robust_key_graph_route_runner');
@@ -12,6 +11,32 @@ const {searchResultSignature,searchQuerySupport}=require('./robust_key_graph_rou
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,Math.max(0,Number(ms)||0)));
 const clean=value=>String(value??'').normalize('NFKC').replace(/\s+/g,' ').trim();
 const fold=value=>clean(value).toLowerCase().normalize('NFD').replace(/\p{M}+/gu,'').replace(/đ/g,'d');
+
+function comparePlanResultsForDiscovery(results){
+  const scored=(results||[]).map(row=>{
+    const route=row?.evaluation?.bestRoute||null,found=row?.evaluation?.found===true;
+    const graphEdgeCount=found&&Number.isFinite(Number(route?.graphEdgeCount))?Number(route.graphEdgeCount):Infinity;
+    const rank=found&&Number.isFinite(Number(route?.rank))?Number(route.rank):9999;
+    const proximity=Number(row?.evaluation?.closestObserved?.proximity?.score||0);
+    const elapsedMs=Number(row?.evaluation?.elapsedMs||0),commandCount=Number(row?.evaluation?.commandCount||0);
+    return {...row,_found:found,_graphEdgeCount:graphEdgeCount,_rank:rank,_proximity:proximity,_elapsedMs:elapsedMs,_commandCount:commandCount};
+  });
+  scored.sort((a,b)=>{
+    if(a._found!==b._found)return Number(b._found)-Number(a._found);
+    if(a._found)return a._graphEdgeCount-b._graphEdgeCount||a._rank-b._rank||a._elapsedMs-b._elapsedMs||a._commandCount-b._commandCount;
+    return b._proximity-a._proximity||a._elapsedMs-b._elapsedMs||a._commandCount-b._commandCount;
+  });
+  const rows=scored.map((x,i)=>({rank:i+1,planId:x.plan.id,query:x.plan.query,traversal:x.plan.traversal,found:x.evaluation.found,bestRoute:x.evaluation.bestRoute,closestObserved:x.evaluation.closestObserved,elapsedMs:x.evaluation.elapsedMs,commandCount:x.evaluation.commandCount}));
+  return {
+    rankedPlans:rows,
+    shortestFoundPlan:scored.find(x=>x._found)?.plan?.id||null,
+    closestUnfoundPlan:scored.find(x=>!x._found)?.plan?.id||null,
+    comparisonMode:'shared_session_operational',
+    unfoundRankingPrimaryMetric:'target_proximity',
+    orderEffectRisk:true,
+    validationRecommendation:'Re-run the top plans one at a time with --plan-only on separate pristine Chrome sessions to confirm the shortest route.'
+  };
+}
 
 /**
  * Runtime hardening for the single-ID target portfolio.
@@ -100,7 +125,7 @@ class HardenedTargetPlanPortfolioRunner extends TargetPlanPortfolioRunner{
         if(this.config.stopAfterFirstTarget===true&&this.anyTargetObserved)break;
       }
       await this.loadTrackedVideo({refresh:true});
-      const comparison=comparePlanResults(this.planResults),factorSummary=summarizeRuns(this.headKeywordRuns);
+      const comparison=comparePlanResultsForDiscovery(this.planResults),factorSummary=summarizeRuns(this.headKeywordRuns);
       // MUST await here. Returning the Promise directly would execute finally first,
       // closing BrainClient while complete() is still sending TASK_COMPLETE.
       return await this.complete('target_plan_portfolio_complete',{mode:'target_profile_multi_plan_discovery',targetFingerprint:this.targetFingerprint,planPortfolio:this.planPortfolio,planResults:this.planResults,portfolioComparison:comparison,headKeywordRuns:this.headKeywordRuns,homeDiscovery:this.homeDiscovery,factorSummary});
@@ -108,7 +133,7 @@ class HardenedTargetPlanPortfolioRunner extends TargetPlanPortfolioRunner{
       this.log('runner_error',{error:String(error?.stack||error)});
       await this.req('TASK_FAIL',{taskId:this.taskId,error:String(error?.message||error)}).catch(finalizeError=>this.log('task_finalize_error',{operation:'TASK_FAIL',error:String(finalizeError?.message||finalizeError)}));
       this.endedAt=Date.now();
-      const report=this.report('error',{error:String(error?.stack||error),targetFingerprint:this.targetFingerprint,planPortfolio:this.planPortfolio,planResults:this.planResults,portfolioComparison:comparePlanResults(this.planResults)});
+      const report=this.report('error',{error:String(error?.stack||error),targetFingerprint:this.targetFingerprint,planPortfolio:this.planPortfolio,planResults:this.planResults,portfolioComparison:comparePlanResultsForDiscovery(this.planResults)});
       this.writeReport(report);
       throw error;
     }finally{
@@ -117,4 +142,4 @@ class HardenedTargetPlanPortfolioRunner extends TargetPlanPortfolioRunner{
   }
 }
 
-module.exports={HardenedTargetPlanPortfolioRunner};
+module.exports={comparePlanResultsForDiscovery,HardenedTargetPlanPortfolioRunner};
