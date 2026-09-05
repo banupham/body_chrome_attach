@@ -3,6 +3,7 @@
 const assert=require('node:assert/strict');
 const {currentSearchQuery,enrichObservationRoute}=require('../src/youtube_route_context');
 const {inferDomains,channelCentroidQuery,forbiddenDirectQuery,buildTargetPlanPortfolio,buildTargetFingerprint,scoreTargetProximity,comparePlanResults,commandCountOf}=require('../research/target_plan_portfolio');
+const {coldTargetBootstrapGuidance}=require('../research/pristine_blank_target_plan_entry');
 
 assert.equal(currentSearchQuery({href:'https://www.youtube.com/results?search_query=b%E1%BA%A5t+%C4%91%E1%BB%99ng+s%E1%BA%A3n&sp=abc'}),'bất động sản');
 assert.equal(currentSearchQuery({href:'https://www.youtube.com/watch?v=abc'}),'');
@@ -39,5 +40,10 @@ assert.equal(commandCountOf({commandIds:['a','b','c']}),3);
 assert.equal(commandCountOf({commandIds:[]}),0);
 assert.equal(commandCountOf({}),0,'missing commandIds must not crash plan execution');
 assert.equal(commandCountOf(null),0,'null runner must be safe');
+
+const coldHint=coldTargetBootstrapGuidance(new Error('pristine_blank_browser_not_found:[{"browserInstanceId":"b","tabs":[{"siteKey":"www.youtube.com"}]}]'));
+assert.match(coldHint,/strict_cold_start_requires_blank_body_browser/);
+assert.match(coldHint,/research:target instead/);
+assert.equal(coldTargetBootstrapGuidance(new Error('some_other_error')),null);
 
 console.log('target_plan_portfolio_contract: PASS');
