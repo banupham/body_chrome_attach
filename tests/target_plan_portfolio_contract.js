@@ -2,7 +2,7 @@
 
 const assert=require('node:assert/strict');
 const {currentSearchQuery,enrichObservationRoute}=require('../src/youtube_route_context');
-const {inferDomains,channelCentroidQuery,forbiddenDirectQuery,buildTargetPlanPortfolio,buildTargetFingerprint,scoreTargetProximity,comparePlanResults}=require('../research/target_plan_portfolio');
+const {inferDomains,channelCentroidQuery,forbiddenDirectQuery,buildTargetPlanPortfolio,buildTargetFingerprint,scoreTargetProximity,comparePlanResults,commandCountOf}=require('../research/target_plan_portfolio');
 
 assert.equal(currentSearchQuery({href:'https://www.youtube.com/results?search_query=b%E1%BA%A5t+%C4%91%E1%BB%99ng+s%E1%BA%A3n&sp=abc'}),'bất động sản');
 assert.equal(currentSearchQuery({href:'https://www.youtube.com/watch?v=abc'}),'');
@@ -34,5 +34,10 @@ const comparison=comparePlanResults([
 assert.equal(comparison.shortestFoundPlan,'p2');
 assert.equal(comparison.rankedPlans[0].planId,'p2');
 assert.equal(comparison.comparisonMode,'shared_session_operational');
+
+assert.equal(commandCountOf({commandIds:['a','b','c']}),3);
+assert.equal(commandCountOf({commandIds:[]}),0);
+assert.equal(commandCountOf({}),0,'missing commandIds must not crash plan execution');
+assert.equal(commandCountOf(null),0,'null runner must be safe');
 
 console.log('target_plan_portfolio_contract: PASS');
