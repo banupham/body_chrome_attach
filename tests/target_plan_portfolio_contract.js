@@ -3,8 +3,10 @@
 const assert=require('node:assert/strict');
 const {currentSearchQuery,enrichObservationRoute}=require('../src/youtube_route_context');
 const {inferDomains,channelCentroidQuery,forbiddenDirectQuery,buildTargetPlanPortfolio,buildTargetFingerprint,scoreTargetProximity,comparePlanResults,commandCountOf}=require('../research/target_plan_portfolio');
+const {HardenedTargetPlanPortfolioRunner}=require('../research/target_plan_portfolio_runtime');
 const {coldTargetBootstrapGuidance}=require('../research/pristine_blank_target_plan_entry');
 
+assert.equal(typeof HardenedTargetPlanPortfolioRunner,'function');
 assert.equal(currentSearchQuery({href:'https://www.youtube.com/results?search_query=b%E1%BA%A5t+%C4%91%E1%BB%99ng+s%E1%BA%A3n&sp=abc'}),'bất động sản');
 assert.equal(currentSearchQuery({href:'https://www.youtube.com/watch?v=abc'}),'');
 const enriched=enrichObservationRoute({route:{pageType:'search',path:'/results'}},{href:'https://www.youtube.com/results?search_query=nh%C3%A0+%C4%91%E1%BA%A5t'});
