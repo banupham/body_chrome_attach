@@ -3,7 +3,7 @@
 const assert=require('node:assert/strict');
 const {currentSearchQuery,enrichObservationRoute}=require('../src/youtube_route_context');
 const {inferDomains,channelCentroidQuery,forbiddenDirectQuery,buildTargetPlanPortfolio,buildTargetFingerprint,scoreTargetProximity,comparePlanResults,commandCountOf}=require('../research/target_plan_portfolio');
-const {HardenedTargetPlanPortfolioRunner}=require('../research/target_plan_portfolio_runtime');
+const {HardenedTargetPlanPortfolioRunner,comparePlanResultsForDiscovery}=require('../research/target_plan_portfolio_runtime');
 const {coldTargetBootstrapGuidance}=require('../research/pristine_blank_target_plan_entry');
 
 assert.equal(typeof HardenedTargetPlanPortfolioRunner,'function');
@@ -37,6 +37,13 @@ const comparison=comparePlanResults([
 assert.equal(comparison.shortestFoundPlan,'p2');
 assert.equal(comparison.rankedPlans[0].planId,'p2');
 assert.equal(comparison.comparisonMode,'shared_session_operational');
+
+const discoveryComparison=comparePlanResultsForDiscovery([
+  {plan:{id:'fast_far',query:'a',traversal:'natural'},evaluation:{found:false,bestRoute:null,closestObserved:{proximity:{score:.4}},elapsedMs:100,commandCount:1}},
+  {plan:{id:'slow_close',query:'b',traversal:'cluster_deepening'},evaluation:{found:false,bestRoute:null,closestObserved:{proximity:{score:.9}},elapsedMs:1000,commandCount:20}}
+]);
+assert.equal(discoveryComparison.closestUnfoundPlan,'slow_close','unfound ranking must prefer target proximity over elapsed time');
+assert.equal(discoveryComparison.rankedPlans[0].planId,'slow_close');
 
 assert.equal(commandCountOf({commandIds:['a','b','c']}),3);
 assert.equal(commandCountOf({commandIds:[]}),0);
