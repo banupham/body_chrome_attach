@@ -2,7 +2,7 @@
 
 const {parseHeadKeywordNextArgs,bindDynamicFreshBrowser,hasArg,asBool}=require('./head_keyword_next_entry');
 const {waitForEligibleBrowser,waitSeconds}=require('./topic_transition_entry');
-const {TargetPlanPortfolioRunner}=require('./target_plan_portfolio');
+const {HardenedTargetPlanPortfolioRunner}=require('./target_plan_portfolio_runtime');
 
 function parseTargetPlanArgs(argv=process.argv.slice(2)){
   const parserArgv=[...argv];if(!hasArg(parserArgv,'head-queries'))parserArgv.push('--head-queries','__auto_target_profile__');
@@ -36,7 +36,7 @@ async function main(){
   console.log('[TARGET PORTFOLIO] shortest route = minimum observed graph edges; top plans should be re-run with --plan-only on separate pristine Chrome sessions for fair validation.');
   config.browser=coldStartBrowser;config.tab=null;
   const eligible=await waitForEligibleBrowser(config,{waitSec:waitSeconds(argv)}),binding=bindDynamicFreshBrowser(config,eligible);console.log('[PREFLIGHT] dynamically bound this run:',JSON.stringify(binding));
-  const runner=new TargetPlanPortfolioRunner(config);return runner.run();
+  const runner=new HardenedTargetPlanPortfolioRunner(config);return runner.run();
 }
 if(require.main===module)main().catch(error=>{console.error(error);process.exitCode=1;});
 module.exports={parseTargetPlanArgs,main};
