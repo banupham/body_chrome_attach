@@ -12,8 +12,33 @@ const {BrowserManager}=require('./browser_manager');
 const {TaskManager}=require('./task_manager');
 const {EnvironmentGuardian}=require('./environment_guardian');
 
+function syncBrowserExecutionState(browsers,extensionId,laneState={}){
+  const browser=browsers?.browserForExtension?.(extensionId)||null;
+  if(!browser||!browser.online)return null;
+
+  if(laneState.busy===true){
+    if(['ACTIVE','BUSY'].includes(browser.state)){
+      const operation=laneState.current?.operation||'queued';
+      return browsers.setState(browser.browserInstanceId,'BUSY',`execution_lane:${operation}`);
+    }
+    return browsers.public(browser);
+  }
+
+  if(browser.state!=='BUSY')return browsers.public(browser);
+  if(browser.environment?.eligible===true){
+    return browsers.setState(browser.browserInstanceId,'ACTIVE','execution_lane_idle');
+  }
+  return browsers.setState(browser.browserInstanceId,'QUARANTINED','execution_lane_idle_environment_ineligible');
+}
+
 function createDaemonRuntime({baseDir=path.join(__dirname,'..'),printAsync=()=>{},identityOptions={},taskOptions={},environmentOptions={}}={}){
-  const identity=new LocalIdentityStore(baseDir,identityOptions),registry=new ExtensionRegistry(),browsers=new BrowserManager(identity),tasks=new TaskManager(baseDir,browsers,taskOptions),learning=new ScopedLearningManager(path.join(baseDir,'profiles')),tabHabit=new TabHabitModel(path.join(baseDir,'profiles','_tab_habits.json')),execution=new ExecutionLane();
+  const identity=new LocalIdentityStore(baseDir,identityOptions);
+  const registry=new ExtensionRegistry();
+  const browsers=new BrowserManager(identity);
+  const tasks=new TaskManager(baseDir,browsers,taskOptions);
+  const learning=new ScopedLearningManager(path.join(baseDir,'profiles'));
+  const tabHabit=new TabHabitModel(path.join(baseDir,'profiles','_tab_habits.json'));
+  const execution=new ExecutionLane({onStateChange:(extensionId,state)=>syncBrowserExecutionState(browsers,extensionId,state)});
   const pending=new Map(),pointers=new Map(),segmenters=new Map(),tabSites=new Map();let recordingEnabled=true,learningEnabled=true;
   const id=(p='r')=>`${p}-${Date.now()}-${process.hrtime.bigint().toString(36)}`,ctx=(ext,tab)=>`${ext}/${Number(tab)}`,segKey=(ext,tab,site)=>`${ctx(ext,tab)}/${normalizeSiteKey(site)}`;
   const send=(ws,obj)=>ws?.readyState===WebSocket.OPEN?(ws.send(JSON.stringify(obj)),true):false,pnum=(v,n)=>{const x=Number(v);if(!Number.isFinite(x))throw new Error(`${n}_required`);return x;};
@@ -46,7 +71,7 @@ function createDaemonRuntime({baseDir=path.join(__dirname,'..'),printAsync=()=>{
   const browserUi=new BrowserUiAdapter({resolveTarget:async({extensionId,tabId})=>{const extId=selected(extensionId),tab=await resolveTab(extId,tabId);return {extensionId:extId,tab};},focusTarget:({extensionId,tab,action,commandId})=>requestExtension(extensionId,'FOCUS_WINDOW',{tabId:Number(tab.id),browserAction:action,commandId}),finishTarget:({extensionId,commandId})=>requestExtension(extensionId,'BROWSER_UI_END',{commandId},5000),snapshot:browserSnapshot,runNativeInput:runWindowsInput});
   function executeBrowserCommand(action,{extensionId=null,tabId='active',value=null}={}){const extId=selected(extensionId);return execution.run(extId,{capability:'BROWSER_UI',operation:'browser_command',action:String(action||'unknown')},async()=>({identity:identityForExtension(extId),...await browserUi.execute(action,{extensionId:extId,tabId,value})}));}
 
-  async function withTask(taskId,tabRef,work){const taskContext=tasks.executionContext(taskId,tabRef),browserId=taskContext.browserInstanceId;browsers.setState(browserId,'BUSY',`task:${taskId}`);try{return await work(taskContext);}finally{const row=browsers.require(browserId);if(row.online&&row.state==='BUSY')browsers.setState(browserId,'ACTIVE','task_step_finished');}}
+  async function withTask(taskId,tabRef,work){const taskContext=tasks.executionContext(taskId,tabRef);return work(taskContext);}
   const executeTaskIntent=(taskId,intent,{tabId='primary'}={})=>withTask(taskId,tabId,async c=>({taskId:c.taskId,taskContext:c,...await executeIntent(intent,{extensionId:c.extensionInstanceId,tabId:c.tabId})}));
   const executeTaskStrategy=(taskId,strategy,{tabId='primary'}={})=>withTask(taskId,tabId,async c=>({taskId:c.taskId,taskContext:c,...await executeStrategy(strategy,{extensionId:c.extensionInstanceId,tabId:c.tabId})}));
   const executeTaskBrowserCommand=(taskId,action,{tabId='primary',value=null}={})=>withTask(taskId,tabId,async c=>({taskId:c.taskId,taskContext:c,...await executeBrowserCommand(action,{extensionId:c.extensionInstanceId,tabId:c.tabId,value})}));
@@ -56,4 +81,4 @@ function createDaemonRuntime({baseDir=path.join(__dirname,'..'),printAsync=()=>{
   function flushSync(){let emitted=0;for(const s of segmenters.values())emitted+=Number(s.flush()?.emitted||0);const learningResult=learning.flushSync(),tabHabitResult=tabHabit.flushSync(),identityResult=identity.flushSync(),taskResult=tasks.flushSync(),environmentResult=guardian.flushSync();return {segmenterEmitted:emitted,learning:learningResult,tabHabitOk:tabHabitResult.ok,identityOk:identityResult.ok,taskStateOk:taskResult.ok,environmentStateOk:environmentResult.ok};}
   return {identity,registry,browsers,tasks,guardian,learning,tabHabit,execution,pending,pointers,tabSites,id,ctx,pnum,send,registerExtensionIdentity,identityForExtension,extensionOnline,requestExtension,rejectPendingForExtension,resolveResponse,selected,refreshTabs,resolveTab,recorderEvent,tabEvent,tabContext,tabRemoved,extensionOffline,disposeSegmentersForTab,disposeSegmentersForExtension,executeIntent,executeStrategy,switchTab,executeBrowserCommand,executeTaskIntent,executeTaskStrategy,executeTaskBrowserCommand,executeTaskTabSwitch,probeEnvironment,probeAllEnvironments,flushSync,get recordingEnabled(){return recordingEnabled;},set recordingEnabled(value){recordingEnabled=value===true;},get learningEnabled(){return learningEnabled;},set learningEnabled(value){learningEnabled=value===true;}};
 }
-module.exports={createDaemonRuntime};
+module.exports={createDaemonRuntime,syncBrowserExecutionState};
