@@ -57,7 +57,6 @@ class EvidenceStore{
   }
 
   _previousHash(file){
-    if(this.lastHashByFile.has(file))return this.lastHashByFile.get(file);
     return this.verifyFile(file).lastHash;
   }
 
