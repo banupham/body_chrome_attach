@@ -4,13 +4,18 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const os=require('node:os');
 const path=require('node:path');
-const {endpointPaths,publishRuntimeEndpoint,clearRuntimeEndpoint,readRuntimeEndpoint}=require('../daemon/src/runtime_endpoint');
+const {endpointPaths,acquireRuntimeLock,releaseRuntimeLock,publishRuntimeEndpoint,clearRuntimeEndpoint,readRuntimeEndpoint}=require('../daemon/src/runtime_endpoint');
 const {normalizeRuntimeEndpoint,resolveRuntimeEndpoint}=require('../src/runtime_endpoint_client');
 
 function tmp(name){return fs.mkdtempSync(path.join(os.tmpdir(),`${name}-`));}
 
 (async()=>{
   const project=tmp('runtime-endpoint'),daemonDir=path.join(project,'daemon');fs.mkdirSync(path.join(project,'dist'),{recursive:true});
+  const lock=acquireRuntimeLock(daemonDir,{pid:111,now:()=>0});assert.equal(lock.acquired,true);
+  assert.throws(()=>acquireRuntimeLock(daemonDir,{pid:222,now:()=>1,killImpl:()=>true}),/company_runtime_already_running:111/);
+  assert.equal(releaseRuntimeLock(daemonDir,{pid:222}),false);assert.equal(fs.existsSync(endpointPaths(daemonDir).lock),true);
+  assert.equal(releaseRuntimeLock(daemonDir,{pid:111}),true);assert.equal(fs.existsSync(endpointPaths(daemonDir).lock),false);
+
   const record=publishRuntimeEndpoint(daemonDir,54321,{pid:111,now:()=>0,killImpl:()=>{const e=new Error('dead');e.code='ESRCH';throw e;}});
   assert.equal(record.wsUrl,'ws://127.0.0.1:54321');
   const paths=endpointPaths(daemonDir),loaded=readRuntimeEndpoint(paths.state);
@@ -32,6 +37,6 @@ function tmp(name){return fs.mkdtempSync(path.join(os.tmpdir(),`${name}-`));}
   for(const file of ['daemon/server.js','body_cli.js','src/daemon_bridge.js']){
     const source=fs.readFileSync(path.join(__dirname,'..',file),'utf8');assert.equal(source.includes('8765'),false,`${file} must not hard-code port 8765`);
   }
-  const server=fs.readFileSync(path.join(__dirname,'..','daemon','server.js'),'utf8');assert.match(server,/port:0/);assert.doesNotMatch(server,/ensureAutomaticPairingWindow/);
+  const server=fs.readFileSync(path.join(__dirname,'..','daemon','server.js'),'utf8');assert.match(server,/port:0/);assert.match(server,/acquireRuntimeLock/);assert.doesNotMatch(server,/ensureAutomaticPairingWindow/);
   console.log('runtime_endpoint_contract: PASS');
 })().catch(error=>{console.error(error);process.exitCode=1;});
