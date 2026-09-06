@@ -109,6 +109,7 @@ class ScopedLearningManager {
   }
 
   observeHumanSample(extensionId,siteKey,sample,{learn=true}={}) {
+    if(sample?.source && sample.source!=='human') throw new Error('only_human_samples_can_be_ground_truth');
     const site=this.scope(extensionId,siteKey);
     const global=this.globalScope(extensionId);
     const scopedSample={

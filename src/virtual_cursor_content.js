@@ -1,6 +1,9 @@
 'use strict';
 
 const { installVirtualCursorOverlay } = require('./virtual_cursor_overlay');
+const { youtubeObservation } = require('./youtube_semantic_observer');
+const { youtubeAuthObservation } = require('./youtube_auth_observer');
+const { enrichObservationRoute } = require('./youtube_route_context');
 
 let overlay = installVirtualCursorOverlay({ chromeApi: chrome, documentRef: document });
 let enabled = true;
@@ -43,13 +46,28 @@ function environmentObservation(){
   };
 }
 
+function enrichedYoutubeObservation(maxItems=50){
+  let result=youtubeObservation({documentRef:document,windowRef:window,locationRef:location,maxItems});
+  result=enrichObservationRoute(result,location);
+  const auth=youtubeAuthObservation({documentRef:document,windowRef:window,fallbackState:result?.signedInState||'unknown'});
+  result.signedInState=auth.state;
+  result.signInEvidence={conflict:auth.conflict,signedInSignals:auth.signedInSignals,signedOutSignals:auth.signedOutSignals,privacy:auth.privacy};
+  result.readiness={...(result.readiness||{}),...auth.readiness};
+  return result;
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.action === 'body.virtualCursorSet') {const next=message.enabled!==false;if(next&&!enabled)overlay=installVirtualCursorOverlay({chromeApi:chrome,documentRef:document});if(!next&&enabled)overlay.uninstall();enabled=next;sendResponse({ok:true,result:{enabled,...(enabled?overlay.status():{installed:false,visible:false})}});return false;}
   if (message?.action === 'body.targetContextAt') {const x=Number(message.x),y=Number(message.y),target=Number.isFinite(x)&&Number.isFinite(y)?document.elementFromPoint(x,y):document.activeElement;sendResponse({ok:true,result:describeTarget(target)});return false;}
   if (message?.action === 'body.pageObservation') {sendResponse({ok:true,result:pageObservation()});return false;}
   if (message?.action === 'body.environmentObservation') {sendResponse({ok:true,result:environmentObservation()});return false;}
+  if (message?.action === 'body.youtubeObservation') {
+    const maxItems=Math.max(1,Math.min(100,Number(message.maxItems||50)));
+    sendResponse({ok:true,result:enrichedYoutubeObservation(maxItems)});
+    return false;
+  }
   if (message?.action !== 'body.virtualCursorPing') return false;
   sendResponse({ok:true,result:{enabled,...(enabled?overlay.status():{installed:false,visible:false})}});return false;
 });
 
-module.exports={describeTarget,pageObservation,environmentObservation};
+module.exports={describeTarget,pageObservation,environmentObservation,youtubeObservation,youtubeAuthObservation,enrichObservationRoute,enrichedYoutubeObservation};

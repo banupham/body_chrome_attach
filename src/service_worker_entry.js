@@ -16,6 +16,32 @@ async function activeTabId() {
   return id;
 }
 
+async function youtubeObservationForTab(tabId, maxItems = 50) {
+  const id = Number(tabId);
+  if (!Number.isInteger(id)) throw new Error('youtube_observation_tab_required');
+  const tab = await chrome.tabs.get(id);
+  let host = '';
+  try { host = new URL(String(tab?.url || '')).hostname.toLowerCase(); } catch {}
+  if (!/(^|\.)youtube\.com$/.test(host)) return null;
+  const response = await chrome.tabs.sendMessage(id, { action:'body.youtubeObservation', maxItems });
+  if (!response?.ok || !response.result) throw new Error(response?.error || 'youtube_observation_unavailable');
+  return response.result;
+}
+
+// Extend the existing read-only LIST_TABS response instead of adding a new control endpoint.
+const baseTabSnapshot = daemon.tabSnapshot.bind(daemon);
+daemon.tabSnapshot = async () => {
+  const tabs = await baseTabSnapshot();
+  return Promise.all(tabs.map(async tab => {
+    if (!String(tab.siteKey || '').includes('youtube.com')) return tab;
+    try {
+      return { ...tab, youtubeObservation:await youtubeObservationForTab(tab.id, 50), youtubeObservationError:null };
+    } catch (error) {
+      return { ...tab, youtubeObservation:null, youtubeObservationError:String(error?.message || error) };
+    }
+  }));
+};
+
 function rememberUserMotor(tabId, payload) {
   const id = Number(tabId);
   if (!Number.isInteger(id)) return;
