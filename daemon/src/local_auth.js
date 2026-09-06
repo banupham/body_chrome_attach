@@ -31,6 +31,17 @@ class LocalAuth{
   authenticateBrain(value){return secureEqualHex(digest(value),digest(this.brainSecret));}
   ensureAutomaticPairingWindow(){return {opened:false,busy:false,automatic:true,pairingMode:'automatic_local'};}
 
+  _issueExtensionToken(instance,record,{rotated=false}={}){
+    const pairedToken=token(),now=new Date().toISOString();
+    record.tokenHash=digest(pairedToken);
+    record.pairingMode='automatic_local';
+    if(!record.pairedAt)record.pairedAt=now;
+    if(rotated)record.rotatedAt=now;
+    this.extensions[instance]=record;
+    this._saveExtensions();
+    return {ok:true,paired:true,rotated,pairedToken};
+  }
+
   authenticateExtension({extensionId,browserInstanceId=null,runtimeExtensionId,token:presented,origin}){
     const instance=String(extensionId||'').trim(),browser=String(browserInstanceId||'').trim(),runtime=String(runtimeExtensionId||'').trim(),normalizedOrigin=String(origin||'').replace(/\/$/,'');
     if(!instance||!browser||!runtime)return {ok:false,error:'extension_identity_required'};
@@ -40,13 +51,10 @@ class LocalAuth{
     if(record){
       if(record.runtimeExtensionId!==runtime)return {ok:false,error:'extension_runtime_id_mismatch'};
       if(record.browserInstanceId!==browser)return {ok:false,error:'extension_browser_id_mismatch'};
-      if(!presented||!secureEqualHex(digest(presented),record.tokenHash))return {ok:false,error:'extension_token_invalid'};
-      return {ok:true,paired:false};
+      if(presented&&secureEqualHex(digest(presented),record.tokenHash))return {ok:true,paired:false};
+      return this._issueExtensionToken(instance,record,{rotated:true});
     }
-    const pairedToken=token();
-    this.extensions[instance]={runtimeExtensionId:runtime,browserInstanceId:browser,tokenHash:digest(pairedToken),pairedAt:new Date().toISOString(),pairingMode:'automatic_local'};
-    this._saveExtensions();
-    return {ok:true,paired:true,pairedToken};
+    return this._issueExtensionToken(instance,{runtimeExtensionId:runtime,browserInstanceId:browser,pairedAt:new Date().toISOString()});
   }
 
   forgetExtension(extensionId){
