@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Body Chrome Attach</title>
   <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;width:300px;margin:0;padding:16px;background:#111827;color:#f9fafb}h1{font-size:16px;margin:0 0 8px}p{font-size:12px;line-height:1.45;color:#d1d5db;margin:6px 0 12px}button{width:100%;margin-top:10px;padding:10px 12px;border:0;border-radius:8px;background:#374151;color:#fff;font-weight:600;cursor:pointer}button:disabled{opacity:.55;cursor:not-allowed}.status{margin-top:12px;padding:10px;border-radius:8px;background:#1f2937;font-size:12px;line-height:1.4}.ok{color:#86efac}.bad{color:#fca5a5}.muted{color:#9ca3af}
+    body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;width:280px;margin:0;padding:16px;background:#111827;color:#f9fafb}h1{font-size:15px;margin:0 0 12px}.status{padding:16px 12px;border-radius:10px;text-align:center;font-size:18px;font-weight:800;letter-spacing:.04em}.ready{background:#052e16;color:#86efac;border:1px solid #166534}.checking{background:#422006;color:#fde68a;border:1px solid #a16207}.blocked{background:#450a0a;color:#fca5a5;border:1px solid #991b1b}p{font-size:12px;line-height:1.4;color:#d1d5db;margin:10px 2px 0;text-align:center}button{width:100%;margin-top:12px;padding:9px 12px;border:0;border-radius:8px;background:#374151;color:#fff;font-weight:600;cursor:pointer}button:disabled{opacity:.55;cursor:not-allowed}
   </style>
 </head>
 <body>
   <h1>Body Chrome Attach</h1>
-  <p id="hint">Extension tự kết nối và tự ghép nối với Company Runtime trên máy này. Không cần nhập mã.</p>
-  <button id="reset" type="button" hidden>Đặt lại token kết nối</button>
-  <div id="status" class="status muted">Đang kiểm tra trạng thái…</div>
+  <div id="status" class="status checking">ĐANG KIỂM TRA</div>
+  <p id="hint">Đang lấy trạng thái từ Daemon.</p>
+  <button id="reset" type="button" hidden>Đặt lại kết nối</button>
   <script src="pairing_popup.js"></script>
 </body>
 </html>

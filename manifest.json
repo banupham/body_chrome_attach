@@ -4,7 +4,7 @@
   "version": "0.7.0",
   "description": "Authenticated Chrome adapter for the single Company Runtime with Browser identity, TaskWorkspace-scoped BODY execution, and read-only environment validation.",
   "minimum_chrome_version": "125",
-  "permissions": ["debugger", "tabs", "activeTab", "storage", "proxy"],
+  "permissions": ["debugger", "tabs", "activeTab", "storage", "proxy", "scripting", "privacy", "system.cpu", "system.memory", "system.display"],
   "host_permissions": ["*://*/*"],
   "background": {"service_worker": "service_worker.js"},
   "content_scripts": [{"matches": ["*://*/*"], "js": ["virtual_cursor_content.js"], "run_at": "document_start", "all_frames": false}],

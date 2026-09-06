@@ -39,7 +39,7 @@ function parseFastBrowserUiAction(raw){
 class DaemonBridge{
   constructor(chromeApi,{gateway,WebSocketImpl=WebSocket,url=null,resolveEndpoint=resolveRuntimeEndpoint,fetchImpl=globalThis.fetch}={}){
     if(!chromeApi||!gateway)throw new Error('daemon_bridge_dependencies_required');
-    this.chrome=chromeApi;this.gateway=gateway;this.WebSocketImpl=WebSocketImpl;this.url=url?String(url):null;this.urlOverride=Boolean(url);this.resolveEndpoint=resolveEndpoint;this.fetchImpl=fetchImpl;this.socket=null;this.reconnectTimer=null;this.keepaliveTimer=null;this.browserInstanceId=null;this.extensionInstanceId=null;this.authToken=null;this.recordingEnabled=true;this.cursorEnabled=true;this.expectedTabSwitch=new Map();this.expectedBrowserUi=null;this.navigationEpochByTab=new Map();this.started=false;this.connecting=null;
+    this.chrome=chromeApi;this.gateway=gateway;this.WebSocketImpl=WebSocketImpl;this.url=url?String(url):null;this.urlOverride=Boolean(url);this.resolveEndpoint=resolveEndpoint;this.fetchImpl=fetchImpl;this.socket=null;this.reconnectTimer=null;this.keepaliveTimer=null;this.browserInstanceId=null;this.extensionInstanceId=null;this.authToken=null;this.recordingEnabled=true;this.cursorEnabled=true;this.readinessStatus=null;this.expectedTabSwitch=new Map();this.expectedBrowserUi=null;this.navigationEpochByTab=new Map();this.started=false;this.connecting=null;
   }
   async identity(){
     const saved=await this.chrome.storage.local.get({bodyBrowserInstanceId:null,bodyDaemonExtensionInstanceId:null,bodyDaemonAuthToken:null});
@@ -63,11 +63,11 @@ class DaemonBridge{
       let url;try{url=await this.endpointUrl();}catch{this.scheduleReconnect();return;}
       let socket;try{socket=new this.WebSocketImpl(url);}catch{this.scheduleReconnect();return;}this.socket=socket;
       socket.onopen=async()=>{const tabs=await this.tabSnapshot();this.send({type:'HELLO',role:'extension',protocolVersion:PROTOCOL_VERSION,token:this.authToken||null,extensionVersion:this.chrome.runtime.getManifest().version,runtimeExtensionId:this.chrome.runtime.id,tabs});clearInterval(this.keepaliveTimer);this.keepaliveTimer=setInterval(()=>this.send({type:'KEEPALIVE',ts:Date.now()}),20000);};
-      socket.onmessage=event=>this.onMessage(event.data);socket.onerror=()=>{try{socket.close();}catch{}};socket.onclose=()=>{clearInterval(this.keepaliveTimer);if(this.socket===socket)this.socket=null;this.scheduleReconnect();};
+      socket.onmessage=event=>this.onMessage(event.data);socket.onerror=()=>{try{socket.close();}catch{}};socket.onclose=()=>{clearInterval(this.keepaliveTimer);this.readinessStatus=null;if(this.socket===socket)this.socket=null;this.scheduleReconnect();};
     })();
     try{return await this.connecting;}finally{this.connecting=null;}
   }
-  async onMessage(raw){let msg;try{msg=JSON.parse(String(raw));}catch{return;}if(msg?.type==='AUTH_PAIRED'&&msg.token){this.authToken=String(msg.token);await this.chrome.storage.local.set({bodyDaemonAuthToken:this.authToken});return;}if(msg?.type==='AUTH_ERROR'){console.error('Body daemon authentication failed:',msg.error||'auth_error');try{this.socket?.close();}catch{}return;}if(!msg?.type)return;try{const result=await this.handle(msg);if(msg.requestId)this.send({type:'RESPONSE',requestId:msg.requestId,ok:true,result});}catch(error){if(msg.requestId)this.send({type:'RESPONSE',requestId:msg.requestId,ok:false,error:{code:error?.code||'extension_error',message:String(error?.message||error)}});}}
+  async onMessage(raw){let msg;try{msg=JSON.parse(String(raw));}catch{return;}if(msg?.type==='AUTH_PAIRED'&&msg.token){this.authToken=String(msg.token);await this.chrome.storage.local.set({bodyDaemonAuthToken:this.authToken});return;}if(msg?.type==='AUTH_ERROR'){this.readinessStatus=null;console.error('Body daemon authentication failed:',msg.error||'auth_error');try{this.socket?.close();}catch{}return;}if(!msg?.type)return;try{const result=await this.handle(msg);if(msg.requestId)this.send({type:'RESPONSE',requestId:msg.requestId,ok:true,result});}catch(error){if(msg.requestId)this.send({type:'RESPONSE',requestId:msg.requestId,ok:false,error:{code:error?.code||'extension_error',message:String(error?.message||error)}});}}
   activeTab(){return this.chrome.tabs.query({active:true,lastFocusedWindow:true}).then(tabs=>{const tab=tabs?.[0];if(!tab||!Number.isInteger(tab.id))throw new Error('active_tab_not_found');return tab;});}
   validatePlan(plan){if(!plan||plan.executionCapability!=='HUMAN_MOTOR')throw new Error('human_motor_capability_required');if(!Array.isArray(plan.steps)||plan.steps.length<1||plan.steps.length>20000)throw new Error('invalid_plan_steps');for(const [index,step] of plan.steps.entries()){if(!ALLOWED_METHODS.has(step?.method))throw new Error(`forbidden_method:${step?.method}:${index}`);const d=Number(step.delayMs||0),p=Number(step.postDelayMs||0);if(!Number.isFinite(d)||d<0||d>15000||!Number.isFinite(p)||p<0||p>15000)throw new Error(`invalid_delay:${index}`);}return plan;}
   agentEventFromStep(commandId,stepIndex,step){if(step.method==='Input.dispatchMouseEvent'){const eventType=pointerEventType(step.params?.type);if(!eventType)return null;return {eventType,ts:Date.now(),source:'agent',sourceConfidence:1,agentCommandId:commandId||null,agentStepIndex:stepIndex,x:Number(step.params?.x),y:Number(step.params?.y),deltaX:Number(step.params?.deltaX||0),deltaY:Number(step.params?.deltaY||0)};}if(step.method==='Input.dispatchKeyEvent'){const eventType=keyEventType(step.params?.type);if(!eventType)return null;return {eventType,ts:Date.now(),source:'agent',sourceConfidence:1,agentCommandId:commandId||null,agentStepIndex:stepIndex,key:step.params?.key||null,code:step.params?.code||null};}return null;}
@@ -87,6 +87,7 @@ class DaemonBridge{
   }
   async setCursor(enabled){this.cursorEnabled=enabled===true;const tabs=await this.chrome.tabs.query({});await Promise.allSettled(tabs.filter(t=>/^https?:\/\//i.test(String(t.url||''))).map(t=>this.chrome.tabs.sendMessage(t.id,{action:'body.virtualCursorSet',enabled:this.cursorEnabled})));return {cursorEnabled:this.cursorEnabled};}
   async handle(msg){
+    if(msg.type==='READINESS_STATUS'){this.readinessStatus=msg.status&&typeof msg.status==='object'?{...msg.status}:null;return {received:true};}
     if(msg.type==='PING')return {online:true,browserInstanceId:this.browserInstanceId,extensionId:this.extensionInstanceId,extensionInstanceId:this.extensionInstanceId,protocolVersion:PROTOCOL_VERSION,authenticated:Boolean(this.authToken),attachedTabs:[...this.gateway.attachedTabs],recordingEnabled:this.recordingEnabled,cursorEnabled:this.cursorEnabled};
     if(msg.type==='LIST_TABS')return this.tabSnapshot();
     if(msg.type==='ACTIVE_TAB'){const t=await this.activeTab();return {id:t.id,title:t.title||'',siteKey:siteKeyFromUrl(t.url),navigationToken:navigationToken(t.url),navigationEpoch:Number(this.navigationEpochByTab.get(Number(t.id))||0),active:t.active,windowId:t.windowId};}
@@ -120,6 +121,8 @@ class DaemonBridge{
       const rawKey=String(event.key||''),printable=rawKey.length===1;
       const semanticBefore=event.type==='keydown'&&rawKey==='Enter'?await this.semanticObservation(tabId):null;
       row={eventType:event.type,ts:Number(event.at||Date.now()),source:'human',sourceConfidence:1,agentCommandId:null,agentStepIndex:null,key:sensitive||printable?null:rawKey,keyClass:sensitive?'redacted':this.keyClass(rawKey),code:sensitive||printable?null:event.code,repeat:event.repeat===true,target,isTrusted:true,...(semanticBefore?.available===true?{semanticBefore}: {})};
+    }else if(payload.kind==='trust_audit'&&event.isTrusted===false){
+      row={eventType:'synthetic_input',ts:Number(event.at||payload.at||Date.now()),source:'unattributed',sourceConfidence:1,agentCommandId:null,agentStepIndex:null,auditEventType:String(event.type||'unknown'),target,isTrusted:false};
     }
     if(!row)return false;
     return this.send({type:'RECORDER_EVENT',tabId:Number(tabId),siteKey:siteKeyFromUrl(payload.url),event:row});
@@ -130,12 +133,13 @@ class DaemonBridge{
     this.chrome.tabs.onUpdated?.addListener((tabId,changeInfo,tab)=>{
       if(changeInfo.url||changeInfo.title||changeInfo.status)this.navigationEpochByTab.set(Number(tabId),Number(this.navigationEpochByTab.get(Number(tabId))||0)+1);
       if(!changeInfo.url&&!changeInfo.title&&!changeInfo.status)return;
-      this.send({type:'TAB_CONTEXT',tabId:Number(tabId),context:{siteKey:siteKeyFromUrl(tab.url),navigationToken:navigationToken(tab.url),navigationEpoch:Number(this.navigationEpochByTab.get(Number(tabId))||0),title:tab.title||'',windowId:tab.windowId,status:tab.status||changeInfo.status||null}});
+      const siteKey=siteKeyFromUrl(tab.url);
+      if(siteKey!=='__non_web__')this.send({type:'TAB_CONTEXT',tabId:Number(tabId),context:{siteKey,navigationToken:navigationToken(tab.url),navigationEpoch:Number(this.navigationEpochByTab.get(Number(tabId))||0),title:tab.title||'',windowId:tab.windowId,status:tab.status||changeInfo.status||null,urlScheme:(()=>{try{return new URL(tab.url).protocol;}catch{return '';}})(),contextSource:'chrome_tabs'}});
       if(changeInfo.url||changeInfo.status==='complete')this.semanticObservation(tabId).then(observation=>{if(observation?.available===true)this.send({type:'SEMANTIC_OBSERVATION',tabId:Number(tabId),siteKey:siteKeyFromUrl(tab.url),observation});}).catch(()=>{});
     });
     this.chrome.tabs.onRemoved?.addListener(tabId=>{this.navigationEpochByTab.delete(Number(tabId));this.send({type:'TAB_REMOVED',tabId:Number(tabId)});});
   }
-  status(){return {url:this.url,started:this.started,connected:this.socket?.readyState===1,protocolVersion:PROTOCOL_VERSION,browserInstanceId:this.browserInstanceId,extensionInstanceId:this.extensionInstanceId,authenticated:Boolean(this.authToken),recordingEnabled:this.recordingEnabled,cursorEnabled:this.cursorEnabled};}
+  status(){return {url:this.url,started:this.started,connected:this.socket?.readyState===1,protocolVersion:PROTOCOL_VERSION,browserInstanceId:this.browserInstanceId,extensionInstanceId:this.extensionInstanceId,authenticated:Boolean(this.authToken),recordingEnabled:this.recordingEnabled,cursorEnabled:this.cursorEnabled,readinessStatus:this.readinessStatus};}
 }
 
 module.exports={PROTOCOL_VERSION,ALLOWED_METHODS,FAST_BROWSER_UI_PREFIX,FAST_BROWSER_UI_ACTIONS,parseFastBrowserUiAction,siteKeyFromUrl,navigationToken,observedEffect,DaemonBridge};
