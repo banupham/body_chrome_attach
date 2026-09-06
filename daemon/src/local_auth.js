@@ -29,6 +29,7 @@ class LocalAuth{
   authenticateDebugClient(value){return secureEqualHex(digest(value),digest(this.debugClientSecret));}
   authenticateClient(value){return this.authenticateDebugClient(value);}
   authenticateBrain(value){return secureEqualHex(digest(value),digest(this.brainSecret));}
+  ensureAutomaticPairingWindow(){return {opened:false,busy:false,automatic:true,pairingMode:'automatic_local'};}
 
   authenticateExtension({extensionId,browserInstanceId=null,runtimeExtensionId,token:presented,origin}){
     const instance=String(extensionId||'').trim(),browser=String(browserInstanceId||'').trim(),runtime=String(runtimeExtensionId||'').trim(),normalizedOrigin=String(origin||'').replace(/\/$/,'');
