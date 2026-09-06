@@ -46,7 +46,7 @@ test('behavior guardian ignores BODY agent events, blocks synthetic input, then 
 });
 
 function fakeRuntime(){
-  const row={browserInstanceId:'b1',extensionInstanceId:'e1',online:true,state:'ACTIVE',stateReason:'environment_eligible',environment:{eligible:true,reasons:[],evidence:[{type:'deep_fingerprint',signalIds:['webdriver_true']}]}};
+  const row={browserInstanceId:'b1',extensionInstanceId:'e1',online:true,state:'ACTIVE',stateReason:'environment_eligible',environment:{eligible:true,status:'ELIGIBLE',observedAt:new Date().toISOString(),reasons:[],evidence:[{type:'deep_fingerprint',available:true,signalIds:[]}]}};
   const browsers={
     list:()=>[{...row,environment:{...row.environment,reasons:[...(row.environment.reasons||[])],evidence:(row.environment.evidence||[]).map(x=>({...x}))}}],
     require:id=>{if(id!=='b1')throw new Error('not_found');return row;},
@@ -56,10 +56,11 @@ function fakeRuntime(){
   };
   return {
     browsers,
+    extensionOnline:item=>({browser:item||row,reconcile:{failedTasks:[]}}),
     recorderEvent:()=>true,
     tabContext:()=>true,
     tasks:{create:spec=>({ok:true,...spec})},
-    guardian:{status:()=>({policy:{}})},
+    guardian:{policy:{deepFingerprintEnabled:true},status:()=>({policy:{deepFingerprintEnabled:true}})},
     probeEnvironment:async()=>({browserInstanceId:'b1',eligible:true,status:'ELIGIBLE',reasons:[]}),
     probeAllEnvironments:async()=>[{browserInstanceId:'b1',eligible:true,status:'ELIGIBLE',reasons:[]}]
   };
@@ -77,17 +78,39 @@ test('protection supervisor quarantines controller conflict and blocks new task 
   assert.deepEqual(timers,[15000,300000]);
   const status=runtime.guardian.status();
   assert.equal(status.protection.browsers.b1.blocked,true);
+  assert.equal(status.protection.browsers.b1.initialCheck.complete,true);
+  assert.equal(status.protection.browsers.b1.initialCheck.status,'BLOCKED');
   supervisor.stop();
+});
+
+test('initial bot check gates tasks while controller scan is pending and passes after the scan completes',async()=>{
+  const runtime=fakeRuntime();let release;const controllerResult=new Promise(resolve=>{release=()=>resolve(compactProcessSnapshot({processes:[],udp:[]}));});const probe={probe:()=>controllerResult};
+  const supervisor=new ProtectionSupervisor(runtime,{controllerProbe:probe,setIntervalImpl:()=>({unref(){}}),clearIntervalImpl:()=>{}}).start();
+  let check=supervisor.status().browsers.b1.initialCheck;
+  assert.equal(check.complete,false);assert.equal(check.status,'PENDING');assert.equal(check.controllerComplete,false);assert.equal(check.deepComplete,true);
+  assert.throws(()=>runtime.tasks.create({browserInstanceId:'b1'}),/browser_protection_check_pending/);
+  release();await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  check=supervisor.status().browsers.b1.initialCheck;
+  assert.equal(check.complete,true);assert.equal(check.status,'PASSED');assert.equal(check.controllerComplete,true);assert.equal(check.deepComplete,true);assert.equal(check.continuousMonitoring,true);
+  assert.equal(runtime.tasks.create({browserInstanceId:'b1'}).ok,true);supervisor.stop();
+});
+
+test('initial bot check remains pending until Deep fingerprint evidence is available when Deep Guardian is enabled',()=>{
+  const runtime=fakeRuntime(),row=runtime.browsers.require('b1');row.environment.evidence=[];
+  const supervisor=new ProtectionSupervisor(runtime,{controllerProbe:{probe:()=>compactProcessSnapshot({processes:[],udp:[]})},setIntervalImpl:()=>({unref(){}}),clearIntervalImpl:()=>{}}).start();
+  const check=supervisor.status().browsers.b1.initialCheck;
+  assert.equal(check.complete,false);assert.equal(check.status,'PENDING');assert.equal(check.controllerComplete,true);assert.equal(check.deepComplete,false);assert.ok(check.reasons.includes('deep_fingerprint_pending'));
+  assert.throws(()=>runtime.tasks.create({browserInstanceId:'b1'}),/browser_protection_check_pending/);supervisor.stop();
 });
 
 test('light supervisor accepts an asynchronous controller sensor without blocking startup',async()=>{
   const runtime=fakeRuntime();const probe={probe:()=>new Promise(resolve=>setImmediate(()=>resolve(compactProcessSnapshot({processes:[],udp:[]}))))};const supervisor=new ProtectionSupervisor(runtime,{controllerProbe:probe,setIntervalImpl:()=>({unref(){}}),clearIntervalImpl:()=>{}}).start();
-  assert.equal(supervisor.status().lightRunning,true);assert.equal(supervisor.status().browsers.b1.controller.reason,'controller_scan_pending');await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));const status=supervisor.status();assert.equal(status.lightRunning,false);assert.equal(status.browsers.b1.controller.available,true);assert.equal(status.browsers.b1.controller.blocked,false);supervisor.stop();
+  assert.equal(supervisor.status().lightRunning,true);assert.equal(supervisor.status().browsers.b1.controller.reason,'controller_scan_pending');assert.equal(supervisor.status().browsers.b1.initialCheck.status,'PENDING');await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));const status=supervisor.status();assert.equal(status.lightRunning,false);assert.equal(status.browsers.b1.controller.available,true);assert.equal(status.browsers.b1.controller.blocked,false);assert.equal(status.browsers.b1.initialCheck.status,'PASSED');supervisor.stop();
 });
 
 test('deferred environment waits on blank metadata and retries immediately on reliable web context',async()=>{
   const runtime=fakeRuntime(),row=runtime.browsers.require('b1');row.state='ENV_CHECK';row.stateReason='environment_waiting_for_http_tab';row.environment={eligible:false,status:'PENDING',reasons:['ENVIRONMENT_SIGNATURE_UNAVAILABLE'],evidence:[]};let probes=0;
-  runtime.probeEnvironment=async()=>{probes++;row.environment={eligible:true,status:'ELIGIBLE',reasons:[],evidence:[]};row.state='ACTIVE';row.stateReason='environment_eligible';return {browserInstanceId:'b1',eligible:true,status:'ELIGIBLE',reasons:[]};};
+  runtime.probeEnvironment=async()=>{probes++;row.environment={eligible:true,status:'ELIGIBLE',observedAt:new Date().toISOString(),reasons:[],evidence:[{type:'deep_fingerprint',available:true,signalIds:[]}]};row.state='ACTIVE';row.stateReason='environment_eligible';return {browserInstanceId:'b1',eligible:true,status:'ELIGIBLE',reasons:[]};};
   const probe={probe:()=>compactProcessSnapshot({processes:[],udp:[]})};const supervisor=new ProtectionSupervisor(runtime,{controllerProbe:probe,setIntervalImpl:()=>({unref(){}}),clearIntervalImpl:()=>{}}).start();
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(probes,0,'controller light scan must not hammer a blank-tab environment probe');
@@ -101,7 +124,7 @@ test('deferred environment waits on blank metadata and retries immediately on re
 
 test('deferred environment retries from a recorder event that already proves a web site',async()=>{
   const runtime=fakeRuntime(),row=runtime.browsers.require('b1');row.state='ENV_CHECK';row.stateReason='environment_waiting_for_http_tab';row.environment={eligible:false,status:'PENDING',reasons:['ENVIRONMENT_SIGNATURE_UNAVAILABLE'],evidence:[]};let probes=0;
-  runtime.probeEnvironment=async()=>{probes++;row.environment={eligible:true,status:'ELIGIBLE',reasons:[],evidence:[]};row.state='ACTIVE';row.stateReason='environment_eligible';return {browserInstanceId:'b1',eligible:true,status:'ELIGIBLE',reasons:[]};};
+  runtime.probeEnvironment=async()=>{probes++;row.environment={eligible:true,status:'ELIGIBLE',observedAt:new Date().toISOString(),reasons:[],evidence:[{type:'deep_fingerprint',available:true,signalIds:[]}]};row.state='ACTIVE';row.stateReason='environment_eligible';return {browserInstanceId:'b1',eligible:true,status:'ELIGIBLE',reasons:[]};};
   const supervisor=new ProtectionSupervisor(runtime,{controllerProbe:{probe:()=>compactProcessSnapshot({processes:[],udp:[]})},setIntervalImpl:()=>({unref(){}}),clearIntervalImpl:()=>{}}).start();
   runtime.recorderEvent('e1',{tabId:1,siteKey:'www.youtube.com',event:{eventType:'mousedown',source:'human',ts:1000,x:10,y:10}});
   await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
