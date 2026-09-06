@@ -63,6 +63,13 @@ async function submitPairingCode(value) {
   return { attempting: true, codeAcceptedLocally: true };
 }
 
+async function resetLocalPairing() {
+  await chrome.storage.local.remove('bodyDaemonAuthToken');
+  daemon.authToken = null;
+  try { daemon.socket?.close(); } catch {}
+  return { reset: true, paired: false };
+}
+
 function result(sendResponse, work) {
   Promise.resolve().then(work)
     .then(value => sendResponse({ ok: true, result: value }))
@@ -84,6 +91,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.action === 'body.pair') {
     return result(sendResponse, () => submitPairingCode(message.code));
+  }
+
+  if (message?.action === 'body.pairReset') {
+    return result(sendResponse, resetLocalPairing);
   }
 
   // Production runtime API is intentionally read-only. All actions go through daemon :8765.
