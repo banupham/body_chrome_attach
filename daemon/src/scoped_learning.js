@@ -155,6 +155,7 @@ class ScopedLearningManager {
 
   scope(ref,siteKey) {
     const identity=this._identity(ref);
+    this._ensureMigration(identity);
     const key=this._key(identity,siteKey);
     if(this.cache.has(key)) {
       const existing=this.cache.get(key);
