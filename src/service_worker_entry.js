@@ -1,7 +1,7 @@
 'use strict';
 
 const { CdpInputGateway } = require('./cdp_input_gateway');
-const { DaemonBridge } = require('./daemon_bridge');
+const { DaemonBridge, siteKeyFromUrl, navigationToken } = require('./daemon_bridge');
 const { VIRTUAL_CURSOR_SCOPE, MESSAGE_TYPES } = require('./virtual_cursor_protocol');
 
 const gateway = new CdpInputGateway(chrome);
@@ -23,6 +23,32 @@ function rememberUserMotor(tabId, payload) {
   rows.push(payload);
   if (rows.length > MAX_OBSERVED_EVENTS_PER_TAB) rows.splice(0, rows.length - MAX_OBSERVED_EVENTS_PER_TAB);
   observedUserMotorByTab.set(id, rows);
+}
+
+function pageContextFromContent(sender, message) {
+  const tabId = Number(sender?.tab?.id);
+  if (!Number.isInteger(tabId)) return false;
+  const raw = message?.context || {};
+  const url = String(raw.url || sender?.url || '');
+  const siteKey = siteKeyFromUrl(url);
+  if (siteKey === '__non_web__') return false;
+  let urlScheme = '';
+  try { urlScheme = new URL(url).protocol; } catch {}
+  const epoch = Number(daemon.navigationEpochByTab.get(tabId) || 0);
+  return daemon.send({
+    type: 'TAB_CONTEXT',
+    tabId,
+    context: {
+      siteKey,
+      navigationToken: navigationToken(url),
+      navigationEpoch: epoch,
+      title: String(raw.title || sender?.tab?.title || ''),
+      windowId: Number.isInteger(Number(sender?.tab?.windowId)) ? Number(sender.tab.windowId) : null,
+      status: String(raw.status || sender?.tab?.status || ''),
+      urlScheme,
+      contextSource: 'content_script'
+    }
+  });
 }
 
 async function cursorStatus(tabId) {
@@ -77,6 +103,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  if (message?.action === 'body.pageContext') {
+    pageContextFromContent(sender, message);
+    return false;
+  }
+
   if (message?.action === 'body.pairingStatus') {
     return result(sendResponse, pairingStatus);
   }
@@ -119,3 +150,5 @@ chrome.debugger.onDetach.addListener(debuggee => {
 daemon.start()
   .then(status => console.log('Body Chrome Attach ready. Production actions are daemon-only.', status))
   .catch(error => console.error('Body Chrome Attach startup error:', error));
+
+module.exports={pageContextFromContent};
