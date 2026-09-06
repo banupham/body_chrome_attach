@@ -39,6 +39,30 @@ function recentEvents(tabId, limit = 250) {
   return { tabId: Number(tabId), total: rows.length, events: rows.slice(-bounded) };
 }
 
+function normalizePairingCode(value) {
+  return String(value || '').toUpperCase().replace(/[^A-Z2-9]/g, '');
+}
+
+async function pairingStatus() {
+  const saved = await chrome.storage.local.get({ bodyDaemonAuthToken: null });
+  return {
+    paired: Boolean(saved.bodyDaemonAuthToken),
+    connected: daemon.socket?.readyState === 1,
+    browserInstanceId: daemon.browserInstanceId,
+    extensionInstanceId: daemon.extensionInstanceId
+  };
+}
+
+async function submitPairingCode(value) {
+  const saved = await chrome.storage.local.get({ bodyDaemonAuthToken: null });
+  if (saved.bodyDaemonAuthToken) throw new Error('extension_already_paired');
+  const normalized = normalizePairingCode(value);
+  if (!/^[A-Z2-9]{8}$/.test(normalized)) throw new Error('pairing_code_format_invalid');
+  daemon.authToken = normalized;
+  try { daemon.socket?.close(); } catch {}
+  return { attempting: true, codeAcceptedLocally: true };
+}
+
 function result(sendResponse, work) {
   Promise.resolve().then(work)
     .then(value => sendResponse({ ok: true, result: value }))
@@ -52,6 +76,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     rememberUserMotor(tabId, message.payload);
     daemon.forwardUserMotor(tabId, message.payload);
     return false;
+  }
+
+  if (message?.action === 'body.pairingStatus') {
+    return result(sendResponse, pairingStatus);
+  }
+
+  if (message?.action === 'body.pair') {
+    return result(sendResponse, () => submitPairingCode(message.code));
   }
 
   // Production runtime API is intentionally read-only. All actions go through daemon :8765.
