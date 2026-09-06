@@ -22,7 +22,7 @@ function requireBrowserId(msg){const id=String(msg.browserInstanceId||'').trim()
 
 async function handleBrainMessage(ws,msg){
   let result,type;
-  if(msg.type==='BODY_STATUS'){result={identity:runtime.identity.snapshot(),controller:controller.status(),browsers:runtime.browsers.list(),tasks:runtime.tasks.list(),environment:runtime.guardian.status(),extensions:runtime.registry.list(),recordingEnabled:runtime.recordingEnabled,learningEnabled:runtime.learningEnabled,execution:runtime.execution.status()};type='BODY_STATUS_RESULT';}
+  if(msg.type==='BODY_STATUS'){result={identity:runtime.identity.snapshot(),controller:controller.status(),browsers:runtime.browsers.list(),tasks:runtime.tasks.list(),environment:runtime.guardian.status(),extensions:runtime.registry.list(),recordingEnabled:runtime.recordingEnabled,learningEnabled:runtime.learningEnabled,execution:runtime.execution.status(),evidence:runtime.evidence.status(),evidenceStore:runtime.evidenceStore.stats()};type='BODY_STATUS_RESULT';}
   else if(msg.type==='EXTENSIONS_LIST'){result=runtime.registry.list();type='EXTENSIONS_LIST_RESULT';}
   else if(msg.type==='BROWSERS_LIST'){result=runtime.browsers.list();type='BROWSERS_LIST_RESULT';}
   else if(msg.type==='ENVIRONMENT_STATUS'){result=runtime.guardian.status();type='ENVIRONMENT_STATUS_RESULT';}
@@ -65,7 +65,18 @@ wss.on('connection',(ws,request)=>{
       rejectAuth(ws,'unsupported_role');return;
     }
     if(role==='unknown')return;
-    if(role==='extension'){const item=runtime.registry.bySocket(ws);if(!item)return;const extId=item.extensionId;if(msg.browserInstanceId&&String(msg.browserInstanceId)!==String(item.browserInstanceId)){rejectAuth(ws,'browser_instance_scope_mismatch');return;}runtime.registry.touch(extId);if(runtime.resolveResponse(extId,msg))return;if(msg.type==='RECORDER_EVENT'){runtime.recorderEvent(extId,msg);return;}if(msg.type==='TAB_EVENT'){runtime.tabEvent(extId,msg.event||{});brainSend('BODY_EVENT',{event:{...msg.event,identity:runtime.identityForExtension(extId),browserInstanceId:item.browserInstanceId}});return;}if(msg.type==='TAB_CONTEXT'){runtime.tabContext(extId,msg);brainSend('BODY_EVENT',{event:{eventType:'tabContext',identity:runtime.identityForExtension(extId),browserInstanceId:item.browserInstanceId,tabId:msg.tabId,context:msg.context,ts:Date.now()}});return;}if(msg.type==='TAB_REMOVED'){runtime.tabRemoved(extId,msg.tabId);brainSend('BODY_EVENT',{event:{eventType:'tabRemoved',identity:runtime.identityForExtension(extId),browserInstanceId:item.browserInstanceId,tabId:msg.tabId,ts:Date.now()}});return;}return;}
+    if(role==='extension'){
+      const item=runtime.registry.bySocket(ws);if(!item)return;const extId=item.extensionId;
+      if(msg.browserInstanceId&&String(msg.browserInstanceId)!==String(item.browserInstanceId)){rejectAuth(ws,'browser_instance_scope_mismatch');return;}
+      runtime.registry.touch(extId);
+      if(runtime.resolveResponse(extId,msg))return;
+      if(msg.type==='RECORDER_EVENT'){runtime.recorderEvent(extId,msg);return;}
+      if(msg.type==='SEMANTIC_OBSERVATION'){runtime.semanticObservation(extId,msg);return;}
+      if(msg.type==='TAB_EVENT'){runtime.tabEvent(extId,msg.event||{});brainSend('BODY_EVENT',{event:{...msg.event,identity:runtime.identityForExtension(extId),browserInstanceId:item.browserInstanceId}});return;}
+      if(msg.type==='TAB_CONTEXT'){runtime.tabContext(extId,msg);brainSend('BODY_EVENT',{event:{eventType:'tabContext',identity:runtime.identityForExtension(extId),browserInstanceId:item.browserInstanceId,tabId:msg.tabId,context:msg.context,ts:Date.now()}});return;}
+      if(msg.type==='TAB_REMOVED'){runtime.tabRemoved(extId,msg.tabId);brainSend('BODY_EVENT',{event:{eventType:'tabRemoved',identity:runtime.identityForExtension(extId),browserInstanceId:item.browserInstanceId,tabId:msg.tabId,ts:Date.now()}});return;}
+      return;
+    }
     if(role==='brain'){try{await handleBrainMessage(ws,msg);}catch(error){runtime.send(ws,{type:'BRAIN_ERROR',requestId:msg.requestId||null,ok:false,error:String(error?.message||error)});}return;}
     if(role==='debug_client'){if(msg.type!=='COMMAND')return;try{const result=await debugAdapter.run(msg.command,{assertControl:()=>controller.assertDebugControlAllowed()});runtime.send(ws,{type:'COMMAND_RESULT',requestId:msg.requestId||null,ok:true,result});}catch(error){runtime.send(ws,{type:'CLIENT_ERROR',requestId:msg.requestId||null,ok:false,error:String(error?.message||error)});}}
   });
