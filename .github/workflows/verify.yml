@@ -21,3 +21,15 @@ jobs:
         run: npm run verify
       - name: Check Windows native helper syntax
         run: python3 -m py_compile daemon/native/windows_input.py
+
+  windows-native-input:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate Win32 INPUT ABI
+        run: python daemon/native/windows_input.py selftest
