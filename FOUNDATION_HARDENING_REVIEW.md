@@ -1,120 +1,172 @@
-# Rà soát Mục 1 — BUSY / ACTIVE lifecycle
+# Rà soát Foundation Hardening — Mục 1 đến Mục 5
 
-Phạm vi đã thay đổi:
+Phạm vi review: toàn bộ thay đổi trên `feat/main-foundation-hardening` so với `main` tại `6070b9425d0a4605aed69788f2f613340586b5b6`.
 
-- `daemon/src/execution_lane.js`
-  - thêm `busy = active || queued > 0` vào snapshot.
-  - phát `onStateChange` khi enqueue, bắt đầu và kết thúc execution.
-  - observer lỗi không làm hỏng execution; lỗi observer được ghi vào trạng thái lane.
-- `daemon/src/daemon_runtime.js`
-  - Browser BUSY/ACTIVE được đồng bộ từ ExecutionLane.
-  - bỏ việc `withTask()` tự bật BUSY rồi tự trả ACTIVE.
-  - không ghi đè `HUMAN_CONTROL`, `QUARANTINED`, `ERROR`, `OFFLINE` khi lane cạn.
-  - nếu môi trường trở thành không hợp lệ trong lúc BUSY, lane cạn sẽ đưa Browser về `QUARANTINED`, không `ACTIVE`.
-- thêm regression contracts cho queue, failure, Browser state và Guardian.
+Nguyên tắc đánh giá:
+- Không xem CI xanh là đủ; kiểm tra lại identity scope, lifecycle, provenance, persistence, privacy và đường thực thi.
+- Không đánh đồng `delivered`, `observed`, `verified`, `taskSuccess`.
+- Không mở thêm page-control capability để giải quyết vấn đề quan sát.
 
-Rủi ro đã kiểm tra bằng contract:
+## 1. Browser BUSY / ACTIVE lifecycle
 
-1. Hai execution cùng Browser không tạo khoảng ACTIVE giả giữa hai lệnh.
-2. Execution đầu thất bại nhưng execution sau còn chờ thì Browser vẫn BUSY.
-3. Lane cạn mới được ACTIVE.
-4. HUMAN_CONTROL / QUARANTINED / ERROR / OFFLINE không bị callback idle ghi đè.
-5. Guardian từ chối probe khi Browser BUSY.
-6. Môi trường bị đánh dấu không hợp lệ trong lúc execution thì không được tái kích hoạt.
+Đã thay đổi:
+- `ExecutionLane` sở hữu `busy = active || queued > 0`.
+- Browser state theo toàn bộ lane, không theo từng Task wrapper.
+- Idle callback không ghi đè `HUMAN_CONTROL`, `QUARANTINED`, `ERROR`, `OFFLINE`.
 
-Rủi ro còn phải theo dõi sau CI / runtime thực tế:
+Đã khóa bằng contract:
+1. Hai execution nối tiếp không tạo ACTIVE gap.
+2. Work đầu fail nhưng work sau còn chờ => vẫn BUSY.
+3. Guardian từ chối probe Browser BUSY.
+4. Environment ineligible sau lane => QUARANTINED, không ACTIVE.
 
-- Debug low-level được gọi khi Browser đang `ENV_CHECK` hoặc `QUARANTINED` không bị ép sang BUSY; đây là hành vi cố ý để không ghi đè trạng thái Guardian, nhưng diagnostic path vẫn phải được dùng có kiểm soát.
-- `onStateChange` là callback đồng bộ. Nếu observer phát sinh lỗi, execution vẫn tiếp tục và `observerErrors` tăng; cần theo dõi status để không che lỗi wiring lâu dài.
-- Scope của ExecutionLane hiện là `extensionInstanceId`. Với kiến trúc hiện tại một Browser đang bind một Extension nên phù hợp; khi Mục 4 thay identity learning hoặc sau này thay transport binding, cần rà lại scope execution riêng.
+Rủi ro còn lại:
+- Existing queued physical work chưa có cơ chế cancel riêng khi HUMAN_CONTROL bắt đầu; đây là vấn đề Human Override/lifecycle rộng hơn, không phải regression Mục 1.
+- Scope lane vẫn là live `extensionInstanceId`. Với binding hiện tại phù hợp; nếu sau này transport rebind khi Browser vẫn sống, cần thiết kế lại execution scope độc lập với Mục 4 learning scope.
 
-# Rà soát Mục 2 — Extension pairing hardening
+## 2. Extension pairing hardening
 
-Phạm vi đã thay đổi:
+Đã thay đổi:
+- Extension mới fail-closed; không TOFU.
+- Pairing window/mã một lần chỉ được mở ở local daemon console.
+- Persistent token chỉ cấp sau pairing thành công và vẫn khóa theo Browser/Runtime/Origin.
+- `pair forget` revoke credential và terminate live socket.
 
-- `daemon/src/local_auth.js`
-  - Extension mới bị từ chối mặc định nếu chưa có pairing window.
-  - pairing code 8 ký tự, dùng một lần, chỉ tồn tại trong RAM.
-  - cửa sổ mặc định 120 giây, giới hạn 30–300 giây.
-  - giới hạn số mã sai khác nhau; websocket retry cùng một mã sai không làm cạn quota nhiều lần.
-  - Extension đã paired tiếp tục xác thực bằng persistent token như cũ.
-  - binding `extensionInstanceId + browserInstanceId + runtimeExtensionId + Origin` vẫn được kiểm tra.
-- `daemon/src/local_pairing_console.js`
-  - chỉ console local có `pair open/status/list/close/forget`.
-  - không đưa pairing control vào debug socket hoặc Brain protocol.
-  - `pair forget` xóa credential phía daemon và yêu cầu ngắt ngay live WebSocket của Extension đang bị revoke.
-- `src/service_worker_entry.js` + popup Extension
-  - popup nhận mã pairing và chỉ dùng mã đó tạm thời cho lần HELLO tiếp theo.
-  - mã pairing không được ghi vào `chrome.storage.local`.
-  - persistent token chỉ được ghi sau `AUTH_PAIRED` từ daemon.
-  - có recovery chủ đích `body.pairReset` để xóa token cục bộ sau khi daemon đã revoke/forget, rồi re-pair bằng window mới.
-- `manifest.json` không thêm permission đặc quyền mới.
-- thêm contract riêng cho pairing auth, expiry, replay, binding, console, revocation và popup wiring.
+Đã khóa bằng contract:
+1. Pairing đóng => Extension mới bị từ chối.
+2. Code one-use/expiry/replay/rate-limit.
+3. Existing persistent token reconnect không bị phá.
+4. Re-pair sau forget phải mở window mới.
+5. Popup không persist one-time code và không thêm permission.
 
-Rủi ro đã kiểm tra / chủ động xử lý:
+Rủi ro còn lại:
+- Extension chưa pair vẫn có thể reconnect định kỳ và tạo AUTH_ERROR log noise.
+- Pairing window RAM-only nên daemon restart sẽ đóng window; đây là fail-closed có chủ đích.
+- Threat model không cố chống malware đã có quyền đọc process memory/console của cùng máy.
 
-1. New Extension không còn TOFU auto-pair.
-2. Pairing code không thể dùng cho Extension thứ hai sau khi pair thành công.
-3. Sai cùng một code lặp lại do reconnect không tự lock người dùng ra ngoài.
-4. Pairing window hết hạn thì code cũ không còn hiệu lực.
-5. Existing token vẫn bị khóa theo Runtime/Browser binding.
-6. `pair status/list` không lộ token hash hoặc token thật.
-7. Popup không yêu cầu thêm Chrome permission.
-8. Contract identity cũ đã được cập nhật để re-pair sau `forget` cũng phải mở pairing window mới.
-9. `pair forget` làm old persistent token mất hiệu lực và ngắt live connection thay vì chờ reconnect tự nhiên.
-10. Extension có đường phục hồi rõ ràng để xóa token cục bộ cũ trước khi re-pair; thao tác này cần Human bấm xác nhận trong popup.
+## 3. Debug routing + Browser UI fast path
 
-Rủi ro còn phải theo dõi sau CI / runtime thực tế:
+Đã thay đổi:
+- Multi-Extension debug target resolver theo online index/full ID/unique prefix.
+- `exts`, `use`, `next`, `prev`, `@ref`, `--ext`, raw/multiline JSON.
+- Selected disconnect chỉ auto-select khi còn đúng một Extension online.
+- Browser UI fast path qua Chrome tabs API; native fallback vẫn tồn tại.
 
-- Extension chưa paired vẫn reconnect định kỳ và có thể tạo log `AUTH_ERROR` trong lúc pairing window đóng. Đây là noise vận hành, không làm mở quyền; có thể tối ưu backoff ở một bước sau nếu cần.
-- Pairing window là state trong RAM, nên daemon restart sẽ đóng window ngay. Đây là hành vi fail-closed có chủ đích.
-- Nếu pairing auth thành công nhưng bước đăng ký identity sau đó thất bại, server xóa record vừa pair; người dùng phải mở window mới. Không tự khôi phục code cũ để tránh replay.
-- `pair forget` revoke credential ngay nhưng cleanup trạng thái Browser vẫn đi qua cùng WebSocket close lifecycle hiện hữu; cần giữ contract disconnect/reconcile khi sau này sửa ExtensionRegistry ở Mục 3.
-- Threat model không cố chống malware đã có quyền đọc process memory/console của cùng máy; mục tiêu của Mục 2 là ngăn Extension/process local khác tự TOFU-pair chỉ nhờ biết port/protocol.
+Đã khóa bằng contract:
+1. Ambiguous target fail-closed.
+2. Disconnect với nhiều Extension không tự đoán target.
+3. Targeted debug command được serialize và restore selection.
+4. `address/back/forward/reload/hardreload` không dùng CDP Input khi fast path có sẵn.
+5. Fast path fail => native Browser UI, không rơi sang page motor.
+6. CDP allowlist vẫn chỉ `Input.dispatchMouseEvent` / `Input.dispatchKeyEvent`.
 
-# Rà soát Mục 3 — Debug routing + Browser UI fast path
+Rủi ro còn lại:
+- Debug targeted command vẫn tạm thời thay mutable `selectedId`; adapter serialize debug traffic để tránh race. Nếu có thêm control-plane phụ thuộc global selection, nên chuyển sang explicit context hoàn toàn.
+- Browser API availability phụ thuộc Chrome runtime; native fallback là chủ đích tương thích.
 
-Phạm vi đã thay đổi:
+## 4. Stable Browser learning identity
 
-- `daemon/src/extension_registry.js`
-  - thêm online index, `shortId`, exact/unique-prefix resolver và `cycle()`.
-  - selection sau disconnect chỉ tự phục hồi khi còn đúng một Extension online.
-  - nếu còn nhiều Extension online nhưng không có target duy nhất, `selectedId=null` để lệnh không target fail-closed.
-- `daemon/src/debug_command_adapter.js`
-  - thêm `exts`, `use`, `next`, `prev`, `@ref`, `--ext`.
-  - raw JSON và multiline structured command được normalize/giới hạn kích thước.
-  - targeted debug command được serialize và selection cũ được khôi phục nếu vẫn online.
-- `daemon/server.js` / `body_cli.js`
-  - debug socket, console local và CLI đi qua adapter mới.
-  - pairing command vẫn được intercept riêng ở local console, không đi qua debug socket.
-- `daemon/src/browser_ui_adapter.js` / `src/daemon_bridge.js`
-  - thêm Browser API fast path cho `address/back/forward/reload/hardreload`.
-  - API fast path dùng `chrome.tabs.update/goBack/goForward/reload`.
-  - fast path lỗi hoặc không khả dụng sẽ fallback về native Browser UI input hiện có.
-  - HTTP/HTTPS address được phép fast path; chuỗi address/search khác giữ native path.
-- `daemon/src/command_router.js`
-  - chuẩn hóa alias trực tiếp `address` và `hardreload`.
-- thêm `daemon/debug_routing_contract.js` và `tests/browser_ui_fast_path_contract.js` vào `npm run verify`.
+Đã thay đổi:
+- `ScopedLearningManager` persistent key chuyển sang `browserInstanceId`.
+- Layout mới: `profiles/by-browser/<browserInstanceId>/<siteKey>`.
+- `extensionInstanceId`/`runtimeExtensionId` chỉ còn provenance của sample/event.
+- Runtime resolver ánh xạ live Extension ref về identity chain trước khi mở learning scope.
+- `TabHabitModel` schema v2 tách `transitionsByBrowser` và `lastActiveByBrowser`.
 
-Rủi ro đã kiểm tra bằng contract / CI:
+Migration đã thiết kế:
+- Nếu chỉ có legacy `profiles/<extensionInstanceId>`: move nguyên tử sang Browser scope.
+- Nếu Browser destination tồn tại nhưng rỗng: legacy thay thế empty destination.
+- Nếu legacy và Browser scope đều có payload: throw `legacy_learning_migration_conflict`, giữ nguyên cả hai; không merge đoán và không xóa.
+- Migration check chạy trước cache reuse, nên transport Extension xuất hiện muộn với legacy directory riêng vẫn bị phát hiện.
+- Legacy TabHabit v1 global transition không có Browser attribution được giữ trong `legacyUnscopedTransitions` nhưng không dùng làm active learning signal.
 
-1. Full ID, online index và unique prefix chọn đúng Extension.
-2. Prefix mơ hồ và index không tồn tại bị từ chối, không tự đoán target.
-3. Selected Extension disconnect + một Extension còn lại => auto-select duy nhất.
-4. Selected Extension disconnect + nhiều Extension còn lại => selection bị xóa, lệnh không target fail-closed.
-5. `next/prev` chỉ cycle Extension online.
-6. `@ref` và `--ext` chạy trên target tạm thời rồi khôi phục selection hợp lệ trước đó.
-7. Raw/multiline JSON được parse có giới hạn; duplicate target syntax bị từ chối.
-8. Cả 5 Browser UI fast action không đi qua CDP input khi Browser API khả dụng.
-9. Fast API unavailable/error quay về native Browser UI path; không rơi vào page HUMAN_MOTOR.
-10. `ALLOWED_METHODS` vẫn đúng hai phương thức `Input.dispatchMouseEvent` và `Input.dispatchKeyEvent`; không mở rộng CDP gateway.
-11. Không thêm manifest permission mới.
-12. Code + regression test cuối của Mục 3 đã PASS workflow #207.
+Đã khóa bằng `daemon/learning_identity_contract.js`:
+1. Legacy data migrate và đọc lại được.
+2. Sample mới có Browser identity + Extension provenance.
+3. Hai ref cùng Browser dùng chung stable scope.
+4. Browser khác không bị trộn.
+5. Conflict bảo toàn cả hai payload và fail-closed.
+6. Cached stable scope vẫn bắt late legacy conflict.
+7. TabHabit v1 unscoped transition không cộng nhầm sang Browser mới.
 
-Rủi ro còn phải theo dõi sau CI / runtime thực tế:
+Đánh giá:
+- Mục 4 đạt mục tiêu persistent identity. Runtime ephemeral state như pointer/segmenter/tabSites vẫn key theo live Extension; đây là đúng vai trò transport/session và không cần migrate sang Browser.
 
-- Targeted debug command tạm thời thay `registry.selectedId` trong lúc thực thi. Adapter serialize toàn bộ debug command để các debug request không đè selection lẫn nhau; Brain Task execution vẫn dùng identity/task binding rõ ràng thay vì debug selection. Nếu sau này có thêm control-plane khác phụ thuộc global selection, nên chuyển target thành context explicit thay vì mutable selection.
-- `use/next/prev` thay đổi selection debug ngay cả khi Brain đang giữ quyền điều khiển, nhưng chúng không tạo physical action; mọi debug command có tác dụng vật lý vẫn tiếp tục bị `ControllerLease` chặn.
-- Browser API fast path phụ thuộc Chrome API thực tế trên phiên bản/runtime đang chạy. Fallback native đã được giữ để tránh biến thiếu API thành failure cứng.
-- `address` chỉ fast-path URL HTTP/HTTPS; các scheme khác và chuỗi search đi native path. Đây là lựa chọn tương thích hiện tại, không phải policy cho navigation từ xa.
-- `pair forget` vẫn terminate live socket rồi đi qua lifecycle `unregisterSocket -> extensionOffline`; selection reconciliation mới đã có contract để tránh hồi quy Mục 2.
+Rủi ro còn lại:
+- `fs.renameSync` giả định legacy và destination nằm cùng filesystem; trong layout hiện tại cả hai cùng dưới `profiles`, nên điều kiện này được đáp ứng.
+- Conflict cần operator quyết định sau này; cố ý không tự merge vì không có bằng chứng attribution đủ mạnh.
+- Legacy global TabHabit transitions bị mất giá trị training active, nhưng được bảo toàn để audit; đây là tradeoff tránh cross-Browser contamination.
+- LocalIdentity hiện vẫn bind Browser với Extension khá chặt. Mục 4 decouple storage identity chứ không tự thay policy transport rebind.
+
+CI gate Mục 4 cuối sau self-review: workflow #219 — PASS.
+
+## 5. Semantic Observation + Immutable Evidence Store
+
+Đã thay đổi:
+- `src/youtube_semantic_observer.js`: observer read-only tối thiểu.
+- `src/virtual_cursor_content.js`: chỉ expose `body.semanticObservation` read path.
+- `src/daemon_bridge.js`: Human Enter có semantic-before candidate; tab update/complete gửi semantic-after.
+- `daemon/src/evidence_assembler.js`: ghép Human trigger thành `youtube.search` evidence.
+- `daemon/src/evidence_store.js`: storage riêng, append-only JSONL + SHA-256 chain.
+- `daemon/src/daemon_runtime.js`: semantic metadata được tách trước DatasetStore/Segmenter.
+- `daemon/server.js`: chỉ nhận `SEMANTIC_OBSERVATION` từ Extension đã authenticated; không thêm remote command control.
+
+Privacy/truth boundary:
+- Observer không capture query string value, account identity hoặc arbitrary text content.
+- Evidence assembler không tin nguyên object observer; chỉ whitelist page type, query-present boolean, search controls geometry/state, search-result count và viewport.
+- Persisted evidence không giữ route path/video/list identifiers cho `youtube.search` MVP.
+- Nếu privacy flags báo query/account/text đã capture, assembler fail-closed và không tạo candidate.
+- `semanticBefore` bị xóa khỏi training event trước `learning.observeEvent()` và `segmenter.handle()`.
+- Agent/CDP event không thể trở thành Human evidence vì assembler yêu cầu `source='human'`, `isTrusted=true`, keydown Enter và semantic search input active.
+- `ObservedEffect.navigationObserved` chỉ true khi page type thay đổi, search surface xuất hiện hoặc result count thay đổi; không suy diễn navigation chỉ vì after state là trang search.
+- Evidence không tự đặt `taskSuccess`; truth layer vẫn tách.
+
+Evidence integrity:
+- Mỗi record có `previousHash` + `recordHash` SHA-256.
+- Store verify toàn chain trước mỗi append; external tamper làm append/verify fail.
+- Không có API update/delete record.
+- Pending candidate có TTL; tab removed/browser offline xóa pending để tránh ghép stale evidence.
+- Evidence root tách khỏi `profiles`, không tham gia Motor/Habit training.
+- BODY_STATUS chỉ lộ số file/record, không lộ filesystem root path.
+
+Đã khóa bằng contract:
+1. Observer read-only và không chứa action DOM methods.
+2. Query text không xuất hiện trong observation test.
+3. Hash chain đúng và tamper bị phát hiện.
+4. Agent event không tạo Human evidence.
+5. Một trusted Human Enter + semantic after tạo đúng một `youtube.search` record.
+6. Stable Browser identity + Extension provenance có trong evidence.
+7. `semanticBefore`/semantic result không lọt vào learning DatasetStore.
+8. Pending evidence expiry/tab cleanup hoạt động.
+9. Bridge before/after path không mở CDP method mới.
+10. CDP allowlist vẫn chỉ đúng hai Input methods cũ.
+
+CI gate Mục 5 cuối sau self-review: workflow #236 — PASS.
+
+Rủi ro còn lại:
+- Semantic observer hiện mới chứng minh `youtube.search`; chưa phải ontology đa nền tảng.
+- YouTube DOM selector có thể thay đổi. Failure phải biểu hiện bằng unavailable/0 result, không được biến thành action fallback.
+- Human Enter semantic-before hiện được lấy qua content observation request sau USER event được chuyển tới service worker. Vì navigation có thể bắt đầu rất nhanh, một số demonstration thực tế có thể bị bỏ lỡ; hệ thống fail-open theo nghĩa *không tạo evidence* chứ không tạo evidence sai. Nếu cần coverage cao hơn, bước sau nên snapshot semantic ngay trong capture listener và mang snapshot cùng USER event.
+- Evidence append verify toàn file trước mỗi ghi là an toàn cho MVP nhưng O(n) theo số record/file; volume lớn cần checkpoint/index mà vẫn giữ tamper detection.
+- SHA chain chống sửa lẻ/tamper tình cờ nhưng không phải external notarization: process có toàn quyền filesystem có thể rewrite toàn chain.
+- Không lưu query text giúp privacy nhưng Evidence không thể reconstruct chính xác câu Human đã tìm.
+
+## Rà soát tích hợp toàn bộ Mục 1–5
+
+Không phát hiện blocker sau vòng review cuối.
+
+Các invariant còn giữ:
+1. Content script observe/read; không thực hiện page action.
+2. HUMAN_MOTOR page physical path vẫn chỉ CDP Input allowlist hai phương thức.
+3. Browser UI vẫn là capability riêng, có fast/native path riêng.
+4. Browser Manager/Task binding không bị learning identity thay thế.
+5. Pairing local-only không bị semantic/evidence protocol mở ra Internet/debug.
+6. Persistent learning và Evidence đều scope theo Browser stable identity.
+7. Human/Agent provenance vẫn tách.
+8. Evidence không trở thành training data một cách ngầm định.
+9. `main` chưa bị thay đổi; toàn bộ hardening vẫn ở nhánh phụ/PR mở.
+
+Khuyến nghị trước khi merge sau này:
+- Squash PR vì nhánh có nhiều commit nhỏ theo từng gate/review.
+- Chạy một smoke test Windows thật với Chrome: pair -> Guardian ACTIVE -> Human YouTube search -> kiểm tra Evidence record -> Browser UI fast path -> pair forget/reconnect.
+- Không merge nếu smoke test cho thấy semantic observation bị miss thường xuyên; khi đó ưu tiên snapshot semantic tại capture listener, không thêm sleep/polling tùy ý.
