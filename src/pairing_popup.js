@@ -23,10 +23,15 @@ async function refresh(){
   try{
     const state=await send({action:'body.pairingStatus'});
     if(state.paired){
-      setStatus('Đã có token ghép nối cục bộ.','ok');
       form.hidden=true;
-      reset.hidden=false;
-      hint.textContent='Nếu daemon đã quên Extension này, hãy xóa token cục bộ rồi mở pairing window mới.';
+      reset.hidden=state.connected;
+      if(state.connected){
+        setStatus('Đã ghép nối và đang kết nối với Company Runtime.','ok');
+        hint.textContent='Token cục bộ đang hoạt động. Muốn ghép nối lại, hãy chạy pair forget ở daemon trước.';
+      }else{
+        setStatus('Có token ghép nối cục bộ nhưng hiện không kết nối được.','bad');
+        hint.textContent='Nếu daemon đã quên/revoke Extension này, hãy xóa token cục bộ rồi mở pairing window mới.';
+      }
       if(pollTimer){clearInterval(pollTimer);pollTimer=null;}
       return state;
     }
@@ -58,7 +63,7 @@ form.addEventListener('submit',async event=>{
 });
 
 reset.addEventListener('click',async()=>{
-  if(!confirm('Xóa token ghép nối cục bộ? Chỉ dùng khi daemon đã quên Extension hoặc cần ghép nối lại.'))return;
+  if(!confirm('Xóa token ghép nối cục bộ? Chỉ tiếp tục sau khi daemon đã quên/revoke Extension này.'))return;
   reset.disabled=true;
   try{
     await send({action:'body.pairReset'});
