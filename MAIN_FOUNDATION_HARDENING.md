@@ -42,13 +42,26 @@ Kết quả:
 - Không thêm Chrome privileged permission mới.
 - Regression contracts cho closed/open/expiry/replay/wrong-code/binding/forget/re-pair/recovery/popup/build đã được đưa vào `npm run verify`; CI đã PASS trên code cuối của Mục 2 gồm cả revoke và recovery guard.
 
-## 3. Đưa debug routing + Browser UI fast path về nền main — CHƯA THỰC HIỆN
+## 3. Đưa debug routing + Browser UI fast path về nền main — HOÀN THÀNH
 
 Mục tiêu:
 - Debug nhiều Extension phải chọn đích rõ ràng, fail-closed khi mơ hồ.
 - Khi Extension đang chọn mất kết nối: chỉ tự chọn nếu còn đúng một Extension online.
 - Đưa Browser UI fast path cho `address/back/forward/reload/hardreload` về main nhưng giữ native fallback.
 - Không mở rộng CDP gateway; page action vẫn chỉ dùng HUMAN_MOTOR allowlist.
+
+Kết quả:
+- Debug Extension routing hỗ trợ `exts`, `use <index|prefix|full-id>`, `next`, `prev`, `@<ref> <cmd>` và `<cmd> --ext=<ref>`.
+- Prefix mơ hồ hoặc index không hợp lệ bị từ chối; không tự đoán Extension đích.
+- Khi Extension đang chọn offline, selection chỉ tự chuyển nếu còn đúng một Extension online; nếu còn nhiều Extension thì selection bị xóa và lệnh không có target sẽ fail-closed.
+- Debug adapter serialize các lệnh targeted và khôi phục selection cũ khi selection đó vẫn hợp lệ.
+- Debug console và `body_cli.js` hỗ trợ raw/multiline JSON có giới hạn kích thước; pairing command vẫn chỉ tồn tại ở console local.
+- `address`, `back`, `forward`, `reload`, `hardreload` dùng Chrome Browser API fast path khi khả dụng: `chrome.tabs.update`, `chrome.tabs.goBack`, `chrome.tabs.goForward`, `chrome.tabs.reload`.
+- Fast path lỗi/không khả dụng sẽ quay về Browser UI native-input path hiện có; không chuyển sang page motor.
+- `address` chỉ dùng fast path với URL `http/https`; chuỗi address/search khác giữ native fallback để bảo toàn hành vi cũ.
+- Không thêm Chrome permission mới và không mở rộng CDP allowlist: page physical action vẫn chỉ có `Input.dispatchMouseEvent` / `Input.dispatchKeyEvent` qua HUMAN_MOTOR.
+- Không merge toàn bộ nhánh research; chỉ chọn lọc phần debug routing/Browser UI cần thiết và thêm regression contracts riêng.
+- `npm run verify` đã PASS trên code + regression test cuối của Mục 3 tại CI #207 trước khi cập nhật trạng thái tài liệu này.
 
 ## 4. Chuyển learning khỏi extensionId sang identity ổn định — CHƯA THỰC HIỆN
 
