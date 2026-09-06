@@ -1,6 +1,7 @@
 'use strict';
 
 const { installVirtualCursorOverlay } = require('./virtual_cursor_overlay');
+const { youtubeSemanticObservation } = require('./youtube_semantic_observer');
 
 let overlay = installVirtualCursorOverlay({ chromeApi: chrome, documentRef: document });
 let enabled = true;
@@ -43,13 +44,18 @@ function environmentObservation(){
   };
 }
 
+function semanticObservation(){
+  return youtubeSemanticObservation({documentRef:document,windowRef:window,locationRef:window.location});
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.action === 'body.virtualCursorSet') {const next=message.enabled!==false;if(next&&!enabled)overlay=installVirtualCursorOverlay({chromeApi:chrome,documentRef:document});if(!next&&enabled)overlay.uninstall();enabled=next;sendResponse({ok:true,result:{enabled,...(enabled?overlay.status():{installed:false,visible:false})}});return false;}
   if (message?.action === 'body.targetContextAt') {const x=Number(message.x),y=Number(message.y),target=Number.isFinite(x)&&Number.isFinite(y)?document.elementFromPoint(x,y):document.activeElement;sendResponse({ok:true,result:describeTarget(target)});return false;}
   if (message?.action === 'body.pageObservation') {sendResponse({ok:true,result:pageObservation()});return false;}
   if (message?.action === 'body.environmentObservation') {sendResponse({ok:true,result:environmentObservation()});return false;}
+  if (message?.action === 'body.semanticObservation') {sendResponse({ok:true,result:semanticObservation()});return false;}
   if (message?.action !== 'body.virtualCursorPing') return false;
   sendResponse({ok:true,result:{enabled,...(enabled?overlay.status():{installed:false,visible:false})}});return false;
 });
 
-module.exports={describeTarget,pageObservation,environmentObservation};
+module.exports={describeTarget,pageObservation,environmentObservation,semanticObservation};
