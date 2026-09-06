@@ -2,52 +2,50 @@
 
 ## Mục 1 - Browser BUSY/ACTIVE lifecycle
 
-Trạng thái ban đầu:
+- Browser chỉ ACTIVE khi execution lane thực sự cạn.
+- Queue/failure không tạo khoảng ACTIVE giả.
+- Guardian không probe Browser BUSY.
+- HUMAN_CONTROL / QUARANTINED / ERROR / OFFLINE không bị idle callback ghi đè.
 
-- Task execution sử dụng `ExecutionLane` để serialize physical work.
-- Browser state `BUSY/ACTIVE` được quản lý ở lớp task execution.
-- Có nguy cơ trạng thái Browser quay về ACTIVE trước khi toàn bộ queue trong execution lane kết thúc.
+## Mục 2 - Extension pairing hardening
 
-Mục tiêu thay đổi:
-
-- Một Browser chỉ ACTIVE khi không còn execution đang chạy hoặc đang chờ.
-- Không để Environment Guardian hiểu nhầm Browser đang rảnh trong lúc BODY còn hoạt động.
-
-Các điểm cần rà soát sau implementation:
-
-1. Task thành công.
-2. Task thất bại.
-3. Hai Task cùng Browser nhưng khác Tab.
-4. Daemon restart trong lúc execution.
-5. Browser offline trong lúc queue còn tồn tại.
-6. Guardian probe trong thời gian execution.
-
-Các lỗi tiềm ẩn cần kiểm tra:
-
-- deadlock execution lane.
-- Browser bị kẹt BUSY sau exception.
-- Browser ACTIVE sai khi queue chưa hết.
-- ảnh hưởng tới HUMAN_CONTROL.
-- ảnh hưởng tới QUARANTINED/ERROR.
+- Bỏ first-connect TOFU.
+- Pairing window + one-time code chỉ mở từ local daemon console.
+- Persistent token chỉ cấp sau `AUTH_PAIRED` và vẫn bind Browser/Runtime/Origin.
+- `pair forget` revoke + terminate live socket.
+- Pairing control không đi qua Brain/debug socket; không thêm privileged Chrome permission.
 
 ## Mục 3 - Debug routing + Browser UI fast path
 
-Thay đổi đã hoàn thành:
+- `ExtensionRegistry` có online index, full/unique-prefix resolver và fail-closed selection reconciliation.
+- Thêm `exts`, `use`, `next`, `prev`, `@ref <cmd>`, `--ext=<ref>`, raw/multiline JSON.
+- Browser UI fast path cho `address/back/forward/reload/hardreload` qua Chrome tabs API, giữ native fallback.
+- Page physical motor không thay đổi; CDP allowlist vẫn chỉ `Input.dispatchMouseEvent` / `Input.dispatchKeyEvent`.
+- CI code + regression: workflow #207 — PASS.
 
-- `ExtensionRegistry` có target resolver theo online index, full ID hoặc unique prefix; target mơ hồ bị từ chối.
-- Selection sau disconnect được reconcile fail-closed: chỉ auto-select nếu còn đúng một Extension online.
-- Thêm debug adapter với `exts`, `use`, `next`, `prev`, `@ref <cmd>`, `--ext=<ref>`, raw JSON và multiline JSON có giới hạn kích thước.
-- Debug WebSocket và local console dùng cùng adapter; pairing command vẫn chỉ chạy ở local console.
-- `body_cli.js` hỗ trợ paste multiline structured command.
-- Browser UI có fast path cho `address/back/forward/reload/hardreload` qua Chrome tabs API.
-- Khi fast path không khả dụng/lỗi, Browser UI quay về native keyboard path cũ.
-- `address` không phải URL HTTP/HTTPS giữ native address/search behavior.
-- Page physical motor không thay đổi và CDP allowlist vẫn chỉ gồm `Input.dispatchMouseEvent` / `Input.dispatchKeyEvent`.
-- Không merge toàn bộ research branch; chỉ đưa phần production cần thiết về nhánh hardening.
+## Mục 4 - Stable Browser learning identity
 
-Regression gates đã thêm:
+- Persistent learning chuyển từ `profiles/<extensionInstanceId>` sang `profiles/by-browser/<browserInstanceId>`.
+- Extension identity chỉ giữ làm provenance trên sample/event.
+- Legacy learning được move nguyên tử khi an toàn.
+- Legacy + stable cùng có payload => fail-closed, giữ nguyên cả hai, không auto-merge.
+- Migration check chạy trước cache reuse để bắt late legacy transport scope.
+- `TabHabitModel` v2 tách transition/last active theo Browser.
+- Legacy transition không có Browser attribution được quarantine khỏi active learning.
+- Thêm `daemon/learning_identity_contract.js` vào `npm run verify`.
+- CI cuối Mục 4: workflow #219 — PASS.
 
-- `daemon/debug_routing_contract.js`
-- `tests/browser_ui_fast_path_contract.js`
-- cả hai được đưa vào `npm run verify`.
-- CI code + regression cuối trước tài liệu: workflow #207 — PASS.
+## Mục 5 - Semantic Observation + Immutable Evidence Store
+
+- Thêm YouTube semantic observer read-only tối thiểu.
+- Observer không capture query/account/text; Evidence assembler whitelist schema riêng trước persist.
+- Evidence Store tách khỏi DatasetStore/Motor/Habit và dùng stable Browser scope.
+- Evidence JSONL append-only có SHA-256 chain; verify chain trước mỗi append.
+- Trusted Human Enter trên search input tạo candidate `youtube.search`; Agent không tạo Human evidence.
+- Pending evidence có TTL và lifecycle cleanup.
+- `semanticBefore` bị loại trước khi training event đi vào DatasetStore/Segmenter.
+- ObservedEffect không overclaim navigation khi chưa có semantic effect đủ mạnh.
+- Thêm observer/store/runtime/bridge regression contracts vào `npm run verify`.
+- CI cuối Mục 5 sau self-review: workflow #236 — PASS.
+
+Không merge toàn bộ research branch; `main` chưa được thay đổi.
