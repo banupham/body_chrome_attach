@@ -4,7 +4,7 @@ Nhánh thực hiện: `feat/main-foundation-hardening`
 
 Mục tiêu: củng cố nền `main` theo 5 bước nhỏ, mỗi bước phải có test hồi quy và được rà soát độc lập trước khi chuyển sang bước tiếp theo.
 
-## 1. Sửa vòng đời trạng thái BUSY / ACTIVE của Browser — ĐANG THỰC HIỆN
+## 1. Sửa vòng đời trạng thái BUSY / ACTIVE của Browser — HOÀN THÀNH
 
 Mục tiêu:
 - Browser phải giữ `BUSY` khi còn bất kỳ physical execution nào đang chạy hoặc đang xếp hàng trong `ExecutionLane`.
@@ -12,10 +12,14 @@ Mục tiêu:
 - Không ghi đè các trạng thái mạnh hơn như `OFFLINE`, `QUARANTINED`, `ERROR`, `HUMAN_CONTROL`.
 - Environment Guardian không được nhìn thấy Browser là `ACTIVE` trong lúc vẫn còn BODY work đang chờ/chạy.
 
-Điều kiện hoàn thành:
-- Có regression test với ít nhất 2 Task/physical work cùng Browser.
-- Kiểm tra cả success và failure path.
-- `npm run verify` và CI PASS.
+Kết quả:
+- `ExecutionLane` có snapshot `busy = active || queued > 0` và phát lifecycle callback khi enqueue/start/finish.
+- Browser state được đồng bộ từ execution queue thay vì từng Task tự bật/tắt BUSY.
+- Hai physical work cùng Browser không còn khoảng ACTIVE giả giữa hai lệnh.
+- Failure path vẫn giữ BUSY nếu còn work chờ.
+- Guardian từ chối probe khi Browser BUSY.
+- HUMAN_CONTROL / QUARANTINED / ERROR / OFFLINE không bị idle callback ghi đè.
+- Regression contracts đã được thêm vào `npm run verify` và PR CI đã PASS trước bước cập nhật trạng thái tài liệu này.
 
 ## 2. Tăng bảo mật ghép nối Extension — CHƯA THỰC HIỆN
 
