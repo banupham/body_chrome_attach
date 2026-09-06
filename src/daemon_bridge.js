@@ -132,7 +132,8 @@ class DaemonBridge{
     this.chrome.tabs.onUpdated?.addListener((tabId,changeInfo,tab)=>{
       if(changeInfo.url||changeInfo.title||changeInfo.status)this.navigationEpochByTab.set(Number(tabId),Number(this.navigationEpochByTab.get(Number(tabId))||0)+1);
       if(!changeInfo.url&&!changeInfo.title&&!changeInfo.status)return;
-      this.send({type:'TAB_CONTEXT',tabId:Number(tabId),context:{siteKey:siteKeyFromUrl(tab.url),navigationToken:navigationToken(tab.url),navigationEpoch:Number(this.navigationEpochByTab.get(Number(tabId))||0),title:tab.title||'',windowId:tab.windowId,status:tab.status||changeInfo.status||null}});
+      const siteKey=siteKeyFromUrl(tab.url);
+      if(siteKey!=='__non_web__')this.send({type:'TAB_CONTEXT',tabId:Number(tabId),context:{siteKey,navigationToken:navigationToken(tab.url),navigationEpoch:Number(this.navigationEpochByTab.get(Number(tabId))||0),title:tab.title||'',windowId:tab.windowId,status:tab.status||changeInfo.status||null,urlScheme:(()=>{try{return new URL(tab.url).protocol;}catch{return '';}})(),contextSource:'chrome_tabs'}});
       if(changeInfo.url||changeInfo.status==='complete')this.semanticObservation(tabId).then(observation=>{if(observation?.available===true)this.send({type:'SEMANTIC_OBSERVATION',tabId:Number(tabId),siteKey:siteKeyFromUrl(tab.url),observation});}).catch(()=>{});
     });
     this.chrome.tabs.onRemoved?.addListener(tabId=>{this.navigationEpochByTab.delete(Number(tabId));this.send({type:'TAB_REMOVED',tabId:Number(tabId)});});
