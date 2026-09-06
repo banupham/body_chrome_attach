@@ -30,7 +30,7 @@ class ProtectionSupervisor{
   install(){
     if(this.installed)return this;this.installed=true;
     this.original.recorderEvent=this.runtime.recorderEvent.bind(this.runtime);
-    this.runtime.recorderEvent=(extId,msg)=>{const result=this.original.recorderEvent(extId,msg);const browser=this.runtime.browsers.browserForExtension(extId);if(browser&&msg?.event){this.behavior.observe(browser.browserInstanceId,msg.event);this.enforce(browser.browserInstanceId);}return result;};
+    this.runtime.recorderEvent=(extId,msg)=>{const result=this.original.recorderEvent(extId,msg);const browser=this.runtime.browsers.browserForExtension(extId);if(browser&&msg?.event){this.behavior.observe(browser.browserInstanceId,msg.event);this.enforce(browser.browserInstanceId);if(webTabContext({context:{siteKey:msg.siteKey}}))this._kickTransientProbe(browser);}return result;};
     if(typeof this.runtime.tabContext==='function'){
       this.original.tabContext=this.runtime.tabContext.bind(this.runtime);
       this.runtime.tabContext=(extId,msg)=>{const result=this.original.tabContext(extId,msg);const browser=this.runtime.browsers.browserForExtension(extId);if(browser&&webTabContext(msg))this._kickTransientProbe(browser);return result;};
