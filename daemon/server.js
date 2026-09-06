@@ -5,6 +5,7 @@ const {WebSocketServer}=require('ws');
 const {createDaemonRuntime}=require('./src/daemon_runtime');
 const {createCommandRouter}=require('./src/command_router');
 const {LocalAuth}=require('./src/local_auth');
+const {pairingConsoleCommand}=require('./src/local_pairing_console');
 const {ControllerLease}=require('./src/controller_lease');
 
 const PORT=8765,CONTROL_PROTOCOL_VERSION=7,EXTENSION_PROTOCOL_VERSIONS=new Set([5,6]);let rl=null;
@@ -72,6 +73,6 @@ wss.on('connection',(ws,request)=>{
 
 function flushStores(){try{return runtime.flushSync();}catch{return null;}}
 process.once('SIGINT',()=>{flushStores();process.exit(0);});process.once('SIGTERM',()=>{flushStores();process.exit(0);});process.once('exit',flushStores);
-const localIdentity=runtime.identity.snapshot();console.log(`Company runtime identity: company=${localIdentity.companyId} device=${localIdentity.deviceId}`);console.log(`Body runtime transport: ws://127.0.0.1:${PORT}`);console.log(`Environment policy: ${JSON.stringify(runtime.guardian.status().policy)}`);console.log(`Brain auth token: ${auth.status().brainTokenPath}`);console.log(`Debug client token: ${auth.status().debugClientTokenPath}`);console.log('Company Runtime validates Browser eligibility before Task assignment. Guardian is read-only: observe/report/quarantine only.');
-rl=readline.createInterface({input:process.stdin,output:process.stdout,prompt:prompt()});rl.prompt();rl.on('line',async line=>{try{const out=await router.runCommand(line,{assertControl:()=>controller.assertDebugControlAllowed()});if(out!==null)console.log(typeof out==='string'?out:JSON.stringify(out,null,2));}catch(error){console.log('[LỖI]',String(error?.message||error));}updatePrompt();rl.prompt();});
+const localIdentity=runtime.identity.snapshot();console.log(`Company runtime identity: company=${localIdentity.companyId} device=${localIdentity.deviceId}`);console.log(`Body runtime transport: ws://127.0.0.1:${PORT}`);console.log(`Environment policy: ${JSON.stringify(runtime.guardian.status().policy)}`);console.log(`Brain auth token: ${auth.status().brainTokenPath}`);console.log(`Debug client token: ${auth.status().debugClientTokenPath}`);console.log('Extension pairing is CLOSED by default. Local console: pair open [30-300 seconds] | pair status | pair list | pair close | pair forget <extensionId>');console.log('Company Runtime validates Browser eligibility before Task assignment. Guardian is read-only: observe/report/quarantine only.');
+rl=readline.createInterface({input:process.stdin,output:process.stdout,prompt:prompt()});rl.prompt();rl.on('line',async line=>{try{const pairing=pairingConsoleCommand(auth,line);const out=pairing.handled?pairing.result:await router.runCommand(line,{assertControl:()=>controller.assertDebugControlAllowed()});if(out!==null)console.log(typeof out==='string'?out:JSON.stringify(out,null,2));}catch(error){console.log('[LỖI]',String(error?.message||error));}updatePrompt();rl.prompt();});
 module.exports={runtime,router,wss,auth,controller,handleBrainMessage,CONTROL_PROTOCOL_VERSION,EXTENSION_PROTOCOL_VERSIONS,protocolAllowed,browserIdFromHello,requireTaskId,requireBrowserId,flushStores};
