@@ -98,3 +98,12 @@ test('deferred environment waits on blank metadata and retries immediately on re
   await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
   assert.equal(probes,1);assert.equal(row.state,'ACTIVE');assert.equal(supervisor.status().transientProbeInFlight.length,0);supervisor.stop();
 });
+
+test('deferred environment retries from a recorder event that already proves a web site',async()=>{
+  const runtime=fakeRuntime(),row=runtime.browsers.require('b1');row.state='ENV_CHECK';row.stateReason='environment_waiting_for_http_tab';row.environment={eligible:false,status:'PENDING',reasons:['ENVIRONMENT_SIGNATURE_UNAVAILABLE'],evidence:[]};let probes=0;
+  runtime.probeEnvironment=async()=>{probes++;row.environment={eligible:true,status:'ELIGIBLE',reasons:[],evidence:[]};row.state='ACTIVE';row.stateReason='environment_eligible';return {browserInstanceId:'b1',eligible:true,status:'ELIGIBLE',reasons:[]};};
+  const supervisor=new ProtectionSupervisor(runtime,{controllerProbe:{probe:()=>compactProcessSnapshot({processes:[],udp:[]})},setIntervalImpl:()=>({unref(){}}),clearIntervalImpl:()=>{}}).start();
+  runtime.recorderEvent('e1',{tabId:1,siteKey:'www.youtube.com',event:{eventType:'mousedown',source:'human',ts:1000,x:10,y:10}});
+  await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(probes,1);assert.equal(row.state,'ACTIVE');assert.equal(supervisor.status().transientProbeInFlight.length,0);supervisor.stop();
+});
