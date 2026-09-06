@@ -14,6 +14,7 @@ class ProtectionSupervisor{
     this.policy={enabled:envBool(this.env.BODY_PROTECTION_GUARDIAN_ENABLED,true),controllerBlock:envBool(this.env.BODY_PROTECTION_CONTROLLER_BLOCK,true),behaviorBlock:envBool(this.env.BODY_PROTECTION_BEHAVIOR_BLOCK,true),lightIntervalMs:envInt(this.env.BODY_PROTECTION_LIGHT_INTERVAL_MS,15000,5000,300000),fullIntervalMs:envInt(this.env.BODY_PROTECTION_FULL_INTERVAL_MS,300000,60000,3600000)};
     this.controllerByBrowser=new Map();this.timers=[];this.installed=false;this.lightRunning=false;this.fullRunning=false;this.original={};
   }
+  _decorateProbeResult(result,browserId){const protection=this.browserStatus(browserId),reasons=[...(Array.isArray(result?.reasons)?result.reasons:[]),...protection.reasons];return {...result,eligible:result?.eligible===true&&!protection.blocked,status:result?.eligible===true&&!protection.blocked?String(result?.status||'ELIGIBLE'):'INELIGIBLE',reasons:[...new Set(reasons)],protection};}
   install(){
     if(this.installed)return this;this.installed=true;
     this.original.recorderEvent=this.runtime.recorderEvent.bind(this.runtime);
@@ -24,11 +25,11 @@ class ProtectionSupervisor{
     this.runtime.guardian.status=()=>({...this.original.guardianStatus(),protection:this.status()});
     if(typeof this.runtime.probeEnvironment==='function'){
       this.original.probeEnvironment=this.runtime.probeEnvironment.bind(this.runtime);
-      this.runtime.probeEnvironment=async browserId=>{const result=await this.original.probeEnvironment(browserId);this.scanLightAll();return {...result,protection:this.browserStatus(browserId)};};
+      this.runtime.probeEnvironment=async browserId=>{const result=await this.original.probeEnvironment(browserId);this.scanLightAll();return this._decorateProbeResult(result,browserId);};
     }
     if(typeof this.runtime.probeAllEnvironments==='function'){
       this.original.probeAllEnvironments=this.runtime.probeAllEnvironments.bind(this.runtime);
-      this.runtime.probeAllEnvironments=async()=>{const result=await this.original.probeAllEnvironments();this.scanLightAll();return Array.isArray(result)?result.map(x=>({...x,protection:this.browserStatus(x.browserInstanceId)})):result;};
+      this.runtime.probeAllEnvironments=async()=>{const result=await this.original.probeAllEnvironments();this.scanLightAll();return Array.isArray(result)?result.map(x=>this._decorateProbeResult(x,x.browserInstanceId)):result;};
     }
     return this;
   }
