@@ -107,6 +107,15 @@ class ProtectionSupervisor{
   }
   assertAssignable(browserInstanceId){const id=String(browserInstanceId||'').trim();if(!id)return;const decision=this.combined(id);if(this.policy.enabled&&!decision.initialCheck.complete)throw new Error(`browser_protection_check_pending:${id}:${decision.initialCheck.reasons.join(',')||'pending'}`);if(decision.blocked)throw new Error(`browser_protection_blocked:${id}:${decision.reasons.join(',')}`);}
   browserStatus(browserInstanceId){return this.combined(browserInstanceId);}
+  readiness(browserInstanceId){
+    const id=String(browserInstanceId||'').trim();let browser;try{browser=this.runtime.browsers.require(id);}catch{return {state:'BLOCKED',reason:'browser_not_found',browserState:'UNKNOWN',environment:'UNKNOWN',botCheck:'UNKNOWN'};}
+    const protection=this.combined(id),initial=protection.initialCheck||{};
+    if(!browser.online)return {state:'BLOCKED',reason:'browser_offline',browserState:browser.state,environment:browser.environment?.status||'UNKNOWN',botCheck:initial.status||'PENDING'};
+    if(protection.blocked||['QUARANTINED','ERROR'].includes(browser.state))return {state:'BLOCKED',reason:protection.reasons[0]||browser.stateReason||'browser_blocked',browserState:browser.state,environment:browser.environment?.status||'UNKNOWN',botCheck:initial.status||'BLOCKED'};
+    if(browser.environment?.eligible!==true)return {state:'CHECKING',reason:'environment_pending',browserState:browser.state,environment:browser.environment?.status||'PENDING',botCheck:initial.status||'PENDING'};
+    if(initial.complete!==true)return {state:'CHECKING',reason:'bot_check_pending',browserState:browser.state,environment:browser.environment?.status||'ELIGIBLE',botCheck:initial.status||'PENDING'};
+    return {state:'READY',reason:null,browserState:browser.state,environment:browser.environment?.status||'ELIGIBLE',botCheck:initial.status||'PASSED'};
+  }
   status(){const browsers={};for(const browser of this.runtime.browsers.list())if(browser.online)browsers[browser.browserInstanceId]=this.combined(browser.browserInstanceId);return {policy:{...this.policy},lightRunning:this.lightRunning,initialScanInFlight:Boolean(this.lightPromise),transientProbeInFlight:[...this.transientProbeInFlight],browsers};}
 }
 
