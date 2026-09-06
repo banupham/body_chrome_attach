@@ -15,6 +15,7 @@ const {
   rememberRuntimePort,
   preferredRuntimePort
 } = require('../daemon/src/runtime_endpoint');
+const { ensureRememberedRuntimePort } = require('../daemon/src/runtime_port_migration');
 const {
   normalizeRuntimeEndpoint,
   resolveRuntimeEndpoint,
@@ -65,6 +66,13 @@ function tmp(name) {
   assert.equal(inactiveExtensionRecord.active, false);
   assert.equal(inactiveExtensionRecord.port, 54321);
   assert.equal(inactiveExtensionRecord.wsUrl, 'ws://127.0.0.1:54321');
+
+  const migrationProject = tmp('runtime-port-migration');
+  const migrationDaemonDir = path.join(migrationProject, 'daemon');
+  fs.mkdirSync(path.join(migrationDaemonDir, 'state'), { recursive: true });
+  fs.writeFileSync(endpointPaths(migrationDaemonDir).state, JSON.stringify({ schemaVersion: 1, active: true, host: '127.0.0.1', port: 55001, pid: 999 }) + '\n');
+  assert.equal(ensureRememberedRuntimePort(migrationDaemonDir), 55001);
+  assert.equal(readRememberedRuntimePort(migrationDaemonDir), 55001);
 
   assert.deepEqual(
     normalizeRuntimeEndpoint({ active: true, host: '127.0.0.1', port: 60123, wsUrl: 'ws://evil.invalid:1' }),
@@ -122,7 +130,7 @@ function tmp(name) {
   assert.match(launcher, /sticky_runtime_port_preload\.js/);
   assert.match(preload, /preferredRuntimePort/);
   assert.match(preload, /port: rememberedPort/);
-  assert.match(build, /readRememberedRuntimePort/);
+  assert.match(build, /ensureRememberedRuntimePort/);
   assert.match(build, /inactiveRecord\(rememberedPort\)/);
 
   console.log('runtime_endpoint_contract: PASS');
