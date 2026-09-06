@@ -71,3 +71,50 @@ Rủi ro còn phải theo dõi sau CI / runtime thực tế:
 - Nếu pairing auth thành công nhưng bước đăng ký identity sau đó thất bại, server xóa record vừa pair; người dùng phải mở window mới. Không tự khôi phục code cũ để tránh replay.
 - `pair forget` revoke credential ngay nhưng cleanup trạng thái Browser vẫn đi qua cùng WebSocket close lifecycle hiện hữu; cần giữ contract disconnect/reconcile khi sau này sửa ExtensionRegistry ở Mục 3.
 - Threat model không cố chống malware đã có quyền đọc process memory/console của cùng máy; mục tiêu của Mục 2 là ngăn Extension/process local khác tự TOFU-pair chỉ nhờ biết port/protocol.
+
+# Rà soát Mục 3 — Debug routing + Browser UI fast path
+
+Phạm vi đã thay đổi:
+
+- `daemon/src/extension_registry.js`
+  - thêm online index, `shortId`, exact/unique-prefix resolver và `cycle()`.
+  - selection sau disconnect chỉ tự phục hồi khi còn đúng một Extension online.
+  - nếu còn nhiều Extension online nhưng không có target duy nhất, `selectedId=null` để lệnh không target fail-closed.
+- `daemon/src/debug_command_adapter.js`
+  - thêm `exts`, `use`, `next`, `prev`, `@ref`, `--ext`.
+  - raw JSON và multiline structured command được normalize/giới hạn kích thước.
+  - targeted debug command được serialize và selection cũ được khôi phục nếu vẫn online.
+- `daemon/server.js` / `body_cli.js`
+  - debug socket, console local và CLI đi qua adapter mới.
+  - pairing command vẫn được intercept riêng ở local console, không đi qua debug socket.
+- `daemon/src/browser_ui_adapter.js` / `src/daemon_bridge.js`
+  - thêm Browser API fast path cho `address/back/forward/reload/hardreload`.
+  - API fast path dùng `chrome.tabs.update/goBack/goForward/reload`.
+  - fast path lỗi hoặc không khả dụng sẽ fallback về native Browser UI input hiện có.
+  - HTTP/HTTPS address được phép fast path; chuỗi address/search khác giữ native path.
+- `daemon/src/command_router.js`
+  - chuẩn hóa alias trực tiếp `address` và `hardreload`.
+- thêm `daemon/debug_routing_contract.js` và `tests/browser_ui_fast_path_contract.js` vào `npm run verify`.
+
+Rủi ro đã kiểm tra bằng contract / CI:
+
+1. Full ID, online index và unique prefix chọn đúng Extension.
+2. Prefix mơ hồ và index không tồn tại bị từ chối, không tự đoán target.
+3. Selected Extension disconnect + một Extension còn lại => auto-select duy nhất.
+4. Selected Extension disconnect + nhiều Extension còn lại => selection bị xóa, lệnh không target fail-closed.
+5. `next/prev` chỉ cycle Extension online.
+6. `@ref` và `--ext` chạy trên target tạm thời rồi khôi phục selection hợp lệ trước đó.
+7. Raw/multiline JSON được parse có giới hạn; duplicate target syntax bị từ chối.
+8. Cả 5 Browser UI fast action không đi qua CDP input khi Browser API khả dụng.
+9. Fast API unavailable/error quay về native Browser UI path; không rơi vào page HUMAN_MOTOR.
+10. `ALLOWED_METHODS` vẫn đúng hai phương thức `Input.dispatchMouseEvent` và `Input.dispatchKeyEvent`; không mở rộng CDP gateway.
+11. Không thêm manifest permission mới.
+12. Code + regression test cuối của Mục 3 đã PASS workflow #207.
+
+Rủi ro còn phải theo dõi sau CI / runtime thực tế:
+
+- Targeted debug command tạm thời thay `registry.selectedId` trong lúc thực thi. Adapter serialize toàn bộ debug command để các debug request không đè selection lẫn nhau; Brain Task execution vẫn dùng identity/task binding rõ ràng thay vì debug selection. Nếu sau này có thêm control-plane khác phụ thuộc global selection, nên chuyển target thành context explicit thay vì mutable selection.
+- `use/next/prev` thay đổi selection debug ngay cả khi Brain đang giữ quyền điều khiển, nhưng chúng không tạo physical action; mọi debug command có tác dụng vật lý vẫn tiếp tục bị `ControllerLease` chặn.
+- Browser API fast path phụ thuộc Chrome API thực tế trên phiên bản/runtime đang chạy. Fallback native đã được giữ để tránh biến thiếu API thành failure cứng.
+- `address` chỉ fast-path URL HTTP/HTTPS; các scheme khác và chuỗi search đi native path. Đây là lựa chọn tương thích hiện tại, không phải policy cho navigation từ xa.
+- `pair forget` vẫn terminate live socket rồi đi qua lifecycle `unregisterSocket -> extensionOffline`; selection reconciliation mới đã có contract để tránh hồi quy Mục 2.
