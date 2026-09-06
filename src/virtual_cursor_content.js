@@ -50,6 +50,25 @@ function semanticObservation(){
   return youtubeSemanticObservation({documentRef:document,windowRef:window,locationRef:window.location});
 }
 
+function pageContext(){
+  let url='';try{url=String(window.location.href||'');}catch{}
+  return {url,title:String(document.title||''),status:String(document.readyState||'')};
+}
+
+function emitPageContext(){
+  try{
+    const pending=chrome.runtime.sendMessage({action:'body.pageContext',context:pageContext()});
+    pending?.catch?.(()=>{});
+  }catch{}
+}
+
+emitPageContext();
+window.addEventListener('pageshow',emitPageContext,{passive:true});
+window.addEventListener('popstate',emitPageContext,{passive:true});
+window.addEventListener('hashchange',emitPageContext,{passive:true});
+document.addEventListener('readystatechange',emitPageContext,{passive:true});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')emitPageContext();},{passive:true});
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.action === 'body.virtualCursorSet') {const next=message.enabled!==false;if(next&&!enabled)overlay=installVirtualCursorOverlay({chromeApi:chrome,documentRef:document});if(!next&&enabled)overlay.uninstall();enabled=next;sendResponse({ok:true,result:{enabled,...(enabled?overlay.status():{installed:false,visible:false}),inputTrustAudit:inputTrustAudit.status()}});return false;}
   if (message?.action === 'body.targetContextAt') {const x=Number(message.x),y=Number(message.y),target=Number.isFinite(x)&&Number.isFinite(y)?document.elementFromPoint(x,y):document.activeElement;sendResponse({ok:true,result:describeTarget(target)});return false;}
@@ -60,4 +79,4 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   sendResponse({ok:true,result:{enabled,...(enabled?overlay.status():{installed:false,visible:false}),inputTrustAudit:inputTrustAudit.status()}});return false;
 });
 
-module.exports={describeTarget,pageObservation,environmentObservation,semanticObservation};
+module.exports={describeTarget,pageObservation,environmentObservation,semanticObservation,pageContext,emitPageContext};
