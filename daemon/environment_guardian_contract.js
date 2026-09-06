@@ -15,14 +15,14 @@ function pageEnv(tag='a'){return {available:true,userAgent:`Chrome/${tag}`,platf
 function probe({ip='1.1.1.1',tag='a',proxy=false,proxyAvailable=true,autoDetect=false}={}){return {pageEnvironment:pageEnv(tag),proxy:{available:proxyAvailable,detected:proxy,mode:proxy?'fixed_servers':'direct',autoDetect},publicEgress:{available:Boolean(ip),ip,provider:'test.invalid'}};}
 function deferredProbe(){return {pageEnvironment:{available:false,error:'Could not establish connection. Receiving end does not exist.'},proxy:{available:true,detected:false,mode:'system'},publicEgress:{available:true,ip:'1.1.1.1',provider:'test.invalid'},deepFingerprint:{available:false,error:'deep_probe_http_tab_required'}};}
 function device({proxyEnv=false,systemProxy=false,vpn=false}={}){return {probe(){return {proxyEnvDetected:proxyEnv,proxyEnvKeys:proxyEnv?['HTTPS_PROXY']:[],systemProxyDetected:systemProxy,systemProxyAvailable:true,systemProxySources:systemProxy?['wininet']:[],vpnInterfaceDetected:vpn,vpnInterfaces:vpn?['WireGuard Tunnel']:[],activeInterfaces:[{name:'Ethernet',families:['IPv4']} ]};}};}
-function setup({env={},responses={},deviceProbe=device(),tabsA=[1,2,3],tabsB=[4,5]}={}){
+function setup({env={},responses={},deviceProbe=device(),tabsA=[1,2,3],tabsB=[4,5],now=()=>1000000}={}){
   const base=tmp('guardian');const identity=new LocalIdentityStore(base,{env:{BODY_COMPANY_ID:'company-test',BODY_DEVICE_ID:'device-test'}});
   identity.registerBrowser({browserInstanceId:'browser-a',extensionInstanceId:'ext-a',runtimeExtensionId:'runtime'});identity.registerBrowser({browserInstanceId:'browser-b',extensionInstanceId:'ext-b',runtimeExtensionId:'runtime'});
   const browsers=new BrowserManager(identity);
   const item=(browserInstanceId,extensionId,tabs)=>({companyId:'company-test',deviceId:'device-test',browserInstanceId,extensionInstanceId:extensionId,extensionId,runtimeExtensionId:'runtime',connectedAt:1,lastSeenAt:1,activeTabId:tabs[0],tabs:new Map(tabs.map((id,i)=>[id,{id,active:i===0,siteKey:'youtube.com'}]))});
   browsers.registerExtension(item('browser-a','ext-a',tabsA));browsers.registerExtension(item('browser-b','ext-b',tabsB));
   let calls=0;const requestExtension=async(extensionId,type)=>{assert.equal(type,'ENVIRONMENT_PROBE');calls++;if(!(extensionId in responses))throw new Error(`missing_probe:${extensionId}`);const value=responses[extensionId];return typeof value==='function'?value():value;};
-  const guardian=new EnvironmentGuardian(base,browsers,{requestExtension,deviceProbe,env:{BODY_ENV_DIRECT_ONLY:'true',BODY_ENV_REQUIRE_UNIQUE_PUBLIC_IP:'true',BODY_ENV_REQUIRE_UNIQUE_SIGNATURE:'true',...env},now:()=>1000000});
+  const guardian=new EnvironmentGuardian(base,browsers,{requestExtension,deviceProbe,env:{BODY_ENV_DIRECT_ONLY:'true',BODY_ENV_REQUIRE_UNIQUE_PUBLIC_IP:'true',BODY_ENV_REQUIRE_UNIQUE_SIGNATURE:'true',...env},now});
   return {base,identity,browsers,guardian,get calls(){return calls;}};
 }
 
@@ -89,6 +89,14 @@ test('deferred probe reuses a fresh persisted observation after Browser reconnec
   responses['ext-a']=deferredProbe();
   const restored=await ctx.guardian.probeBrowser('browser-a');
   assert.equal(restored.eligible,true);assert.equal(restored.status,'ELIGIBLE');assert.equal(restored.probeDeferred,true);assert.equal(restored.reusedFreshObservation,true);assert.equal(ctx.browsers.require('browser-a').state,'ACTIVE');assert.equal(ctx.browsers.require('browser-a').environment.environmentSignature,first.environmentSignature);
+});
+
+test('expired observation does not keep a Browser ACTIVE on a non-http tab',async()=>{
+  let clock=1000000;const responses={'ext-a':probe({ip:'1.1.1.1',tag:'a'}),'ext-b':probe({ip:'2.2.2.2',tag:'b'})};const ctx=setup({responses,now:()=>clock});
+  const first=await ctx.guardian.probeBrowser('browser-a');assert.equal(first.eligible,true);
+  clock+=300001;responses['ext-a']=deferredProbe();
+  const result=await ctx.guardian.probeBrowser('browser-a');const browser=ctx.browsers.require('browser-a');
+  assert.equal(result.status,'PENDING');assert.equal(result.eligible,false);assert.equal(browser.state,'ENV_CHECK');assert.equal(browser.stateReason,'environment_waiting_for_http_tab');
 });
 
 test('concurrent environment requests for one Browser share a single in-flight probe',async()=>{
