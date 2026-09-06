@@ -25,15 +25,18 @@ test('external controller assessment blocks correlated webdriver automation but 
   assert.equal(loneVerdict.review,true);
 });
 
-test('behavior guardian ignores BODY agent events and blocks repeated untrusted synthetic input',()=>{
+test('behavior guardian ignores BODY agent events, blocks synthetic input, then decays stale evidence',()=>{
   let now=1000;const behavior=new BehaviorGuardian({now:()=>now});
   for(let i=0;i<30;i++){behavior.observe('b1',{eventType:'mousedown',source:'agent',ts:now,x:10,y:10});now+=20;}
   assert.equal(behavior.status('b1').score,0);
   behavior.observe('b1',{eventType:'synthetic_input',source:'human',isTrusted:false,ts:now});now+=5;
   behavior.observe('b1',{eventType:'synthetic_input',source:'human',isTrusted:false,ts:now});
-  const status=behavior.status('b1');
+  let status=behavior.status('b1');
   assert.equal(status.blocked,true);
   assert.ok(status.signalIds.includes('synthetic_untrusted_input'));
+  now+=16000;status=behavior.status('b1');
+  assert.equal(status.blocked,false);
+  assert.equal(status.score,0);
 });
 
 function fakeRuntime(){
