@@ -3,7 +3,7 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const {BehaviorGuardian}=require('./src/behavior_guardian');
-const {compactProcessSnapshot,assessControllerConflict}=require('./src/external_controller_probe');
+const {ExternalControllerProbe,compactProcessSnapshot,assessControllerConflict}=require('./src/external_controller_probe');
 const {ProtectionSupervisor}=require('./src/protection_supervisor');
 
 test('external controller assessment blocks correlated webdriver automation but not a lone input utility',()=>{
@@ -23,6 +23,12 @@ test('external controller assessment blocks correlated webdriver automation but 
   const loneVerdict=assessControllerConflict(lone,[]);
   assert.equal(loneVerdict.blocked,false);
   assert.equal(loneVerdict.review,true);
+});
+
+test('Windows controller probe is asynchronous and preserves failure reason',async()=>{
+  let calls=0;const execFile=(file,args,options,callback)=>{calls++;assert.equal(file,'powershell.exe');assert.ok(args.includes('-NonInteractive'));setImmediate(()=>callback(null,JSON.stringify({processes:[{Name:'chromedriver.exe',ProcessId:10,ParentProcessId:1,CommandLine:'chromedriver.exe'}],udp:[]}),'') );};
+  const probe=new ExternalControllerProbe({platform:'win32',execFile,timeoutMs:7000});const pending=probe.probe();assert.equal(typeof pending.then,'function');const result=await pending;assert.equal(calls,1);assert.equal(result.available,true);assert.equal(result.driverProcesses[0].name,'chromedriver.exe');
+  const failed=new ExternalControllerProbe({platform:'win32',execFile:(file,args,options,callback)=>setImmediate(()=>callback(Object.assign(new Error('timed out'),{code:'ETIMEDOUT'}),'','')),timeoutMs:7000});const unavailable=await failed.probe();assert.equal(unavailable.available,false);assert.match(unavailable.reason,/ETIMEDOUT/);assert.match(assessControllerConflict(unavailable,[]).reason,/ETIMEDOUT/);
 });
 
 test('behavior guardian ignores BODY agent events, blocks synthetic input, then decays stale evidence',()=>{
@@ -71,6 +77,11 @@ test('protection supervisor quarantines controller conflict and blocks new task 
   const status=runtime.guardian.status();
   assert.equal(status.protection.browsers.b1.blocked,true);
   supervisor.stop();
+});
+
+test('light supervisor accepts an asynchronous controller sensor without blocking startup',async()=>{
+  const runtime=fakeRuntime();const probe={probe:()=>new Promise(resolve=>setImmediate(()=>resolve(compactProcessSnapshot({processes:[],udp:[]}))))};const supervisor=new ProtectionSupervisor(runtime,{controllerProbe:probe,setIntervalImpl:()=>({unref(){}}),clearIntervalImpl:()=>{}}).start();
+  assert.equal(supervisor.status().lightRunning,true);assert.equal(supervisor.status().browsers.b1.controller.reason,'controller_scan_pending');await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));const status=supervisor.status();assert.equal(status.lightRunning,false);assert.equal(status.browsers.b1.controller.available,true);assert.equal(status.browsers.b1.controller.blocked,false);supervisor.stop();
 });
 
 test('light supervisor automatically retries a deferred environment check and clears ENV_CHECK',async()=>{
