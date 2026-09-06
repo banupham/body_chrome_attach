@@ -11,21 +11,34 @@ Mục tiêu: củng cố nền `main` theo 5 bước nhỏ, mỗi bước phải
 - Guardian từ chối probe khi Browser BUSY.
 - Không ghi đè `HUMAN_CONTROL`, `QUARANTINED`, `ERROR`, `OFFLINE`.
 
-## 2. Tăng bảo mật ghép nối Extension — HOÀN THÀNH
+## 2. Xác thực Extension cục bộ tự động — HOÀN THÀNH
 
-- Bỏ TOFU first-connect.
-- Pairing window/mã một lần chỉ mở từ local daemon console.
-- Existing persistent token reconnect vẫn giữ Browser/Runtime/Origin binding.
-- `pair forget` revoke + terminate live socket.
+- Theo yêu cầu vận hành hiện tại, bỏ manual pairing window / one-time code / `pair open`.
+- Extension hợp lệ tự kết nối localhost; daemon tự cấp persistent token ở lần kết nối đầu.
+- Token vẫn bind chặt `extensionInstanceId + browserInstanceId + runtimeExtensionId + chrome-extension Origin`.
+- Token local mất/stale chỉ được auto-rotate khi toàn bộ binding vẫn khớp; runtime/browser/origin mismatch fail-closed.
+- `pair forget` revoke + terminate live socket; reconnect hợp lệ tự nhận token mới.
+- Popup chỉ hiển thị trạng thái, không có ô nhập mã.
 - Không thêm Chrome privileged permission.
+
+## 2b. Tự động phát hiện daemon port — HOÀN THÀNH
+
+- Bỏ hard-coded WebSocket port `8765` khỏi daemon, `body.cmd` và Extension bridge.
+- Daemon bind `127.0.0.1:0`; OS tự chọn TCP port đang trống.
+- Endpoint thực tế publish tại `daemon/state/runtime-endpoint.json` và `dist/runtime-endpoint.json`.
+- `body.cmd` đọc endpoint state; Extension đọc resource endpoint và resolve lại mỗi reconnect.
+- Endpoint client chỉ chấp nhận `127.0.0.1` và tự dựng WebSocket URL từ port đã validate.
+- `runtime.lock` dùng exclusive create + PID ownership để giữ invariant one Company Runtime per Device ngay cả khi port là động.
+- Regression `tests/runtime_endpoint_contract.js` khóa no-hardcoded-port, localhost-only, endpoint ownership và discovery behavior.
+- CI cuối thay đổi: workflow #272 — `verify` PASS + `windows-native-input` PASS.
 
 ## 3. Đưa debug routing + Browser UI fast path về nền main — HOÀN THÀNH
 
 - Debug routing: `exts`, `use <index|prefix|full-id>`, `next`, `prev`, `@<ref> <cmd>`, `<cmd> --ext=<ref>`, raw/multiline JSON.
 - Target mơ hồ fail-closed; disconnect chỉ auto-select khi còn đúng một Extension online.
 - `address/back/forward/reload/hardreload` có Chrome tabs API fast path và native fallback.
+- Win32 `SendInput` ABI đã được sửa để không còn `WinError 87`; CI có job Windows kiểm tra INPUT ABI.
 - Page motor vẫn chỉ `Input.dispatchMouseEvent` / `Input.dispatchKeyEvent` qua HUMAN_MOTOR.
-- CI Mục 3: workflow #207 — PASS.
 
 ## 4. Chuyển learning khỏi extensionId sang identity ổn định — HOÀN THÀNH
 
@@ -37,7 +50,6 @@ Mục tiêu: củng cố nền `main` theo 5 bước nhỏ, mỗi bước phải
 - `TabHabitModel` v2 tách transition/last-active theo Browser.
 - Legacy transition không có Browser attribution được giữ để audit nhưng không dùng active training.
 - `daemon/learning_identity_contract.js` khóa migration/isolation/conflict behavior.
-- CI cuối Mục 4: workflow #219 — PASS.
 
 ## 5. Phase 5: Semantic Observation + Immutable Evidence Store — HOÀN THÀNH
 
@@ -50,15 +62,14 @@ Mục tiêu: củng cố nền `main` theo 5 bước nhỏ, mỗi bước phải
 - Runtime loại `semanticBefore` trước khi ghi training DatasetStore/Segmenter.
 - `BeforeState -> Action -> AfterState -> ObservedEffect` giữ stable Browser identity + Extension provenance và không tự nâng thành `taskSuccess`.
 - ObservedEffect chỉ claim navigation khi có effect semantic quan sát được.
-- Regression: observer/store/runtime/bridge/privacy/CDP invariants đều nằm trong `npm run verify`.
-- CI code cuối Mục 5 sau self-review: workflow #236 — PASS.
+- Regression observer/store/runtime/bridge/privacy/CDP invariants đều nằm trong `npm run verify`.
 
 ## Kết quả rà soát cuối — HOÀN THÀNH
 
-- Đã so lại delta Mục 4–5 và toàn bộ Mục 1–5 so với `main`.
-- Không phát hiện blocker còn lại trong phạm vi hardening.
-- `FOUNDATION_HARDENING_REVIEW.md` ghi riêng các rủi ro vận hành còn lại: semantic-before có thể bị miss khi navigation quá nhanh, YouTube selector drift, hash-chain local không phải external notarization, Evidence append verify O(n), migration conflict cần operator xử lý.
-- Các rủi ro này không được che bằng fallback suy đoán: khi thiếu bằng chứng, hệ thống bỏ evidence/fail-closed thay vì tự nhận thành công.
+- Đã so lại delta Mục 1–5 và các thay đổi vận hành sau hardening: automatic auth, dynamic daemon endpoint, Win32 INPUT ABI.
+- Không phát hiện blocker còn lại trong phạm vi hiện tại.
+- Khi thiếu bằng chứng semantic, hệ thống bỏ evidence/fail-closed thay vì tự nhận thành công.
+- Dynamic endpoint không mở daemon ra ngoài localhost và không cho chạy hai Company Runtime đồng thời.
 
 ## Nguyên tắc chung — GIỮ NGUYÊN
 
