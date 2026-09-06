@@ -32,7 +32,7 @@ class TabHabitModel {
     this.load();
   }
 
-  _identity(ref){return normalizeIdentity(this.resolveIdentity?this.resolveIdentity(ref):ref,ref);}
+  _identity(ref){const alreadyResolved=ref&&typeof ref==='object'&&String(ref.browserInstanceId||'').trim();return normalizeIdentity(alreadyResolved?ref:(this.resolveIdentity?this.resolveIdentity(ref):ref),ref);}
 
   load() {
     if(!fs.existsSync(this.file)) return;
