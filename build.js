@@ -10,6 +10,16 @@ const root = __dirname;
 const dist = path.join(root, 'dist');
 const daemonDir = path.join(root, 'daemon');
 
+function assertLauncher(pathname, marker) {
+  let text = '';
+  try { text = fs.readFileSync(pathname, 'utf8'); } catch {}
+  if (!text.trim() || !text.includes(marker)) {
+    throw new Error(`launcher_invalid:${path.basename(pathname)}:restore_from_git`);
+  }
+}
+
+assertLauncher(path.join(root, 'body.cmd'), 'body_cli.js');
+
 fs.rmSync(dist, { recursive: true, force: true });
 fs.mkdirSync(dist, { recursive: true });
 
