@@ -14,6 +14,11 @@ function endpointRecord(port,{pid=process.pid,now=()=>Date.now()}={}){
   return {schemaVersion:RUNTIME_ENDPOINT_VERSION,active:true,host:RUNTIME_HOST,port:normalized,wsUrl:`ws://${RUNTIME_HOST}:${normalized}`,pid:Number(pid)||null,startedAt:new Date(now()).toISOString()};
 }
 function inactiveRecord(){return {schemaVersion:RUNTIME_ENDPOINT_VERSION,active:false,host:RUNTIME_HOST,port:null,wsUrl:null};}
+function processAlive(pid,killImpl=process.kill){
+  const value=Number(pid);if(!Number.isInteger(value)||value<=0)return false;
+  try{killImpl(value,0);return true;}catch(error){return error?.code==='EPERM';}
+}
+function readJson(file){try{return JSON.parse(fs.readFileSync(file,'utf8'));}catch{return null;}}
 function writeJsonAtomic(file,value){
   fs.mkdirSync(path.dirname(file),{recursive:true});
   const tmp=`${file}.${process.pid}.${Date.now()}.tmp`;
@@ -25,16 +30,24 @@ function writeJsonAtomic(file,value){
   }finally{try{fs.rmSync(tmp,{force:true});}catch{}}
   try{fs.chmodSync(file,0o600);}catch{}
 }
+function assertRuntimeOwnershipAvailable(stateFile,{pid=process.pid,killImpl=process.kill}={}){
+  const current=readJson(stateFile),ownerPid=Number(current?.pid);
+  if(current?.active===true&&Number.isInteger(ownerPid)&&ownerPid>0&&ownerPid!==Number(pid)&&processAlive(ownerPid,killImpl))throw new Error(`company_runtime_already_running:${ownerPid}:${validPort(current.port)||'unknown'}`);
+  return true;
+}
 function publishRuntimeEndpoint(baseDir,port,options={}){
   const record=endpointRecord(port,options),paths=endpointPaths(baseDir);
+  assertRuntimeOwnershipAvailable(paths.state,{pid:record.pid,killImpl:options.killImpl||process.kill});
   writeJsonAtomic(paths.state,record);
   if(fs.existsSync(path.dirname(paths.extension)))writeJsonAtomic(paths.extension,{schemaVersion:record.schemaVersion,active:true,host:record.host,port:record.port,wsUrl:record.wsUrl,startedAt:record.startedAt});
   return record;
 }
-function clearRuntimeEndpoint(baseDir){
-  const paths=endpointPaths(baseDir);
+function clearRuntimeEndpoint(baseDir,{pid=process.pid}={}){
+  const paths=endpointPaths(baseDir),current=readJson(paths.state);
+  if(current?.active===true&&Number(current.pid)!==Number(pid))return false;
   try{fs.rmSync(paths.state,{force:true});}catch{}
   if(fs.existsSync(path.dirname(paths.extension)))try{writeJsonAtomic(paths.extension,inactiveRecord());}catch{}
+  return true;
 }
 function readRuntimeEndpoint(file){
   let raw;try{raw=JSON.parse(fs.readFileSync(file,'utf8'));}catch{throw new Error(`runtime_endpoint_unavailable:${file}`);}
@@ -42,4 +55,4 @@ function readRuntimeEndpoint(file){
   return {schemaVersion:Number(raw.schemaVersion)||RUNTIME_ENDPOINT_VERSION,active:true,host:RUNTIME_HOST,port,wsUrl:`ws://${RUNTIME_HOST}:${port}`,pid:raw.pid??null,startedAt:raw.startedAt||null};
 }
 
-module.exports={RUNTIME_ENDPOINT_VERSION,RUNTIME_HOST,RUNTIME_ENDPOINT_FILENAME,validPort,endpointPaths,endpointRecord,inactiveRecord,writeJsonAtomic,publishRuntimeEndpoint,clearRuntimeEndpoint,readRuntimeEndpoint};
+module.exports={RUNTIME_ENDPOINT_VERSION,RUNTIME_HOST,RUNTIME_ENDPOINT_FILENAME,validPort,endpointPaths,endpointRecord,inactiveRecord,processAlive,readJson,writeJsonAtomic,assertRuntimeOwnershipAvailable,publishRuntimeEndpoint,clearRuntimeEndpoint,readRuntimeEndpoint};
