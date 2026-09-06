@@ -9,6 +9,10 @@ function chromeStub(){const state={};const tabListeners={onActivated:[],onUpdate
   const bridgeReloaded=new DaemonBridge(chromeApi,{gateway,WebSocketImpl:function(){}});const secondIdentity=await bridgeReloaded.identity();assert.equal(secondIdentity.browserInstanceId,firstIdentity.browserInstanceId);assert.equal(secondIdentity.extensionInstanceId,firstIdentity.extensionInstanceId);
   bridge.socket={readyState:1,send(raw){sent.push(JSON.parse(raw));}};
   assert.equal(siteKeyFromUrl('https://Sub.Example.com/a'),'sub.example.com');
+  bridge.installTabListeners();
+  sent.length=0;chromeApi.tabListeners.onUpdated[0](1,{status:'complete'},{id:1,active:true,windowId:1,title:'about:blank',url:'about:blank',status:'complete'});assert.equal(sent.some(x=>x.type==='TAB_CONTEXT'),false,'masked about: metadata must not overwrite observed web context');
+  chromeApi.tabListeners.onUpdated[0](1,{url:'https://example.com/next'},{id:1,active:true,windowId:1,title:'Next',url:'https://example.com/next',status:'complete'});const webContext=sent.find(x=>x.type==='TAB_CONTEXT');assert.ok(webContext);assert.equal(webContext.context.siteKey,'example.com');assert.equal(webContext.context.contextSource,'chrome_tabs');assert.equal(webContext.context.urlScheme,'https:');
+  sent.length=0;
   await bridge.forwardUserMotor(1,{source:'USER',kind:'pointer',url:'https://example.com/a',event:{type:'mouseMoved',x:10,y:20,at:100},context:{}});assert.equal(chromeApi.contextQueries,0);
   await bridge.forwardUserMotor(1,{source:'USER',kind:'pointer',url:'https://example.com/a',event:{type:'mousePressed',x:10,y:20,at:110},context:{}});assert.equal(chromeApi.contextQueries,1);
   await bridge.forwardUserMotor(1,{source:'USER',kind:'keyboard',url:'https://example.com/a',event:{type:'keydown',key:'a',code:'KeyA',at:120},context:{}});assert.equal(chromeApi.contextQueries,2);const keyboard=sent.find(x=>x.type==='RECORDER_EVENT'&&x.event?.keyClass==='alpha');assert.equal(keyboard.event.key,null);assert.equal(keyboard.browserInstanceId,firstIdentity.browserInstanceId);
