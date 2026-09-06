@@ -88,7 +88,8 @@ class ScopedLearningManager {
   }
 
   _identity(ref) {
-    const resolved=this.resolveIdentity?this.resolveIdentity(ref):ref;
+    const alreadyResolved=ref&&typeof ref==='object'&&String(ref.browserInstanceId||'').trim();
+    const resolved=alreadyResolved?ref:(this.resolveIdentity?this.resolveIdentity(ref):ref);
     return normalizeLearningIdentity(resolved,ref);
   }
 
