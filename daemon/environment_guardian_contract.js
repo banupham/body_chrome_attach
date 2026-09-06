@@ -81,6 +81,16 @@ test('transient non-http tab is deferred instead of quarantining the Browser',as
   assert.equal(result.status,'PENDING');assert.equal(result.probeDeferred,true);assert.equal(browser.state,'ENV_CHECK');assert.equal(browser.stateReason,'environment_waiting_for_http_tab');assert.equal(browser.environment.status,'PENDING');assert.equal(Object.prototype.hasOwnProperty.call(ctx.guardian.state.observations,'browser-a'),false);
 });
 
+test('deferred probe reuses a fresh persisted observation after Browser reconnect reset',async()=>{
+  const responses={'ext-a':probe({ip:'1.1.1.1',tag:'a'}),'ext-b':probe({ip:'2.2.2.2',tag:'b'})};
+  const ctx=setup({responses});
+  const first=await ctx.guardian.probeBrowser('browser-a');assert.equal(first.eligible,true);
+  const browser=ctx.browsers.require('browser-a');browser.state='ENV_CHECK';browser.stateReason='environment_check_required';browser.environment={eligible:false,status:'PENDING',reasons:['ENVIRONMENT_CHECK_REQUIRED'],evidence:[]};
+  responses['ext-a']=deferredProbe();
+  const restored=await ctx.guardian.probeBrowser('browser-a');
+  assert.equal(restored.eligible,true);assert.equal(restored.status,'ELIGIBLE');assert.equal(restored.probeDeferred,true);assert.equal(restored.reusedFreshObservation,true);assert.equal(ctx.browsers.require('browser-a').state,'ACTIVE');assert.equal(ctx.browsers.require('browser-a').environment.environmentSignature,first.environmentSignature);
+});
+
 test('concurrent environment requests for one Browser share a single in-flight probe',async()=>{
   let release;const gate=new Promise(resolve=>{release=resolve;});const ctx=setup({responses:{'ext-a':async()=>{await gate;return probe();},'ext-b':probe({ip:'2.2.2.2',tag:'b'})}});
   const a=ctx.guardian.probeBrowser('browser-a'),b=ctx.guardian.probeBrowser('browser-a');assert.equal(a,b);assert.equal(ctx.calls,1);release();const [ra,rb]=await Promise.all([a,b]);assert.equal(ra.eligible,true);assert.deepEqual(ra,rb);assert.equal(ctx.guardian.status().inflight.length,0);
