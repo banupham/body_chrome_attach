@@ -5,9 +5,48 @@ const statusBox=document.getElementById('status');
 const hint=document.getElementById('hint');
 let pollTimer=null;
 
-function setStatus(text,kind='muted'){
+const reasonText={
+  protection_starting:'Đang khởi tạo kiểm tra.',
+  environment_pending:'Đang kiểm tra môi trường.',
+  bot_check_pending:'Đang kiểm tra bot/controller.',
+  browser_offline:'Browser chưa kết nối.',
+  browser_not_found:'Không tìm thấy Browser Runtime.',
+  EXTERNAL_CONTROLLER_CONFLICT:'Phát hiện trình điều khiển ngoài BODY.',
+  BOT_BEHAVIOR_HIGH_CONFIDENCE:'Phát hiện hành vi tự động.',
+  CONTROLLER_BEHAVIOR_CORRELATED:'Phát hiện controller và hành vi tự động.'
+};
+
+function setStatus(text,kind='checking'){
   statusBox.textContent=text;
   statusBox.className=`status ${kind}`;
+}
+
+function detailFor(readiness){
+  const reason=String(readiness?.reason||'');
+  return reasonText[reason]||'Không đủ điều kiện hoạt động.';
+}
+
+function render(state){
+  if(!state?.connected){
+    reset.hidden=!state?.paired;
+    setStatus('BỊ CHẶN','blocked');
+    hint.textContent='Daemon chưa kết nối.';
+    return;
+  }
+  reset.hidden=true;
+  const readiness=state.readiness||null;
+  if(readiness?.state==='READY'){
+    setStatus('SẴN SÀNG','ready');
+    hint.textContent='Environment và bot check đã đạt.';
+    return;
+  }
+  if(readiness?.state==='BLOCKED'){
+    setStatus('BỊ CHẶN','blocked');
+    hint.textContent=detailFor(readiness);
+    return;
+  }
+  setStatus('ĐANG KIỂM TRA','checking');
+  hint.textContent=readiness?detailFor(readiness):'Đang lấy trạng thái từ Daemon.';
 }
 
 async function send(message){
@@ -19,40 +58,32 @@ async function send(message){
 async function refresh(){
   try{
     const state=await send({action:'body.pairingStatus'});
-    if(state.paired&&state.connected){
-      reset.hidden=true;
-      setStatus('Đã tự động ghép nối và đang kết nối với Company Runtime.','ok');
-      hint.textContent='Không cần nhập mã. Kết nối được duy trì bằng token cục bộ.';
-    }else if(state.paired){
-      reset.hidden=false;
-      setStatus('Đã có token nhưng hiện chưa kết nối được.','bad');
-      hint.textContent='Bạn có thể đặt lại token; Extension sẽ tự ghép nối lại khi daemon khả dụng.';
-    }else{
-      reset.hidden=true;
-      setStatus('Đang tự động ghép nối với Company Runtime…','muted');
-      hint.textContent='Không cần nhập mã. Hãy đảm bảo daemon đang chạy trên máy này.';
-    }
+    render(state);
     return state;
   }catch(error){
-    setStatus(`Không đọc được trạng thái: ${String(error?.message||error)}`,'bad');
+    reset.hidden=true;
+    setStatus('BỊ CHẶN','blocked');
+    hint.textContent='Không đọc được trạng thái Extension.';
     return null;
   }
 }
 
 reset.addEventListener('click',async()=>{
-  if(!confirm('Đặt lại token kết nối cục bộ? Extension sẽ tự ghép nối lại khi daemon khả dụng.'))return;
+  if(!confirm('Đặt lại token kết nối cục bộ?'))return;
   reset.disabled=true;
   try{
     await send({action:'body.pairReset'});
-    setStatus('Đã đặt lại token. Đang chờ tự động ghép nối lại…','muted');
+    setStatus('ĐANG KIỂM TRA','checking');
+    hint.textContent='Đang tự kết nối lại.';
     await refresh();
   }catch(error){
-    setStatus(`Không thể đặt lại token: ${String(error?.message||error)}`,'bad');
+    setStatus('BỊ CHẶN','blocked');
+    hint.textContent='Không thể đặt lại kết nối.';
   }finally{
     reset.disabled=false;
   }
 });
 
 refresh();
-pollTimer=setInterval(refresh,1000);
+pollTimer=setInterval(refresh,750);
 window.addEventListener('unload',()=>{if(pollTimer)clearInterval(pollTimer);});
