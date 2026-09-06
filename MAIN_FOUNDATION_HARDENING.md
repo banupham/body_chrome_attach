@@ -38,9 +38,9 @@ Kết quả:
 - Persistent token chỉ được lưu sau khi daemon trả `AUTH_PAIRED`; Extension đã paired tiếp tục reconnect bằng token cũ.
 - Binding `extensionInstanceId + browserInstanceId + runtimeExtensionId + Origin` vẫn được giữ.
 - `pair forget <extensionId>` revoke credential và terminate live socket; old token không thể reconnect.
-- Popup có recovery có xác nhận để xóa token cục bộ rồi re-pair bằng pairing window mới.
+- Popup có recovery có xác nhận để xóa token cục bộ rồi re-pair bằng pairing window mới; reset bị ẩn khi pairing hiện tại vẫn đang kết nối để tránh tự khóa nhầm.
 - Không thêm Chrome privileged permission mới.
-- Regression contracts cho closed/open/expiry/replay/wrong-code/binding/forget/re-pair/popup/build đã được đưa vào `npm run verify`; CI runtime cuối của Mục 2 đã PASS trước commit tài liệu này.
+- Regression contracts cho closed/open/expiry/replay/wrong-code/binding/forget/re-pair/recovery/popup/build đã được đưa vào `npm run verify`; CI đã PASS trên code cuối của Mục 2 gồm cả revoke và recovery guard.
 
 ## 3. Đưa debug routing + Browser UI fast path về nền main — CHƯA THỰC HIỆN
 
