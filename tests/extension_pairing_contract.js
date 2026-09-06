@@ -14,19 +14,24 @@ test('manifest exposes status popup and only approved runtime/Guardian permissio
   for(const forbidden of ['cookies','history','webRequest','webRequestBlocking','nativeMessaging','management'])assert.equal(manifest.permissions.includes(forbidden),false,`unexpected privileged permission: ${forbidden}`);
 });
 
-test('pairing popup is status-only and contains no manual code entry',()=>{
+test('popup shows only compact readiness state and contains no manual pairing input',()=>{
   const html=fs.readFileSync(path.join(root,'pairing.html'),'utf8');
   const popup=fs.readFileSync(path.join(root,'src','pairing_popup.js'),'utf8');
   const worker=fs.readFileSync(path.join(root,'src','service_worker_entry.js'),'utf8');
   assert.match(html,/src="pairing_popup\.js"/);
   assert.match(html,/id="reset"/);
+  assert.match(html,/ĐANG KIỂM TRA/);
   assert.doesNotMatch(html,/<input/i);
   assert.doesNotMatch(html,/one-time-code|ABCD-EFGH|Ghép nối/);
-  assert.match(html,/Không cần nhập mã/);
   assert.doesNotMatch(html,/<script(?![^>]*src=)[^>]*>/i);
+  assert.match(popup,/SẴN SÀNG/);
+  assert.match(popup,/BỊ CHẶN/);
+  assert.match(popup,/ĐANG KIỂM TRA/);
   assert.match(popup,/body\.pairingStatus/);
   assert.match(popup,/body\.pairReset/);
   assert.doesNotMatch(popup,/body\.pair['"]/);
+  assert.match(worker,/READINESS_POLL/);
+  assert.match(worker,/readiness:\s*daemon\.readinessStatus/);
   assert.match(worker,/bodyDaemonAuthToken/);
   assert.match(worker,/storage\.local\.remove\('bodyDaemonAuthToken'\)/);
   assert.doesNotMatch(worker,/body\.pair['"]/);
