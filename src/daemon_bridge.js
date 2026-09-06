@@ -120,6 +120,8 @@ class DaemonBridge{
       const rawKey=String(event.key||''),printable=rawKey.length===1;
       const semanticBefore=event.type==='keydown'&&rawKey==='Enter'?await this.semanticObservation(tabId):null;
       row={eventType:event.type,ts:Number(event.at||Date.now()),source:'human',sourceConfidence:1,agentCommandId:null,agentStepIndex:null,key:sensitive||printable?null:rawKey,keyClass:sensitive?'redacted':this.keyClass(rawKey),code:sensitive||printable?null:event.code,repeat:event.repeat===true,target,isTrusted:true,...(semanticBefore?.available===true?{semanticBefore}: {})};
+    }else if(payload.kind==='trust_audit'&&event.isTrusted===false){
+      row={eventType:'synthetic_input',ts:Number(event.at||payload.at||Date.now()),source:'unattributed',sourceConfidence:1,agentCommandId:null,agentStepIndex:null,auditEventType:String(event.type||'unknown'),target,isTrusted:false};
     }
     if(!row)return false;
     return this.send({type:'RECORDER_EVENT',tabId:Number(tabId),siteKey:siteKeyFromUrl(payload.url),event:row});
