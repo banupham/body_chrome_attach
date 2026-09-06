@@ -62,14 +62,7 @@ class EvidenceAssembler{
     if(!isYoutubeSearchTrigger(event))return null;
     const key=pendingKey(identity,tabId);
     const before=sanitizeObservation(event.semanticBefore);
-    const row={
-      createdAt:this.now(),
-      identity:clone(identity),
-      siteKey:String(siteKey||'__unknown__'),
-      tabId:Number(tabId),
-      triggerTs:Number(event.ts||this.now()),
-      before
-    };
+    const row={createdAt:this.now(),identity:clone(identity),siteKey:String(siteKey||'__unknown__'),tabId:Number(tabId),triggerTs:Number(event.ts||this.now()),before};
     this.pending.set(key,row);
     return {accepted:true,key,action:'youtube.search'};
   }
@@ -96,6 +89,8 @@ class EvidenceAssembler{
     this.completed++;
     return record;
   }
+
+  clearTab(identity,tabId){return this.pending.delete(pendingKey(identity,tabId));}
 
   clearBrowser(browserInstanceId){
     const prefix=`${String(browserInstanceId||'')}/`;let cleared=0;
