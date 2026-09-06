@@ -3,7 +3,8 @@
 const esbuild = require('esbuild');
 const fs = require('node:fs');
 const path = require('node:path');
-const { inactiveRecord, readRememberedRuntimePort } = require('./daemon/src/runtime_endpoint');
+const { inactiveRecord } = require('./daemon/src/runtime_endpoint');
+const { ensureRememberedRuntimePort } = require('./daemon/src/runtime_port_migration');
 
 const root = __dirname;
 const dist = path.join(root, 'dist');
@@ -30,6 +31,6 @@ esbuild.buildSync({
 
 fs.copyFileSync(path.join(root, 'manifest.json'), path.join(dist, 'manifest.json'));
 fs.copyFileSync(path.join(root, 'pairing.html'), path.join(dist, 'pairing.html'));
-const rememberedPort = readRememberedRuntimePort(daemonDir);
+const rememberedPort = ensureRememberedRuntimePort(daemonDir);
 fs.writeFileSync(path.join(dist, 'runtime-endpoint.json'), JSON.stringify(inactiveRecord(rememberedPort), null, 2) + '\n');
 console.log(`Built extension: ${dist}${rememberedPort ? ` (remembered runtime port ${rememberedPort})` : ''}`);
