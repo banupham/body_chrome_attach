@@ -57,6 +57,7 @@ function fakeRuntime(){
   return {
     browsers,
     recorderEvent:()=>true,
+    tabContext:()=>true,
     tasks:{create:spec=>({ok:true,...spec})},
     guardian:{status:()=>({policy:{}})},
     probeEnvironment:async()=>({browserInstanceId:'b1',eligible:true,status:'ELIGIBLE',reasons:[]}),
@@ -84,10 +85,16 @@ test('light supervisor accepts an asynchronous controller sensor without blockin
   assert.equal(supervisor.status().lightRunning,true);assert.equal(supervisor.status().browsers.b1.controller.reason,'controller_scan_pending');await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));const status=supervisor.status();assert.equal(status.lightRunning,false);assert.equal(status.browsers.b1.controller.available,true);assert.equal(status.browsers.b1.controller.blocked,false);supervisor.stop();
 });
 
-test('light supervisor automatically retries a deferred environment check and clears ENV_CHECK',async()=>{
+test('deferred environment waits on blank metadata and retries immediately on reliable web context',async()=>{
   const runtime=fakeRuntime(),row=runtime.browsers.require('b1');row.state='ENV_CHECK';row.stateReason='environment_waiting_for_http_tab';row.environment={eligible:false,status:'PENDING',reasons:['ENVIRONMENT_SIGNATURE_UNAVAILABLE'],evidence:[]};let probes=0;
   runtime.probeEnvironment=async()=>{probes++;row.environment={eligible:true,status:'ELIGIBLE',reasons:[],evidence:[]};row.state='ACTIVE';row.stateReason='environment_eligible';return {browserInstanceId:'b1',eligible:true,status:'ELIGIBLE',reasons:[]};};
   const probe={probe:()=>compactProcessSnapshot({processes:[],udp:[]})};const supervisor=new ProtectionSupervisor(runtime,{controllerProbe:probe,setIntervalImpl:()=>({unref(){}}),clearIntervalImpl:()=>{}}).start();
   await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(probes,0,'controller light scan must not hammer a blank-tab environment probe');
+  runtime.tabContext('e1',{tabId:1,context:{siteKey:'__non_web__',urlScheme:'about:',contextSource:'chrome_tabs'}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(probes,0,'non-web Chrome metadata must not trigger retry');
+  runtime.tabContext('e1',{tabId:1,context:{siteKey:'www.youtube.com',urlScheme:'https:',contextSource:'content_script'}});
+  await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
   assert.equal(probes,1);assert.equal(row.state,'ACTIVE');assert.equal(supervisor.status().transientProbeInFlight.length,0);supervisor.stop();
 });
