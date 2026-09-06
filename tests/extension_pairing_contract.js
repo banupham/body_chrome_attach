@@ -4,6 +4,7 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
+const {displayState,POLL_MS}=require('../src/guardian_status_overlay');
 
 const root=path.join(__dirname,'..');
 
@@ -36,6 +37,19 @@ test('popup shows only compact readiness state and contains no manual pairing in
   assert.match(worker,/storage\.local\.remove\('bodyDaemonAuthToken'\)/);
   assert.doesNotMatch(worker,/body\.pair['"]/);
   assert.match(worker,/automatic_local/);
+});
+
+test('Guardian page overlay is passive, periodic, and maps readiness to three compact states',()=>{
+  const source=fs.readFileSync(path.join(root,'src','guardian_status_overlay.js'),'utf8');
+  const content=fs.readFileSync(path.join(root,'src','virtual_cursor_content.js'),'utf8');
+  assert.equal(POLL_MS,1500);
+  assert.deepEqual(displayState({connected:true,readiness:{state:'READY'}}).state,'READY');
+  assert.deepEqual(displayState({connected:true,readiness:{state:'CHECKING',reason:'bot_check_pending'}}).state,'CHECKING');
+  assert.deepEqual(displayState({connected:true,readiness:{state:'BLOCKED',reason:'BOT_BEHAVIOR_HIGH_CONFIDENCE'}}).state,'BLOCKED');
+  assert.deepEqual(displayState({connected:false}).state,'BLOCKED');
+  assert.match(source,/pointerEvents:'none'/);
+  assert.match(source,/body\.pairingStatus/);
+  assert.match(content,/installGuardianStatusOverlay/);
 });
 
 test('build emits status popup bundle and copies pairing html',()=>{
