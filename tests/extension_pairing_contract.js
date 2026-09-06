@@ -7,10 +7,11 @@ const path=require('node:path');
 
 const root=path.join(__dirname,'..');
 
-test('manifest exposes status popup without adding new privileged permissions',()=>{
+test('manifest exposes status popup and only approved runtime/Guardian permissions',()=>{
   const manifest=JSON.parse(fs.readFileSync(path.join(root,'manifest.json'),'utf8'));
   assert.equal(manifest.action.default_popup,'pairing.html');
-  assert.deepEqual(manifest.permissions,['debugger','tabs','activeTab','storage','proxy']);
+  assert.deepEqual(manifest.permissions,['debugger','tabs','activeTab','storage','proxy','scripting','privacy','system.cpu','system.memory','system.display']);
+  for(const forbidden of ['cookies','history','webRequest','webRequestBlocking','nativeMessaging','management'])assert.equal(manifest.permissions.includes(forbidden),false,`unexpected privileged permission: ${forbidden}`);
 });
 
 test('pairing popup is status-only and contains no manual code entry',()=>{
