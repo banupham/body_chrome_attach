@@ -57,6 +57,18 @@ When protection blocks a Browser:
 - current BODY attribution remains excluded from behavior scoring,
 - protection state is visible inside `body.cmd "status"` under `environment.protection`.
 
+## Transient navigation recovery
+
+A Browser may reconnect while Chrome temporarily exposes `about:` or another non-HTTP surface during reload/navigation. This is not a policy violation.
+
+- `deep_probe_http_tab_required` is treated as a deferred probe instead of `environment_policy_failed`.
+- A Browser that has not completed its first HTTP probe stays `ENV_CHECK` / `PENDING`; it is not quarantined solely because the current surface is non-HTTP.
+- A previously eligible Browser keeps its last good environment result if a refresh temporarily lands on a non-HTTP surface.
+- The light Protection Guardian automatically retries deferred environment checks.
+- Concurrent probes for the same Browser share one in-flight request, preventing periodic and manual probes from racing each other.
+
+Actual proxy/VPN, duplicate environment, high-suspicion deep fingerprint, controller-conflict, and high-confidence behavior failures remain fail-closed.
+
 ## Environment variables
 
 ```text
