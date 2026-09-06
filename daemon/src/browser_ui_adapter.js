@@ -29,6 +29,9 @@ const COMPOUND_COMMANDS=Object.freeze({
   findtext:{verify:'unobservable'}
 });
 
+const FAST_BROWSER_UI_PREFIX='__body_fast_browser_ui__:';
+const FAST_BROWSER_UI_ACTIONS=new Set(['address','back','forward','reload','hardreload']);
+
 function sleep(ms){return new Promise(resolve=>setTimeout(resolve,Math.max(0,Number(ms)||0)));}
 function normalizeAction(value){return String(value||'').trim().toLowerCase();}
 function publicNativeStep(step){
@@ -38,6 +41,18 @@ function publicNativeStep(step){
 function activeOf(state){return state?.active||null;}
 function tabCount(state){return Array.isArray(state?.tabs)?state.tabs.length:0;}
 function windowCount(state){return new Set((state?.tabs||[]).map(t=>Number(t.windowId)).filter(Number.isInteger)).size;}
+function stateForTarget(state,targetTabId){const tab=(state?.tabs||[]).find(t=>Number(t.id)===Number(targetTabId));return tab?{...state,active:tab}:state;}
+function fastBrowserUiRequest(action,value){
+  const normalized=normalizeAction(action);
+  if(!FAST_BROWSER_UI_ACTIONS.has(normalized))return null;
+  if(normalized==='address'){
+    const text=String(value||'').trim();if(!text)throw new Error('browser_address_value_required');
+    let parsed;try{parsed=new URL(text);}catch{return null;}
+    if(!['http:','https:'].includes(parsed.protocol))return null;
+    return `${FAST_BROWSER_UI_PREFIX}${normalized}:${encodeURIComponent(parsed.toString())}`;
+  }
+  return `${FAST_BROWSER_UI_PREFIX}${normalized}:`;
+}
 
 function verificationResult(kind,before,after,targetTabId){
   const b=activeOf(before),a=activeOf(after);
@@ -109,13 +124,13 @@ class BrowserUiAdapter{
   verifyKind(action){return BROWSER_COMMANDS[action]?.verify||COMPOUND_COMMANDS[action]?.verify||'unobservable';}
 
   async pollVerification(kind,before,targetTabId,extensionId){
-    let after=await this.snapshot(extensionId);
+    let after=stateForTarget(await this.snapshot(extensionId),targetTabId);
     let result=verificationResult(kind,before,after,targetTabId);
     if(result.verified||kind==='unobservable') return {after,result};
     const deadline=Date.now()+this.verifyTimeoutMs;
     while(Date.now()<deadline){
       await this.sleep(this.verifyIntervalMs);
-      after=await this.snapshot(extensionId);
+      after=stateForTarget(await this.snapshot(extensionId),targetTabId);
       result=verificationResult(kind,before,after,targetTabId);
       if(result.verified) break;
     }
@@ -126,10 +141,41 @@ class BrowserUiAdapter{
     const action=normalizeAction(actionInput);
     const target=await this.resolveTarget({extensionId,tabId});
     const commandId=this.nextId(action);
-    const focus=await this.focusTarget({extensionId:target.extensionId,tab:target.tab,action,commandId});
+    const fastRequest=fastBrowserUiRequest(action,value);
+    const fastBefore=fastRequest?stateForTarget(await this.snapshot(target.extensionId),Number(target.tab.id)):null;
+    let focus=null,fastError=null;
+    if(fastRequest){
+      try{focus=await this.focusTarget({extensionId:target.extensionId,tab:target.tab,action:fastRequest,commandId});}
+      catch(error){fastError=String(error?.message||error);}
+    }
+    if(!focus){focus=await this.focusTarget({extensionId:target.extensionId,tab:target.tab,action,commandId});}
     if(focus?.verified===false) throw new Error('browser_ui_focus_not_verified');
     try {
-      const before=await this.snapshot(target.extensionId);
+      if(fastRequest&&focus?.fastExecuted===true){
+        const kind=this.verifyKind(action);
+        const {after,result}=await this.pollVerification(kind,fastBefore,Number(target.tab.id),target.extensionId);
+        const observable=kind!=='unobservable';
+        return {
+          commandId,
+          capability:'BROWSER_UI',
+          browserAction:action,
+          extensionId:target.extensionId,
+          tabId:Number(target.tab.id),
+          delivered:true,
+          observed:true,
+          observedEffect:{kind,observable,changed:observable?result.verified:null,reason:result.reason},
+          verified:result.verified,
+          taskSuccess:null,
+          verification:{kind,...result},
+          focus,
+          native:[],
+          executionAudit:{browserApiFastPath:true,fastAttempted:true,nativeInputUsed:false,fastTransport:focus.fastTransport||null,stepCount:0},
+          before:{tabCount:tabCount(fastBefore),activeTabId:activeOf(fastBefore)?.id??null,windowCount:windowCount(fastBefore)},
+          after:{tabCount:tabCount(after),activeTabId:activeOf(after)?.id??null,windowCount:windowCount(after)}
+        };
+      }
+
+      const before=stateForTarget(await this.snapshot(target.extensionId),Number(target.tab.id));
       const steps=this.stepsFor(action,value);
       const native=[];
       for(const step of steps){
@@ -154,7 +200,7 @@ class BrowserUiAdapter{
         verification:{kind,...result},
         focus,
         native,
-        executionAudit:{nativeInputOnly:true,stepCount:native.length},
+        executionAudit:{browserApiFastPath:false,fastAttempted:Boolean(fastRequest),fastError,nativeInputUsed:true,nativeInputOnly:true,stepCount:native.length},
         before:{tabCount:tabCount(before),activeTabId:activeOf(before)?.id??null,windowCount:windowCount(before)},
         after:{tabCount:tabCount(after),activeTabId:activeOf(after)?.id??null,windowCount:windowCount(after)}
       };
@@ -164,4 +210,4 @@ class BrowserUiAdapter{
   }
 }
 
-module.exports={BROWSER_COMMANDS,COMPOUND_COMMANDS,verificationResult,BrowserUiAdapter};
+module.exports={BROWSER_COMMANDS,COMPOUND_COMMANDS,FAST_BROWSER_UI_PREFIX,FAST_BROWSER_UI_ACTIONS,fastBrowserUiRequest,verificationResult,BrowserUiAdapter};

@@ -20,6 +20,23 @@ function normalizeSiteKey(raw) {
   return safeSegment(s,'__unknown__');
 }
 
+function normalizeLearningIdentity(value,fallbackRef=null) {
+  if(value&&typeof value==='object') {
+    const browserInstanceId=String(value.browserInstanceId||'').trim();
+    if(!browserInstanceId) throw new Error('learning_browser_instance_id_required');
+    return {
+      companyId:value.companyId||null,
+      deviceId:value.deviceId||null,
+      browserInstanceId,
+      extensionInstanceId:value.extensionInstanceId?String(value.extensionInstanceId):null,
+      runtimeExtensionId:value.runtimeExtensionId?String(value.runtimeExtensionId):null
+    };
+  }
+  const browserInstanceId=String(value||fallbackRef||'').trim();
+  if(!browserInstanceId) throw new Error('learning_browser_instance_id_required');
+  return {companyId:null,deviceId:null,browserInstanceId,extensionInstanceId:null,runtimeExtensionId:null};
+}
+
 class CascadingMotorModel {
   constructor(primary,fallback) {
     this.primary=primary;
@@ -48,7 +65,7 @@ class CascadingHabitModel {
 
     const pObs=Number(p?.totalHabitObservations||0);
     if(pObs>0) return {...p,scopeSource:'site'};
-    if(f) return {...f,scopeSource:'extension_global'};
+    if(f) return {...f,scopeSource:'browser_global'};
     return p;
   }
 
@@ -61,30 +78,99 @@ class CascadingHabitModel {
 }
 
 class ScopedLearningManager {
-  constructor(baseDir) {
+  constructor(baseDir,{resolveIdentity=null}={}) {
     this.baseDir=baseDir;
+    this.browserRoot=path.join(baseDir,'by-browser');
+    this.resolveIdentity=typeof resolveIdentity==='function'?resolveIdentity:null;
     this.cache=new Map();
+    this.migrations=new Map();
+    fs.mkdirSync(this.browserRoot,{recursive:true});
   }
 
-  _key(extensionId,siteKey) {
-    return `${String(extensionId)}::${normalizeSiteKey(siteKey)}`;
+  _identity(ref) {
+    const alreadyResolved=ref&&typeof ref==='object'&&String(ref.browserInstanceId||'').trim();
+    const resolved=alreadyResolved?ref:(this.resolveIdentity?this.resolveIdentity(ref):ref);
+    return normalizeLearningIdentity(resolved,ref);
   }
 
-  _scopeDir(extensionId,siteKey) {
-    return path.join(
-      this.baseDir,
-      safeSegment(extensionId,'extension'),
-      normalizeSiteKey(siteKey)
-    );
+  _key(identity,siteKey) {
+    return `${String(identity.browserInstanceId)}::${normalizeSiteKey(siteKey)}`;
   }
 
-  scope(extensionId,siteKey) {
-    const key=this._key(extensionId,siteKey);
-    if(this.cache.has(key)) return this.cache.get(key);
+  _browserDir(identity) {
+    return path.join(this.browserRoot,safeSegment(identity.browserInstanceId,'browser'));
+  }
 
-    const dir=this._scopeDir(extensionId,siteKey);
+  _legacyDir(identity) {
+    if(!identity.extensionInstanceId) return null;
+    return path.join(this.baseDir,safeSegment(identity.extensionInstanceId,'extension'));
+  }
+
+  _hasPayload(dir) {
+    if(!dir||!fs.existsSync(dir)) return false;
+    return fs.readdirSync(dir,{withFileTypes:true}).some(entry=>entry.name!=='.DS_Store');
+  }
+
+  _ensureMigration(identity) {
+    const browserKey=String(identity.browserInstanceId);
+    const extensionKey=String(identity.extensionInstanceId||'');
+    const key=`${browserKey}::${extensionKey}`;
+    if(this.migrations.has(key)) return this.migrations.get(key);
+
+    const browserDir=this._browserDir(identity);
+    const legacyDir=this._legacyDir(identity);
+    let result={browserInstanceId:browserKey,extensionInstanceId:identity.extensionInstanceId||null,migrated:false,legacyDir,browserDir,reason:'no_legacy_data'};
+
+    if(legacyDir && path.resolve(legacyDir)!==path.resolve(browserDir) && this._hasPayload(legacyDir)) {
+      if(!fs.existsSync(browserDir)) {
+        fs.mkdirSync(path.dirname(browserDir),{recursive:true});
+        fs.renameSync(legacyDir,browserDir);
+        result={...result,migrated:true,reason:'legacy_extension_scope_moved'};
+      } else if(this._hasPayload(browserDir)) {
+        const error=new Error(`legacy_learning_migration_conflict:${identity.extensionInstanceId}:${identity.browserInstanceId}`);
+        error.code='legacy_learning_migration_conflict';
+        error.legacyDir=legacyDir;
+        error.browserDir=browserDir;
+        throw error;
+      } else {
+        fs.rmSync(browserDir,{recursive:true,force:true});
+        fs.renameSync(legacyDir,browserDir);
+        result={...result,migrated:true,reason:'legacy_extension_scope_replaced_empty_browser_scope'};
+      }
+    }
+
+    this.migrations.set(key,result);
+    return result;
+  }
+
+  bindIdentity(ref) {
+    const identity=this._identity(ref);
+    return {...identity,migration:this._ensureMigration(identity)};
+  }
+
+  _scopeDir(identity,siteKey) {
+    this._ensureMigration(identity);
+    return path.join(this._browserDir(identity),normalizeSiteKey(siteKey));
+  }
+
+  scope(ref,siteKey) {
+    const identity=this._identity(ref);
+    this._ensureMigration(identity);
+    const key=this._key(identity,siteKey);
+    if(this.cache.has(key)) {
+      const existing=this.cache.get(key);
+      existing.extensionInstanceId=identity.extensionInstanceId;
+      existing.runtimeExtensionId=identity.runtimeExtensionId;
+      return existing;
+    }
+
+    const dir=this._scopeDir(identity,siteKey);
     const scope={
-      extensionId:String(extensionId),
+      companyId:identity.companyId,
+      deviceId:identity.deviceId,
+      browserInstanceId:String(identity.browserInstanceId),
+      extensionInstanceId:identity.extensionInstanceId,
+      runtimeExtensionId:identity.runtimeExtensionId,
       siteKey:normalizeSiteKey(siteKey),
       dir,
       store:new DatasetStore(path.join(dir,'data')),
@@ -96,24 +182,33 @@ class ScopedLearningManager {
     return scope;
   }
 
-  globalScope(extensionId) {
-    return this.scope(extensionId,'__global__');
+  globalScope(ref) {
+    return this.scope(ref,'__global__');
   }
 
-  observeEvent(extensionId,siteKey,tabId,event) {
-    const site=this.scope(extensionId,siteKey);
-    site.store.appendEvent(tabId,event);
+  observeEvent(ref,siteKey,tabId,event) {
+    const identity=this._identity(ref);
+    const site=this.scope(identity,siteKey);
+    const provenance={
+      browserInstanceId:identity.browserInstanceId,
+      extensionInstanceId:identity.extensionInstanceId,
+      runtimeExtensionId:identity.runtimeExtensionId
+    };
+    site.store.appendEvent(tabId,{...event,...provenance});
 
-    const global=this.globalScope(extensionId);
-    if(global!==site) global.store.appendEvent(tabId,{...event,siteKey:normalizeSiteKey(siteKey)});
+    const global=this.globalScope(identity);
+    if(global!==site) global.store.appendEvent(tabId,{...event,...provenance,siteKey:normalizeSiteKey(siteKey)});
   }
 
-  observeHumanSample(extensionId,siteKey,sample,{learn=true}={}) {
-    const site=this.scope(extensionId,siteKey);
-    const global=this.globalScope(extensionId);
+  observeHumanSample(ref,siteKey,sample,{learn=true}={}) {
+    const identity=this._identity(ref);
+    const site=this.scope(identity,siteKey);
+    const global=this.globalScope(identity);
     const scopedSample={
       ...sample,
-      extensionId:String(extensionId),
+      browserInstanceId:String(identity.browserInstanceId),
+      extensionInstanceId:identity.extensionInstanceId,
+      runtimeExtensionId:identity.runtimeExtensionId,
       siteKey:normalizeSiteKey(siteKey),
       source:'human'
     };
@@ -133,15 +228,15 @@ class ScopedLearningManager {
     return scopedSample;
   }
 
-  motorFor(extensionId,siteKey) {
-    const site=this.scope(extensionId,siteKey);
-    const global=this.globalScope(extensionId);
+  motorFor(ref,siteKey) {
+    const site=this.scope(ref,siteKey);
+    const global=this.globalScope(ref);
     return new CascadingMotorModel(site.motor,global.motor);
   }
 
-  habitFor(extensionId,siteKey) {
-    const site=this.scope(extensionId,siteKey);
-    const global=this.globalScope(extensionId);
+  habitFor(ref,siteKey) {
+    const site=this.scope(ref,siteKey);
+    const global=this.globalScope(ref);
     return new CascadingHabitModel(site.habit,global.habit);
   }
 
@@ -152,22 +247,24 @@ class ScopedLearningManager {
       try{scope.store.flushSync();}catch{datasetOk=false;}
       const motor=scope.motor.flushSync();
       const habit=scope.habit.flushSync();
-      results.push({extensionId:scope.extensionId,siteKey:scope.siteKey,datasetOk,motorOk:motor.ok,habitOk:habit.ok});
+      results.push({browserInstanceId:scope.browserInstanceId,siteKey:scope.siteKey,datasetOk,motorOk:motor.ok,habitOk:habit.ok});
     }
     return results;
   }
 
-  rebuild(extensionId,siteKey='__global__') {
+  rebuild(ref,siteKey='__global__') {
+    const identity=this._identity(ref);
     if(siteKey==='*') {
-      const extDir=path.join(this.baseDir,safeSegment(extensionId,'extension'));
-      if(!fs.existsSync(extDir)) return [];
-      const sites=fs.readdirSync(extDir,{withFileTypes:true})
+      const browserDir=this._browserDir(identity);
+      this._ensureMigration(identity);
+      if(!fs.existsSync(browserDir)) return [];
+      const sites=fs.readdirSync(browserDir,{withFileTypes:true})
         .filter(x=>x.isDirectory())
         .map(x=>x.name);
-      return sites.map(s=>this.rebuild(extensionId,s));
+      return sites.map(s=>this.rebuild(identity,s));
     }
 
-    const scope=this.scope(extensionId,siteKey);
+    const scope=this.scope(identity,siteKey);
     const samples=scope.store.loadHumanSamples();
     scope.motor.rebuild(samples);
 
@@ -183,7 +280,8 @@ class ScopedLearningManager {
     scope.habit.flushSync();
 
     return {
-      extensionId:String(extensionId),
+      browserInstanceId:String(identity.browserInstanceId),
+      extensionInstanceId:identity.extensionInstanceId,
       siteKey:scope.siteKey,
       samples:samples.length,
       motor:scope.motor.stats(),
@@ -191,10 +289,12 @@ class ScopedLearningManager {
     };
   }
 
-  stats(extensionId,siteKey) {
-    const scope=this.scope(extensionId,siteKey);
+  stats(ref,siteKey) {
+    const identity=this._identity(ref);
+    const scope=this.scope(identity,siteKey);
     return {
-      extensionId:String(extensionId),
+      browserInstanceId:String(identity.browserInstanceId),
+      extensionInstanceId:identity.extensionInstanceId,
       siteKey:scope.siteKey,
       dataset:scope.store.stats(),
       motor:scope.motor.stats(),
@@ -202,13 +302,19 @@ class ScopedLearningManager {
     };
   }
 
-  listSites(extensionId) {
-    const extDir=path.join(this.baseDir,safeSegment(extensionId,'extension'));
-    if(!fs.existsSync(extDir)) return [];
-    return fs.readdirSync(extDir,{withFileTypes:true})
+  listSites(ref) {
+    const identity=this._identity(ref);
+    const browserDir=this._browserDir(identity);
+    this._ensureMigration(identity);
+    if(!fs.existsSync(browserDir)) return [];
+    return fs.readdirSync(browserDir,{withFileTypes:true})
       .filter(x=>x.isDirectory())
       .map(x=>x.name)
       .sort();
+  }
+
+  migrationStatus() {
+    return [...this.migrations.values()].map(row=>({...row}));
   }
 }
 
@@ -216,6 +322,7 @@ module.exports={
   ScopedLearningManager,
   CascadingMotorModel,
   CascadingHabitModel,
+  normalizeLearningIdentity,
   normalizeSiteKey,
   safeSegment
 };

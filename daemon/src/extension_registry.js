@@ -7,6 +7,20 @@ class ExtensionRegistry {
     this.selectedId=null;
   }
 
+  _onlineItems() {
+    return [...this.items.values()]
+      .filter(x=>x.online===true && x.ws)
+      .sort((a,b)=>String(a.extensionId).localeCompare(String(b.extensionId),'en'));
+  }
+
+  _reconcileSelection() {
+    const selected=this.selectedId?this.items.get(this.selectedId):null;
+    if(selected?.online===true && selected.ws) return selected;
+    const online=this._onlineItems();
+    this.selectedId=online.length===1?online[0].extensionId:null;
+    return this.selectedId?this.items.get(this.selectedId):null;
+  }
+
   register(extensionId,ws,meta={}) {
     extensionId=String(extensionId||'').trim();
     if(!extensionId) throw new Error('extension_id_required');
@@ -41,7 +55,8 @@ class ExtensionRegistry {
     this.items.set(extensionId,item);
     this.socketToId.set(ws,extensionId);
 
-    if(!this.selectedId) this.selectedId=extensionId;
+    if(this.selectedId===extensionId) return item;
+    this._reconcileSelection();
     return item;
   }
 
@@ -54,6 +69,8 @@ class ExtensionRegistry {
     item.online=false;
     item.ws=null;
     item.lastSeenAt=Date.now();
+    if(this.selectedId===id) this.selectedId=null;
+    this._reconcileSelection();
     return id;
   }
 
@@ -77,11 +94,47 @@ class ExtensionRegistry {
     return item;
   }
 
-  select(id) {
-    const item=this.get(id);
-    if(!item) throw new Error(`extension_not_found:${id}`);
+  resolveRef(ref,{onlineOnly=true}={}) {
+    const value=String(ref??'').trim();
+    if(!value) throw new Error('extension_ref_required');
+    const online=this._onlineItems();
+    const pool=onlineOnly?online:[...this.items.values()].sort((a,b)=>String(a.extensionId).localeCompare(String(b.extensionId),'en'));
+
+    if(/^\d+$/.test(value)) {
+      const index=Number(value);
+      const item=online[index-1]||null;
+      if(!item) throw new Error(`extension_index_not_found:${value}`);
+      return item;
+    }
+
+    const exact=this.items.get(value)||null;
+    if(exact) {
+      if(onlineOnly && (!exact.online || !exact.ws)) throw new Error(`extension_offline:${exact.extensionId}`);
+      return exact;
+    }
+
+    const normalized=value.toLowerCase();
+    const matches=pool.filter(item=>String(item.extensionId).toLowerCase().startsWith(normalized));
+    if(matches.length===1) return matches[0];
+    if(matches.length>1) throw new Error(`extension_ref_ambiguous:${value}`);
+    throw new Error(`extension_not_found:${value}`);
+  }
+
+  select(ref) {
+    const item=this.resolveRef(ref,{onlineOnly:true});
     this.selectedId=item.extensionId;
     return item;
+  }
+
+  cycle(direction=1) {
+    const online=this._onlineItems();
+    if(!online.length) throw new Error('no_online_extensions');
+    const step=Number(direction)<0?-1:1;
+    let index=online.findIndex(x=>x.extensionId===this.selectedId);
+    if(index<0) index=step>0?-1:0;
+    index=(index+step+online.length)%online.length;
+    this.selectedId=online[index].extensionId;
+    return online[index];
   }
 
   touch(id) {
@@ -135,8 +188,12 @@ class ExtensionRegistry {
   }
 
   list() {
+    const online=this._onlineItems();
+    const indexById=new Map(online.map((item,index)=>[item.extensionId,index+1]));
     return [...this.items.values()]
       .map(x=>({
+        index:indexById.get(x.extensionId)||null,
+        shortId:String(x.extensionId).slice(0,8),
         companyId:x.companyId,
         deviceId:x.deviceId,
         browserInstanceId:x.browserInstanceId,

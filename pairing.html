@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Body Chrome Attach</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;width:280px;margin:0;padding:16px;background:#111827;color:#f9fafb}h1{font-size:15px;margin:0 0 12px}.status{padding:16px 12px;border-radius:10px;text-align:center;font-size:18px;font-weight:800;letter-spacing:.04em}.ready{background:#052e16;color:#86efac;border:1px solid #166534}.checking{background:#422006;color:#fde68a;border:1px solid #a16207}.blocked{background:#450a0a;color:#fca5a5;border:1px solid #991b1b}p{font-size:12px;line-height:1.4;color:#d1d5db;margin:10px 2px 0;text-align:center}button{width:100%;margin-top:12px;padding:9px 12px;border:0;border-radius:8px;background:#374151;color:#fff;font-weight:600;cursor:pointer}button:disabled{opacity:.55;cursor:not-allowed}
+  </style>
+</head>
+<body>
+  <h1>Body Chrome Attach</h1>
+  <div id="status" class="status checking">ĐANG KIỂM TRA</div>
+  <p id="hint">Đang lấy trạng thái từ Daemon.</p>
+  <button id="reset" type="button" hidden>Đặt lại kết nối</button>
+  <script src="pairing_popup.js"></script>
+</body>
+</html>
