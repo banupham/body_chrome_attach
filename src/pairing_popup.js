@@ -3,6 +3,7 @@
 const form=document.getElementById('form');
 const code=document.getElementById('code');
 const submit=document.getElementById('submit');
+const reset=document.getElementById('reset');
 const statusBox=document.getElementById('status');
 const hint=document.getElementById('hint');
 let pollTimer=null;
@@ -22,13 +23,16 @@ async function refresh(){
   try{
     const state=await send({action:'body.pairingStatus'});
     if(state.paired){
-      setStatus('Đã ghép nối an toàn với Company Runtime.','ok');
+      setStatus('Đã có token ghép nối cục bộ.','ok');
       form.hidden=true;
-      hint.textContent='Extension đã có token ghép nối cục bộ.';
+      reset.hidden=false;
+      hint.textContent='Nếu daemon đã quên Extension này, hãy xóa token cục bộ rồi mở pairing window mới.';
       if(pollTimer){clearInterval(pollTimer);pollTimer=null;}
       return state;
     }
     form.hidden=false;
+    reset.hidden=true;
+    hint.textContent='Mở daemon và gõ pair open, sau đó nhập mã một lần bên dưới.';
     setStatus(state.connected?'Đang kết nối nhưng chưa ghép nối.':'Chưa ghép nối. Hãy mở pairing window ở daemon.','muted');
     return state;
   }catch(error){
@@ -50,6 +54,21 @@ form.addEventListener('submit',async event=>{
     setStatus(`Ghép nối thất bại: ${String(error?.message||error)}`,'bad');
   }finally{
     submit.disabled=false;
+  }
+});
+
+reset.addEventListener('click',async()=>{
+  if(!confirm('Xóa token ghép nối cục bộ? Chỉ dùng khi daemon đã quên Extension hoặc cần ghép nối lại.'))return;
+  reset.disabled=true;
+  try{
+    await send({action:'body.pairReset'});
+    code.value='';
+    setStatus('Đã xóa token cục bộ. Hãy chạy pair open ở daemon để ghép nối lại.','muted');
+    await refresh();
+  }catch(error){
+    setStatus(`Không thể xóa token: ${String(error?.message||error)}`,'bad');
+  }finally{
+    reset.disabled=false;
   }
 });
 
