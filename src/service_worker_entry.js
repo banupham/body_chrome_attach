@@ -80,7 +80,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return result(sendResponse, resetLocalPairing);
   }
 
-  // Production runtime API is intentionally read-only. All actions go through daemon :8765.
+  // Production runtime API is intentionally read-only. All actions go through the authenticated local daemon transport.
   if (message?.action === 'body.virtualCursorStatus') {
     return result(sendResponse, async () => {
       const tabId = Number.isInteger(Number(message.tabId)) ? Number(message.tabId) : await activeTabId();
