@@ -40,9 +40,9 @@ test('behavior guardian ignores BODY agent events, blocks synthetic input, then 
 });
 
 function fakeRuntime(){
-  const row={browserInstanceId:'b1',extensionInstanceId:'e1',online:true,state:'ACTIVE',stateReason:'environment_eligible',environment:{eligible:true,evidence:[{type:'deep_fingerprint',signalIds:['webdriver_true']}]}};
+  const row={browserInstanceId:'b1',extensionInstanceId:'e1',online:true,state:'ACTIVE',stateReason:'environment_eligible',environment:{eligible:true,reasons:[],evidence:[{type:'deep_fingerprint',signalIds:['webdriver_true']}]}};
   const browsers={
-    list:()=>[{...row,environment:{...row.environment,evidence:row.environment.evidence.map(x=>({...x}))}}],
+    list:()=>[{...row,environment:{...row.environment,reasons:[...(row.environment.reasons||[])],evidence:(row.environment.evidence||[]).map(x=>({...x}))}}],
     require:id=>{if(id!=='b1')throw new Error('not_found');return row;},
     browserForExtension:id=>id==='e1'?row:null,
     setState:(id,state,reason)=>{assert.equal(id,'b1');row.state=state;row.stateReason=reason;return {...row};},
@@ -71,4 +71,12 @@ test('protection supervisor quarantines controller conflict and blocks new task 
   const status=runtime.guardian.status();
   assert.equal(status.protection.browsers.b1.blocked,true);
   supervisor.stop();
+});
+
+test('light supervisor automatically retries a deferred environment check and clears ENV_CHECK',async()=>{
+  const runtime=fakeRuntime(),row=runtime.browsers.require('b1');row.state='ENV_CHECK';row.stateReason='environment_waiting_for_http_tab';row.environment={eligible:false,status:'PENDING',reasons:['ENVIRONMENT_SIGNATURE_UNAVAILABLE'],evidence:[]};let probes=0;
+  runtime.probeEnvironment=async()=>{probes++;row.environment={eligible:true,status:'ELIGIBLE',reasons:[],evidence:[]};row.state='ACTIVE';row.stateReason='environment_eligible';return {browserInstanceId:'b1',eligible:true,status:'ELIGIBLE',reasons:[]};};
+  const probe={probe:()=>compactProcessSnapshot({processes:[],udp:[]})};const supervisor=new ProtectionSupervisor(runtime,{controllerProbe:probe,setIntervalImpl:()=>({unref(){}}),clearIntervalImpl:()=>{}}).start();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(probes,1);assert.equal(row.state,'ACTIVE');assert.equal(supervisor.status().transientProbeInFlight.length,0);supervisor.stop();
 });
