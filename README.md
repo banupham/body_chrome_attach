@@ -54,6 +54,38 @@ daemon/identity/browsers.json
 
 Chrome stores its persistent Browser/Extension identity and paired auth token in `chrome.storage.local`. Existing v5 profiles without `bodyBrowserInstanceId` migrate to `browser-<extensionInstanceId>`.
 
+## Extension pairing
+
+First-pair trust is **closed by default**. A new Extension Instance is not allowed to create its persistent token merely by connecting to localhost.
+
+Pairing flow:
+
+```text
+new Extension connects
+ -> daemon rejects with extension_pairing_required
+ -> Human opens a short local pairing window
+ -> daemon generates one-time code
+ -> Human enters that code in the Extension popup
+ -> daemon binds extensionInstanceId + browserInstanceId + runtimeExtensionId
+ -> daemon returns a random persistent Extension token
+ -> one-time window closes immediately
+```
+
+Open the window only from the daemon's local console:
+
+```text
+pair open
+pair open 60
+pair status
+pair list
+pair close
+pair forget <extensionInstanceId>
+```
+
+`pair open` defaults to 120 seconds and accepts 30–300 seconds. The one-time code is 8 characters, is stored only in daemon memory, expires with the window, and cannot be reused for a second Extension. Repeated websocket retries of the exact same wrong code do not consume additional attempts; distinct wrong codes are rate-limited by the pairing window.
+
+After `pair open`, click the **Body Chrome Attach** Extension icon and enter the displayed code. Existing paired Extensions reconnect with their stored persistent token and do not require a new window.
+
 ## Browser Manager
 
 `BrowserManager` is daemon-side authoritative state keyed by `browserInstanceId`; `ExtensionRegistry` is connection/transport state only.
@@ -257,6 +289,14 @@ Load `dist/` from `chrome://extensions`, then start the development entrypoint:
 ```bat
 daemon.cmd
 ```
+
+For a brand-new Extension Instance, use the daemon console:
+
+```text
+pair open
+```
+
+Then click the Extension icon and enter the one-time code shown by the daemon.
 
 Useful read-only debug commands:
 
