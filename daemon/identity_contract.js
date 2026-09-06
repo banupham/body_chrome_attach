@@ -49,19 +49,17 @@ test('many tabs share one Browser Instance identity without becoming duplicate b
   assert.equal(row.deviceId,'device-a');
 });
 
-test('extension auth token is bound to Browser Instance when browser identity is supplied',()=>{
+test('automatic extension auth remains bound to Browser Instance',()=>{
   const auth=new LocalAuth(tmp('identity-auth'));
-  const firstWindow=auth.openPairingWindow();
-  const first=auth.authenticateExtension({extensionId:'ext-a',browserInstanceId:'browser-a',runtimeExtensionId:'runtime-a',token:firstWindow.code,origin:'chrome-extension://runtime-a'});
+  const first=auth.authenticateExtension({extensionId:'ext-a',browserInstanceId:'browser-a',runtimeExtensionId:'runtime-a',token:null,origin:'chrome-extension://runtime-a'});
   assert.equal(first.ok,true);
+  assert.equal(first.paired,true);
   const second=auth.authenticateExtension({extensionId:'ext-a',browserInstanceId:'browser-a',runtimeExtensionId:'runtime-a',token:first.pairedToken,origin:'chrome-extension://runtime-a'});
-  assert.equal(second.ok,true);
-  assert.equal(auth.authenticateExtension({extensionId:'ext-a',browserInstanceId:'browser-b',runtimeExtensionId:'runtime-a',token:first.pairedToken,origin:'chrome-extension://runtime-a'}).ok,false);
+  assert.deepEqual(second,{ok:true,paired:false});
+  assert.equal(auth.authenticateExtension({extensionId:'ext-a',browserInstanceId:'browser-b',runtimeExtensionId:'runtime-a',token:first.pairedToken,origin:'chrome-extension://runtime-a'}).error,'extension_browser_id_mismatch');
   assert.equal(auth.forgetExtension('ext-a'),true);
-  const denied=auth.authenticateExtension({extensionId:'ext-a',browserInstanceId:'browser-b',runtimeExtensionId:'runtime-a',token:null,origin:'chrome-extension://runtime-a'});
-  assert.equal(denied.error,'extension_pairing_required');
-  const repairWindow=auth.openPairingWindow();
-  const repaired=auth.authenticateExtension({extensionId:'ext-a',browserInstanceId:'browser-b',runtimeExtensionId:'runtime-a',token:repairWindow.code,origin:'chrome-extension://runtime-a'});
+  const repaired=auth.authenticateExtension({extensionId:'ext-a',browserInstanceId:'browser-a',runtimeExtensionId:'runtime-a',token:first.pairedToken,origin:'chrome-extension://runtime-a'});
   assert.equal(repaired.ok,true);
   assert.equal(repaired.paired,true);
+  assert.notEqual(repaired.pairedToken,first.pairedToken);
 });
