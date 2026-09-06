@@ -23,7 +23,10 @@ class BehaviorGuardian{
     const recent5=rows.filter(e=>Number(e.ts)>=this.now()-5000);if(recent5.length>=500)add('input_rate_implausibly_high',45);
     score=Math.min(100,score);const blocked=signals.some(x=>x.severity==='block')||score>=70;return {score,blocked,review:score>=30,signalIds:signals.map(x=>x.id),eventCount:rows.length,untrustedEventCount:untrusted.length,lastObservedAt:rows.length?new Date(Math.max(...rows.map(x=>Number(x.ts)||0))).toISOString():null};
   }
-  status(browserInstanceId=null){if(browserInstanceId!=null)return this.summaries.get(String(browserInstanceId))||{score:0,blocked:false,review:false,signalIds:[],eventCount:0,untrustedEventCount:0,lastObservedAt:null};const out={};for(const [id,value] of this.summaries)out[id]={...value,signalIds:[...value.signalIds]};return out;}
+  status(browserInstanceId=null){
+    if(browserInstanceId!=null){const id=String(browserInstanceId),summary=this._analyze(this._rows(id));this.summaries.set(id,summary);return summary;}
+    const ids=new Set([...this.windows.keys(),...this.summaries.keys()]),out={};for(const id of ids){const summary=this._analyze(this._rows(id));this.summaries.set(id,summary);out[id]={...summary,signalIds:[...summary.signalIds]};}return out;
+  }
   clear(browserInstanceId){const id=String(browserInstanceId||'');this.windows.delete(id);this.summaries.delete(id);}
 }
 
