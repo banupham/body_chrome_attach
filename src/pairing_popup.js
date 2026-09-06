@@ -30,15 +30,15 @@ async function refresh(){
         hint.textContent='Token cục bộ đang hoạt động. Muốn ghép nối lại, hãy chạy pair forget ở daemon trước.';
       }else{
         setStatus('Có token ghép nối cục bộ nhưng hiện không kết nối được.','bad');
-        hint.textContent='Nếu daemon đã quên/revoke Extension này, hãy xóa token cục bộ rồi mở pairing window mới.';
+        hint.textContent='Nếu daemon đã quên/revoke Extension này, hãy xóa token cục bộ. Daemon sẽ tự mở pairing window mới khi Extension kết nối lại.';
       }
       if(pollTimer){clearInterval(pollTimer);pollTimer=null;}
       return state;
     }
     form.hidden=false;
     reset.hidden=true;
-    hint.textContent='Mở daemon và gõ pair open, sau đó nhập mã một lần bên dưới.';
-    setStatus(state.connected?'Đang kết nối nhưng chưa ghép nối.':'Chưa ghép nối. Hãy mở pairing window ở daemon.','muted');
+    hint.textContent='Daemon tự mở pairing window khi Extension chưa ghép nối kết nối vào. Nhập mã một lần đang hiển thị trên console daemon.';
+    setStatus(state.connected?'Đang kết nối nhưng chưa ghép nối.':'Chưa ghép nối. Kiểm tra mã pairing tự động trên console daemon.','muted');
     return state;
   }catch(error){
     setStatus(`Không đọc được trạng thái: ${String(error?.message||error)}`,'bad');
@@ -68,7 +68,7 @@ reset.addEventListener('click',async()=>{
   try{
     await send({action:'body.pairReset'});
     code.value='';
-    setStatus('Đã xóa token cục bộ. Hãy chạy pair open ở daemon để ghép nối lại.','muted');
+    setStatus('Đã xóa token cục bộ. Daemon sẽ tự tạo mã pairing mới khi Extension kết nối lại.','muted');
     await refresh();
   }catch(error){
     setStatus(`Không thể xóa token: ${String(error?.message||error)}`,'bad');
