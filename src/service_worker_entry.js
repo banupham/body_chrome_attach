@@ -25,17 +25,17 @@ function rememberUserMotor(tabId, payload) {
   observedUserMotorByTab.set(id, rows);
 }
 
-function pageContextFromContent(sender, message) {
+function pageContextPacket(sender, message) {
   const tabId = Number(sender?.tab?.id);
-  if (!Number.isInteger(tabId)) return false;
+  if (!Number.isInteger(tabId)) return null;
   const raw = message?.context || {};
   const url = String(raw.url || sender?.url || '');
   const siteKey = siteKeyFromUrl(url);
-  if (siteKey === '__non_web__') return false;
+  if (siteKey === '__non_web__') return null;
   let urlScheme = '';
   try { urlScheme = new URL(url).protocol; } catch {}
   const epoch = Number(daemon.navigationEpochByTab.get(tabId) || 0);
-  return daemon.send({
+  return {
     type: 'TAB_CONTEXT',
     tabId,
     context: {
@@ -48,7 +48,15 @@ function pageContextFromContent(sender, message) {
       urlScheme,
       contextSource: 'content_script'
     }
-  });
+  };
+}
+
+function pageContextFromContent(sender, message) {
+  const packet = pageContextPacket(sender, message);
+  if (!packet) return false;
+  if (daemon.send(packet)) return true;
+  daemon.connect().then(() => daemon.send(packet)).catch(() => {});
+  return false;
 }
 
 async function cursorStatus(tabId) {
@@ -151,4 +159,4 @@ daemon.start()
   .then(status => console.log('Body Chrome Attach ready. Production actions are daemon-only.', status))
   .catch(error => console.error('Body Chrome Attach startup error:', error));
 
-module.exports={pageContextFromContent};
+module.exports={pageContextPacket,pageContextFromContent};
