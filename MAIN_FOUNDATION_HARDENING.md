@@ -9,81 +9,88 @@ Mục tiêu: củng cố nền `main` theo 5 bước nhỏ, mỗi bước phải
 Mục tiêu:
 - Browser phải giữ `BUSY` khi còn bất kỳ physical execution nào đang chạy hoặc đang xếp hàng trong `ExecutionLane`.
 - Chỉ trở về `ACTIVE` khi lane của Browser/Extension đã thực sự cạn (`active=false`, `queued=0`).
-- Không ghi đè các trạng thái mạnh hơn như `OFFLINE`, `QUARANTINED`, `ERROR`, `HUMAN_CONTROL`.
-- Environment Guardian không được nhìn thấy Browser là `ACTIVE` trong lúc vẫn còn BODY work đang chờ/chạy.
+- Không ghi đè `OFFLINE`, `QUARANTINED`, `ERROR`, `HUMAN_CONTROL`.
 
 Kết quả:
-- `ExecutionLane` có snapshot `busy = active || queued > 0` và phát lifecycle callback khi enqueue/start/finish.
-- Browser state được đồng bộ từ execution queue thay vì từng Task tự bật/tắt BUSY.
-- Hai physical work cùng Browser không còn khoảng ACTIVE giả giữa hai lệnh.
-- Failure path vẫn giữ BUSY nếu còn work chờ.
+- `ExecutionLane` sở hữu lifecycle `busy = active || queued > 0`.
+- Không còn khoảng ACTIVE giả giữa hai physical work đang xếp hàng.
 - Guardian từ chối probe khi Browser BUSY.
-- HUMAN_CONTROL / QUARANTINED / ERROR / OFFLINE không bị idle callback ghi đè.
-- Regression contracts đã được thêm vào `npm run verify` và PR CI đã PASS trước bước cập nhật trạng thái tài liệu này.
+- Regression gates đã PASS.
 
 ## 2. Tăng bảo mật ghép nối Extension — HOÀN THÀNH
 
 Mục tiêu:
-- Bỏ cơ chế tự tin cậy hoàn toàn ở lần kết nối đầu.
-- Thêm pairing window / one-time nonce hoặc cơ chế xác nhận tương đương.
-- Giữ local-first, không cần cloud.
-- Không phá token authentication của Extension đã ghép nối.
+- Bỏ TOFU ở lần kết nối đầu; pairing phải được Human mở cục bộ.
+- Không phá reconnect token của Extension đã ghép nối.
 
 Kết quả:
-- Extension mới fail-closed; không còn TOFU tự tạo token khi chỉ biết localhost port/protocol.
-- Pairing window chỉ được mở từ console daemon cục bộ bằng `pair open [30-300 seconds]`.
-- Mã pairing 8 ký tự dùng một lần, chỉ nằm trong RAM, mặc định hết hạn sau 120 giây và có giới hạn mã sai khác nhau.
-- Pairing control không được đưa vào Brain protocol hoặc debug socket.
-- Popup Extension cho Human nhập mã; mã pairing không được persist vào Chrome storage.
-- Persistent token chỉ được lưu sau khi daemon trả `AUTH_PAIRED`; Extension đã paired tiếp tục reconnect bằng token cũ.
-- Binding `extensionInstanceId + browserInstanceId + runtimeExtensionId + Origin` vẫn được giữ.
-- `pair forget <extensionId>` revoke credential và terminate live socket; old token không thể reconnect.
-- Popup có recovery có xác nhận để xóa token cục bộ rồi re-pair bằng pairing window mới; reset bị ẩn khi pairing hiện tại vẫn đang kết nối để tránh tự khóa nhầm.
-- Không thêm Chrome privileged permission mới.
-- Regression contracts cho closed/open/expiry/replay/wrong-code/binding/forget/re-pair/recovery/popup/build đã được đưa vào `npm run verify`; CI đã PASS trên code cuối của Mục 2 gồm cả revoke và recovery guard.
+- Pairing window local-only, mã 8 ký tự dùng một lần, RAM-only, có expiry/rate-limit.
+- `pair open/status/list/close/forget` không được đưa vào Brain/debug socket.
+- `pair forget` revoke credential và terminate live socket.
+- Popup pairing không persist one-time code và không thêm Chrome permission.
+- Regression gates đã PASS.
 
 ## 3. Đưa debug routing + Browser UI fast path về nền main — HOÀN THÀNH
 
 Mục tiêu:
-- Debug nhiều Extension phải chọn đích rõ ràng, fail-closed khi mơ hồ.
-- Khi Extension đang chọn mất kết nối: chỉ tự chọn nếu còn đúng một Extension online.
-- Đưa Browser UI fast path cho `address/back/forward/reload/hardreload` về main nhưng giữ native fallback.
-- Không mở rộng CDP gateway; page action vẫn chỉ dùng HUMAN_MOTOR allowlist.
+- Debug nhiều Extension chọn đích rõ ràng và fail-closed khi mơ hồ.
+- Browser UI `address/back/forward/reload/hardreload` có fast path, vẫn giữ native fallback.
+- Không mở rộng CDP gateway.
 
 Kết quả:
-- Debug Extension routing hỗ trợ `exts`, `use <index|prefix|full-id>`, `next`, `prev`, `@<ref> <cmd>` và `<cmd> --ext=<ref>`.
-- Prefix mơ hồ hoặc index không hợp lệ bị từ chối; không tự đoán Extension đích.
-- Khi Extension đang chọn offline, selection chỉ tự chuyển nếu còn đúng một Extension online; nếu còn nhiều Extension thì selection bị xóa và lệnh không có target sẽ fail-closed.
-- Debug adapter serialize các lệnh targeted và khôi phục selection cũ khi selection đó vẫn hợp lệ.
-- Debug console và `body_cli.js` hỗ trợ raw/multiline JSON có giới hạn kích thước; pairing command vẫn chỉ tồn tại ở console local.
-- `address`, `back`, `forward`, `reload`, `hardreload` dùng Chrome Browser API fast path khi khả dụng: `chrome.tabs.update`, `chrome.tabs.goBack`, `chrome.tabs.goForward`, `chrome.tabs.reload`.
-- Fast path lỗi/không khả dụng sẽ quay về Browser UI native-input path hiện có; không chuyển sang page motor.
-- `address` chỉ dùng fast path với URL `http/https`; chuỗi address/search khác giữ native fallback để bảo toàn hành vi cũ.
-- Không thêm Chrome permission mới và không mở rộng CDP allowlist: page physical action vẫn chỉ có `Input.dispatchMouseEvent` / `Input.dispatchKeyEvent` qua HUMAN_MOTOR.
-- Không merge toàn bộ nhánh research; chỉ chọn lọc phần debug routing/Browser UI cần thiết và thêm regression contracts riêng.
-- `npm run verify` đã PASS trên code + regression test cuối của Mục 3 tại CI #207 trước khi cập nhật trạng thái tài liệu này.
+- Hỗ trợ `exts`, `use <index|prefix|full-id>`, `next`, `prev`, `@<ref> <cmd>`, `<cmd> --ext=<ref>`, raw/multiline JSON.
+- Disconnect selection chỉ auto-select khi còn đúng một Extension online; nhiều target thì selection bị xóa.
+- Fast path dùng `chrome.tabs.update/goBack/goForward/reload`; lỗi/thiếu API quay về native Browser UI.
+- Page motor vẫn chỉ dùng `Input.dispatchMouseEvent` / `Input.dispatchKeyEvent` qua HUMAN_MOTOR.
+- CI code + regression cuối Mục 3: workflow #207 — PASS.
 
-## 4. Chuyển learning khỏi extensionId sang identity ổn định — CHƯA THỰC HIỆN
+## 4. Chuyển learning khỏi extensionId sang identity ổn định — HOÀN THÀNH
 
 Mục tiêu:
 - Không xem `extensionInstanceId` là identity lâu dài của dữ liệu học.
-- Thiết kế migration an toàn sang `browserInstanceId` và/hoặc scope Human/device/platform phù hợp.
-- Không làm mất model/dataset hiện có và không trộn dữ liệu giữa Browser khác nhau.
+- Migration an toàn sang `browserInstanceId` mà không trộn Browser hay mất dữ liệu.
 
-## 5. Phase 5: Semantic Observation + Immutable Evidence Store — CHƯA THỰC HIỆN
+Kết quả:
+- Persistent learning scope chuyển sang `profiles/by-browser/<browserInstanceId>/<siteKey>`.
+- `extensionInstanceId`/`runtimeExtensionId` chỉ còn là provenance của từng sample/event, không còn là storage key.
+- Runtime vẫn có thể gọi learning bằng live Extension ref; resolver trung tâm ánh xạ sang Browser identity.
+- Legacy `profiles/<extensionInstanceId>` được move nguyên tử sang Browser scope khi đích chưa có payload.
+- Nếu legacy và Browser scope đều có payload, migration fail-closed với `legacy_learning_migration_conflict`; không tự merge và không xóa bên nào.
+- Cache reuse vẫn chạy migration check cho transport identity mới, tránh bỏ sót late legacy directory.
+- `TabHabitModel` nâng schema v2, transition/last-active tách theo Browser.
+- Legacy transition v1 không có Browser attribution được giữ riêng nhưng không dùng làm training signal để tránh cross-Browser contamination.
+- `daemon/learning_identity_contract.js` khóa migration, isolation, conflict và legacy TabHabit behavior.
+- CI cuối Mục 4 sau self-review: workflow #219 — PASS.
+
+## 5. Phase 5: Semantic Observation + Immutable Evidence Store — HOÀN THÀNH
 
 Mục tiêu:
-- Đưa semantic observer read-only tối thiểu vào main.
-- Tạo Evidence Store tách khỏi DatasetStore dùng cho Motor/Habit.
-- Chuẩn hóa chuỗi `BeforeState -> Action -> AfterState -> ObservedEffect` với provenance rõ ràng.
-- Chứng minh một Human demonstration `youtube.search` có thể tạo evidence có thể truy vết.
+- Semantic observer read-only tối thiểu.
+- Evidence Store tách khỏi DatasetStore dùng cho Motor/Habit.
+- Chuẩn hóa `BeforeState -> Action -> AfterState -> ObservedEffect` với provenance rõ ràng.
+- Chứng minh Human demonstration `youtube.search` có evidence truy vết.
 
-## Nguyên tắc chung
+Kết quả:
+- Thêm YouTube semantic observer read-only: route type, trạng thái search controls, search-result count và viewport; không thao tác DOM.
+- Observer không lưu search query, account identity hay text content; Evidence assembler còn whitelist field lần hai trước khi persist.
+- `EvidenceStore` nằm riêng dưới `evidence/by-browser/...`, không dùng DatasetStore/Motor/Habit.
+- Evidence JSONL append-only có SHA-256 hash chain; chain hiện tại được verify trước mỗi append và tamper bị phát hiện.
+- Chỉ trusted Human Enter trên semantic search input mới mở candidate `youtube.search`; Agent event không tạo evidence.
+- Pending evidence có TTL và được xóa khi Tab/Browser lifecycle kết thúc để tránh ghép observation cũ.
+- Runtime loại `semanticBefore` khỏi event trước khi ghi training DatasetStore/Segmenter.
+- Evidence record có stable Browser identity, Extension provenance, Before/Action/After/ObservedEffect; không tự nâng thành `taskSuccess`.
+- ObservedEffect chỉ claim navigation khi có semantic effect quan sát được; không suy diễn chỉ vì after page là search.
+- Bridge contract chứng minh before/after semantic path không dùng CDP Input; CDP allowlist vẫn đúng 2 phương thức cũ.
+- `daemon/evidence_store_contract.js`, `tests/semantic_observer_contract.js`, `tests/semantic_evidence_bridge_contract.js` được đưa vào `npm run verify`.
+- CI code + regression cuối Mục 5 sau self-review: workflow #236 — PASS.
 
-- Mỗi mục là một thay đổi độc lập, không làm trước việc của mục sau.
-- Không merge toàn bộ nhánh research vào main.
+## Nguyên tắc chung — GIỮ NGUYÊN
+
+- Không merge toàn bộ nhánh research vào nhánh hardening.
 - Content script chỉ đọc/quan sát.
 - Page physical action chỉ qua `Input.dispatchMouseEvent` / `Input.dispatchKeyEvent`.
 - Browser UI dùng đường riêng.
-- Không nới Policy/Guardian chỉ để test dễ hơn.
-- Human evidence và Agent evidence luôn tách biệt.
+- Không nới Policy/Guardian để test dễ hơn.
+- Human evidence và Agent evidence tách biệt.
+- Persistent learning/evidence dùng stable Browser identity; Extension identity chỉ là transport/provenance.
+- `main` chỉ được thay đổi khi có quyết định merge riêng.
