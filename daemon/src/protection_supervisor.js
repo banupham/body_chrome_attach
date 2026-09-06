@@ -41,10 +41,10 @@ class ProtectionSupervisor{
   }
   stop(){for(const timer of this.timers)if(timer)this.clearIntervalImpl(timer);this.timers=[];}
   scanLightAll(){
-    if(!this.policy.enabled||this.lightRunning)return this.status();this.lightRunning=true;
+    if(!this.policy.enabled||this.lightRunning)return this.status();const online=this.runtime.browsers.list().filter(x=>x.online);if(!online.length)return this.status();this.lightRunning=true;
     try{
       const observation=this.controllerProbe.probe();
-      for(const browser of this.runtime.browsers.list().filter(x=>x.online)){
+      for(const browser of online){
         const assessment=assessControllerConflict(observation,deepSignals(browser));
         this.controllerByBrowser.set(browser.browserInstanceId,{...assessment,observedAt:new Date().toISOString()});this.enforce(browser.browserInstanceId);
       }
