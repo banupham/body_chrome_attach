@@ -39,35 +39,22 @@ function recentEvents(tabId, limit = 250) {
   return { tabId: Number(tabId), total: rows.length, events: rows.slice(-bounded) };
 }
 
-function normalizePairingCode(value) {
-  return String(value || '').toUpperCase().replace(/[^A-Z2-9]/g, '');
-}
-
 async function pairingStatus() {
   const saved = await chrome.storage.local.get({ bodyDaemonAuthToken: null });
   return {
     paired: Boolean(saved.bodyDaemonAuthToken),
     connected: daemon.socket?.readyState === 1,
     browserInstanceId: daemon.browserInstanceId,
-    extensionInstanceId: daemon.extensionInstanceId
+    extensionInstanceId: daemon.extensionInstanceId,
+    mode: 'automatic_local'
   };
-}
-
-async function submitPairingCode(value) {
-  const saved = await chrome.storage.local.get({ bodyDaemonAuthToken: null });
-  if (saved.bodyDaemonAuthToken) throw new Error('extension_already_paired');
-  const normalized = normalizePairingCode(value);
-  if (!/^[A-Z2-9]{8}$/.test(normalized)) throw new Error('pairing_code_format_invalid');
-  daemon.authToken = normalized;
-  try { daemon.socket?.close(); } catch {}
-  return { attempting: true, codeAcceptedLocally: true };
 }
 
 async function resetLocalPairing() {
   await chrome.storage.local.remove('bodyDaemonAuthToken');
   daemon.authToken = null;
   try { daemon.socket?.close(); } catch {}
-  return { reset: true, paired: false };
+  return { reset: true, paired: false, automaticReconnect: true };
 }
 
 function result(sendResponse, work) {
@@ -87,10 +74,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.action === 'body.pairingStatus') {
     return result(sendResponse, pairingStatus);
-  }
-
-  if (message?.action === 'body.pair') {
-    return result(sendResponse, () => submitPairingCode(message.code));
   }
 
   if (message?.action === 'body.pairReset') {
