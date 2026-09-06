@@ -15,7 +15,7 @@ class ProtectionSupervisor{
     this.policy={enabled:envBool(this.env.BODY_PROTECTION_GUARDIAN_ENABLED,true),controllerBlock:envBool(this.env.BODY_PROTECTION_CONTROLLER_BLOCK,true),behaviorBlock:envBool(this.env.BODY_PROTECTION_BEHAVIOR_BLOCK,true),lightIntervalMs:envInt(this.env.BODY_PROTECTION_LIGHT_INTERVAL_MS,15000,5000,300000),fullIntervalMs:envInt(this.env.BODY_PROTECTION_FULL_INTERVAL_MS,300000,60000,3600000)};
     this.controllerByBrowser=new Map();this.timers=[];this.installed=false;this.lightRunning=false;this.fullRunning=false;this.transientProbeInFlight=new Set();this.original={};
   }
-  _decorateProbeResult(result,browserId){const protection=this.browserStatus(browserId),reasons=[...(Array.isArray(result?.reasons)?result.reasons:[]),...protection.reasons];const pending=result?.status==='PENDING'||result?.probeDeferred===true;return {...result,eligible:pending?false:result?.eligible===true&&!protection.blocked,status:pending?'PENDING':result?.eligible===true&&!protection.blocked?String(result?.status||'ELIGIBLE'):'INELIGIBLE',reasons:[...new Set(reasons)],protection};}
+  _decorateProbeResult(result,browserId){const protection=this.browserStatus(browserId),reasons=[...(Array.isArray(result?.reasons)?result.reasons:[]),...protection.reasons];const pending=result?.status==='PENDING'||(result?.probeDeferred===true&&result?.eligible!==true);return {...result,eligible:pending?false:result?.eligible===true&&!protection.blocked,status:pending?'PENDING':result?.eligible===true&&!protection.blocked?String(result?.status||'ELIGIBLE'):'INELIGIBLE',reasons:[...new Set(reasons)],protection};}
   _kickTransientProbe(browser){
     const id=String(browser?.browserInstanceId||'');if(!id||!browser?.online||['BUSY','HUMAN_CONTROL'].includes(browser.state)||!transientEnvironment(browser)||typeof this.original.probeEnvironment!=='function'||this.transientProbeInFlight.has(id))return false;
     this.transientProbeInFlight.add(id);
@@ -30,6 +30,10 @@ class ProtectionSupervisor{
     if(this.installed)return this;this.installed=true;
     this.original.recorderEvent=this.runtime.recorderEvent.bind(this.runtime);
     this.runtime.recorderEvent=(extId,msg)=>{const result=this.original.recorderEvent(extId,msg);const browser=this.runtime.browsers.browserForExtension(extId);if(browser&&msg?.event){this.behavior.observe(browser.browserInstanceId,msg.event);this.enforce(browser.browserInstanceId);}return result;};
+    if(typeof this.runtime.tabContext==='function'){
+      this.original.tabContext=this.runtime.tabContext.bind(this.runtime);
+      this.runtime.tabContext=(extId,msg)=>{const result=this.original.tabContext(extId,msg);const browser=this.runtime.browsers.browserForExtension(extId);if(browser)this._kickTransientProbe(browser);return result;};
+    }
     this.original.taskCreate=this.runtime.tasks.create.bind(this.runtime.tasks);
     this.runtime.tasks.create=spec=>{this.assertAssignable(spec?.browserInstanceId);return this.original.taskCreate(spec);};
     this.original.guardianStatus=this.runtime.guardian.status.bind(this.runtime.guardian);
