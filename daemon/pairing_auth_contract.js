@@ -73,6 +73,21 @@ test('origin/runtime/browser binding still applies after pairing',()=>{
   assert.equal(auth.authenticateExtension({...hello('ext-a','runtime-a',paired.pairedToken),origin:'chrome-extension://other'}).error,'extension_origin_mismatch');
 });
 
+test('pair forget revokes persistent token and requests immediate live disconnect',()=>{
+  const auth=new LocalAuth(tmp('pair-forget'),{randomBytes:()=>Buffer.alloc(8,0)});
+  const opened=auth.openPairingWindow();
+  const paired=auth.authenticateExtension(hello('ext-a','runtime-a',opened.code));
+  assert.equal(paired.ok,true);
+  let disconnected=null;
+  const result=pairingConsoleCommand(auth,'pair forget ext-a',{disconnectExtension:extensionId=>{disconnected=extensionId;return true;}}).result;
+  assert.deepEqual(result,{extensionId:'ext-a',forgotten:true,disconnected:true});
+  assert.equal(disconnected,'ext-a');
+  assert.equal(auth.status().pairedExtensions,0);
+  const oldToken=auth.authenticateExtension(hello('ext-a','runtime-a',paired.pairedToken));
+  assert.equal(oldToken.ok,false);
+  assert.equal(oldToken.error,'extension_pairing_required');
+});
+
 test('pairing console commands are local-control helpers and never expose stored auth tokens',()=>{
   const auth=new LocalAuth(tmp('pair-console'),{randomBytes:()=>Buffer.alloc(8,0)});
   const opened=pairingConsoleCommand(auth,'pair open 60');
