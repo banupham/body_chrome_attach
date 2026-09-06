@@ -21,13 +21,26 @@ Kết quả:
 - HUMAN_CONTROL / QUARANTINED / ERROR / OFFLINE không bị idle callback ghi đè.
 - Regression contracts đã được thêm vào `npm run verify` và PR CI đã PASS trước bước cập nhật trạng thái tài liệu này.
 
-## 2. Tăng bảo mật ghép nối Extension — CHƯA THỰC HIỆN
+## 2. Tăng bảo mật ghép nối Extension — HOÀN THÀNH
 
 Mục tiêu:
 - Bỏ cơ chế tự tin cậy hoàn toàn ở lần kết nối đầu.
 - Thêm pairing window / one-time nonce hoặc cơ chế xác nhận tương đương.
 - Giữ local-first, không cần cloud.
 - Không phá token authentication của Extension đã ghép nối.
+
+Kết quả:
+- Extension mới fail-closed; không còn TOFU tự tạo token khi chỉ biết localhost port/protocol.
+- Pairing window chỉ được mở từ console daemon cục bộ bằng `pair open [30-300 seconds]`.
+- Mã pairing 8 ký tự dùng một lần, chỉ nằm trong RAM, mặc định hết hạn sau 120 giây và có giới hạn mã sai khác nhau.
+- Pairing control không được đưa vào Brain protocol hoặc debug socket.
+- Popup Extension cho Human nhập mã; mã pairing không được persist vào Chrome storage.
+- Persistent token chỉ được lưu sau khi daemon trả `AUTH_PAIRED`; Extension đã paired tiếp tục reconnect bằng token cũ.
+- Binding `extensionInstanceId + browserInstanceId + runtimeExtensionId + Origin` vẫn được giữ.
+- `pair forget <extensionId>` revoke credential và terminate live socket; old token không thể reconnect.
+- Popup có recovery có xác nhận để xóa token cục bộ rồi re-pair bằng pairing window mới.
+- Không thêm Chrome privileged permission mới.
+- Regression contracts cho closed/open/expiry/replay/wrong-code/binding/forget/re-pair/popup/build đã được đưa vào `npm run verify`; CI runtime cuối của Mục 2 đã PASS trước commit tài liệu này.
 
 ## 3. Đưa debug routing + Browser UI fast path về nền main — CHƯA THỰC HIỆN
 
