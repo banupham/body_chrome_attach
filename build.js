@@ -13,7 +13,8 @@ fs.mkdirSync(dist, { recursive: true });
 esbuild.buildSync({
   entryPoints: {
     service_worker: path.join(root, 'src', 'service_worker_entry.js'),
-    virtual_cursor_content: path.join(root, 'src', 'virtual_cursor_content.js')
+    virtual_cursor_content: path.join(root, 'src', 'virtual_cursor_content.js'),
+    pairing_popup: path.join(root, 'src', 'pairing_popup.js')
   },
   bundle: true,
   platform: 'browser',
@@ -26,4 +27,5 @@ esbuild.buildSync({
 });
 
 fs.copyFileSync(path.join(root, 'manifest.json'), path.join(dist, 'manifest.json'));
+fs.copyFileSync(path.join(root, 'pairing.html'), path.join(dist, 'pairing.html'));
 console.log(`Built extension: ${dist}`);
