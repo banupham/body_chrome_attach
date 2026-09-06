@@ -1,6 +1,6 @@
 'use strict';
 
-function pairingConsoleCommand(auth,line){
+function pairingConsoleCommand(auth,line,{disconnectExtension=()=>false}={}){
   const text=String(line||'').trim();
   const [cmd,action='status',arg]=text.split(/\s+/);
   if(cmd!=='pair')return {handled:false,result:null};
@@ -17,7 +17,10 @@ function pairingConsoleCommand(auth,line){
   if(action==='forget'){
     const extensionId=String(arg||'').trim();
     if(!extensionId)throw new Error('pair_forget_extension_id_required');
-    return {handled:true,result:{extensionId,forgotten:auth.forgetExtension(extensionId)}};
+    const forgotten=auth.forgetExtension(extensionId);
+    let disconnected=false;
+    if(forgotten)disconnected=disconnectExtension(extensionId)===true;
+    return {handled:true,result:{extensionId,forgotten,disconnected}};
   }
   throw new Error('pair_usage: pair open [30-300 seconds] | pair status | pair list | pair close | pair forget <extensionId>');
 }
