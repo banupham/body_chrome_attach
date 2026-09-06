@@ -36,7 +36,7 @@ function installGuardianStatusOverlay({chromeApi=chrome,documentRef=document,set
   const style=documentRef.createElement('style');
   style.textContent=`
     :host{all:initial}
-    div{box-sizing:border-box;display:grid;grid-template-columns:7px auto;grid-template-areas:"dot label" ". detail";column-gap:5px;row-gap:1px;min-width:118px;max-width:165px;padding:5px 7px;border:1px solid rgba(255,255,255,.12);border-radius:7px;background:rgba(17,24,39,.62);box-shadow:0 3px 9px rgba(0,0,0,.14);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:rgba(249,250,251,.94);backdrop-filter:blur(3px)}
+    div{box-sizing:border-box;display:grid;grid-template-columns:7px auto;grid-template-areas:"dot label" ". detail";column-gap:5px;row-gap:1px;min-width:118px;max-width:165px;padding:5px 7px;border:1px solid rgba(255,255,255,.12);border-radius:7px;background:rgba(17,24,39,.30);box-shadow:0 3px 9px rgba(0,0,0,.14);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:rgba(249,250,251,.94);backdrop-filter:blur(3px)}
     .dot{grid-area:dot;width:6px;height:6px;margin-top:3px;border-radius:999px;background:#f59e0b;box-shadow:0 0 0 2px rgba(245,158,11,.10)}
     .label{grid-area:label;font-size:10px;font-weight:800;line-height:12px;letter-spacing:.025em;white-space:nowrap}
     .detail{grid-area:detail;font-size:8px;line-height:10px;color:rgba(203,213,225,.82);white-space:normal}
