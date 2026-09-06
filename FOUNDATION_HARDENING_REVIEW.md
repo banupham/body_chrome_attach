@@ -146,7 +146,7 @@ CI gate Mục 5 cuối sau self-review: workflow #236 — PASS.
 Rủi ro còn lại:
 - Semantic observer hiện mới chứng minh `youtube.search`; chưa phải ontology đa nền tảng.
 - YouTube DOM selector có thể thay đổi. Failure phải biểu hiện bằng unavailable/0 result, không được biến thành action fallback.
-- Human Enter semantic-before hiện được lấy qua content observation request sau USER event được chuyển tới service worker. Vì navigation có thể bắt đầu rất nhanh, một số demonstration thực tế có thể bị bỏ lỡ; hệ thống fail-open theo nghĩa *không tạo evidence* chứ không tạo evidence sai. Nếu cần coverage cao hơn, bước sau nên snapshot semantic ngay trong capture listener và mang snapshot cùng USER event.
+- Human Enter semantic-before hiện được lấy qua content observation request sau USER event được chuyển tới service worker. Vì navigation có thể bắt đầu rất nhanh, một số demonstration thực tế có thể bị bỏ lỡ; hệ thống khi đó **bỏ evidence** thay vì tạo evidence suy đoán/sai. Nếu cần coverage cao hơn, bước sau nên snapshot semantic ngay trong capture listener và mang snapshot cùng USER event.
 - Evidence append verify toàn file trước mỗi ghi là an toàn cho MVP nhưng O(n) theo số record/file; volume lớn cần checkpoint/index mà vẫn giữ tamper detection.
 - SHA chain chống sửa lẻ/tamper tình cờ nhưng không phải external notarization: process có toàn quyền filesystem có thể rewrite toàn chain.
 - Không lưu query text giúp privacy nhưng Evidence không thể reconstruct chính xác câu Human đã tìm.
@@ -169,4 +169,4 @@ Các invariant còn giữ:
 Khuyến nghị trước khi merge sau này:
 - Squash PR vì nhánh có nhiều commit nhỏ theo từng gate/review.
 - Chạy một smoke test Windows thật với Chrome: pair -> Guardian ACTIVE -> Human YouTube search -> kiểm tra Evidence record -> Browser UI fast path -> pair forget/reconnect.
-- Không merge nếu smoke test cho thấy semantic observation bị miss thường xuyên; khi đó ưu tiên snapshot semantic tại capture listener, không thêm sleep/polling tùy ý.
+- Nếu smoke test cho thấy semantic-before bị miss thường xuyên, ưu tiên snapshot semantic ngay tại capture listener; không thêm sleep/polling tùy ý.
