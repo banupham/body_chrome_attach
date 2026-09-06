@@ -1,2 +1,2 @@
 @echo off
-node "%~dp0daemon\server.js"
+node -r "%~dp0daemon\src\sticky_runtime_port_preload.js" "%~dp0daemon\server.js"
