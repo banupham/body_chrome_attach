@@ -47,8 +47,8 @@ function fastBrowserUiRequest(action,value){
   if(!FAST_BROWSER_UI_ACTIONS.has(normalized))return null;
   if(normalized==='address'){
     const text=String(value||'').trim();if(!text)throw new Error('browser_address_value_required');
-    let parsed;try{parsed=new URL(text);}catch{throw new Error('browser_address_http_url_required');}
-    if(!['http:','https:'].includes(parsed.protocol))throw new Error('browser_address_http_url_required');
+    let parsed;try{parsed=new URL(text);}catch{return null;}
+    if(!['http:','https:'].includes(parsed.protocol))return null;
     return `${FAST_BROWSER_UI_PREFIX}${normalized}:${encodeURIComponent(parsed.toString())}`;
   }
   return `${FAST_BROWSER_UI_PREFIX}${normalized}:`;
@@ -143,7 +143,12 @@ class BrowserUiAdapter{
     const commandId=this.nextId(action);
     const fastRequest=fastBrowserUiRequest(action,value);
     const fastBefore=fastRequest?stateForTarget(await this.snapshot(target.extensionId),Number(target.tab.id)):null;
-    const focus=await this.focusTarget({extensionId:target.extensionId,tab:target.tab,action:fastRequest||action,commandId});
+    let focus=null,fastError=null;
+    if(fastRequest){
+      try{focus=await this.focusTarget({extensionId:target.extensionId,tab:target.tab,action:fastRequest,commandId});}
+      catch(error){fastError=String(error?.message||error);}
+    }
+    if(!focus){focus=await this.focusTarget({extensionId:target.extensionId,tab:target.tab,action,commandId});}
     if(focus?.verified===false) throw new Error('browser_ui_focus_not_verified');
     try {
       if(fastRequest&&focus?.fastExecuted===true){
@@ -164,7 +169,7 @@ class BrowserUiAdapter{
           verification:{kind,...result},
           focus,
           native:[],
-          executionAudit:{browserApiFastPath:true,nativeInputUsed:false,fastTransport:focus.fastTransport||null,stepCount:0},
+          executionAudit:{browserApiFastPath:true,fastAttempted:true,nativeInputUsed:false,fastTransport:focus.fastTransport||null,stepCount:0},
           before:{tabCount:tabCount(fastBefore),activeTabId:activeOf(fastBefore)?.id??null,windowCount:windowCount(fastBefore)},
           after:{tabCount:tabCount(after),activeTabId:activeOf(after)?.id??null,windowCount:windowCount(after)}
         };
@@ -195,7 +200,7 @@ class BrowserUiAdapter{
         verification:{kind,...result},
         focus,
         native,
-        executionAudit:{browserApiFastPath:false,nativeInputUsed:true,nativeInputOnly:true,stepCount:native.length},
+        executionAudit:{browserApiFastPath:false,fastAttempted:Boolean(fastRequest),fastError,nativeInputUsed:true,nativeInputOnly:true,stepCount:native.length},
         before:{tabCount:tabCount(before),activeTabId:activeOf(before)?.id??null,windowCount:windowCount(before)},
         after:{tabCount:tabCount(after),activeTabId:activeOf(after)?.id??null,windowCount:windowCount(after)}
       };
