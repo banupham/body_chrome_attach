@@ -51,13 +51,17 @@ test('many tabs share one Browser Instance identity without becoming duplicate b
 
 test('extension auth token is bound to Browser Instance when browser identity is supplied',()=>{
   const auth=new LocalAuth(tmp('identity-auth'));
-  const first=auth.authenticateExtension({extensionId:'ext-a',browserInstanceId:'browser-a',runtimeExtensionId:'runtime-a',token:null,origin:'chrome-extension://runtime-a'});
+  const firstWindow=auth.openPairingWindow();
+  const first=auth.authenticateExtension({extensionId:'ext-a',browserInstanceId:'browser-a',runtimeExtensionId:'runtime-a',token:firstWindow.code,origin:'chrome-extension://runtime-a'});
   assert.equal(first.ok,true);
   const second=auth.authenticateExtension({extensionId:'ext-a',browserInstanceId:'browser-a',runtimeExtensionId:'runtime-a',token:first.pairedToken,origin:'chrome-extension://runtime-a'});
   assert.equal(second.ok,true);
   assert.equal(auth.authenticateExtension({extensionId:'ext-a',browserInstanceId:'browser-b',runtimeExtensionId:'runtime-a',token:first.pairedToken,origin:'chrome-extension://runtime-a'}).ok,false);
   assert.equal(auth.forgetExtension('ext-a'),true);
-  const repaired=auth.authenticateExtension({extensionId:'ext-a',browserInstanceId:'browser-b',runtimeExtensionId:'runtime-a',token:null,origin:'chrome-extension://runtime-a'});
+  const denied=auth.authenticateExtension({extensionId:'ext-a',browserInstanceId:'browser-b',runtimeExtensionId:'runtime-a',token:null,origin:'chrome-extension://runtime-a'});
+  assert.equal(denied.error,'extension_pairing_required');
+  const repairWindow=auth.openPairingWindow();
+  const repaired=auth.authenticateExtension({extensionId:'ext-a',browserInstanceId:'browser-b',runtimeExtensionId:'runtime-a',token:repairWindow.code,origin:'chrome-extension://runtime-a'});
   assert.equal(repaired.ok,true);
   assert.equal(repaired.paired,true);
 });
