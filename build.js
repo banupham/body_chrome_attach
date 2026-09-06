@@ -28,4 +28,5 @@ esbuild.buildSync({
 
 fs.copyFileSync(path.join(root, 'manifest.json'), path.join(dist, 'manifest.json'));
 fs.copyFileSync(path.join(root, 'pairing.html'), path.join(dist, 'pairing.html'));
+fs.writeFileSync(path.join(dist, 'runtime-endpoint.json'), JSON.stringify({schemaVersion:1,active:false,host:'127.0.0.1',port:null,wsUrl:null},null,2)+'\n');
 console.log(`Built extension: ${dist}`);
