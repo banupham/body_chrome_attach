@@ -9,6 +9,7 @@ const {DaemonBridge,parseFastBrowserUiAction,ALLOWED_METHODS}=require('../src/da
   assert.ok(request.startsWith('__body_fast_browser_ui__:address:'));
   assert.deepEqual(parseFastBrowserUiAction(request),{action:'address',value:'https://www.youtube.com/'});
   assert.deepEqual(parseFastBrowserUiAction(fastBrowserUiRequest('back')),{action:'back',value:''});
+  assert.equal(fastBrowserUiRequest('address','youtube systemverilog'),null);
 
   let snapshotIndex=0,focusAction=null;
   const native=[];
@@ -32,6 +33,31 @@ const {DaemonBridge,parseFastBrowserUiAction,ALLOWED_METHODS}=require('../src/da
   assert.deepEqual(result.native,[]);
   assert.deepEqual(native,[]);
   assert.equal(focusAction,request);
+
+  let fallbackSnapshot=0;
+  const fallbackFocus=[],fallbackNative=[];
+  const fallbackStates=[
+    {tabs:[{id:10,active:true,windowId:1,navigationToken:'one'}],active:{id:10,active:true,windowId:1,navigationToken:'one'}},
+    {tabs:[{id:10,active:true,windowId:1,navigationToken:'one'}],active:{id:10,active:true,windowId:1,navigationToken:'one'}},
+    {tabs:[{id:10,active:true,windowId:1,navigationToken:'two'}],active:{id:10,active:true,windowId:1,navigationToken:'two'}}
+  ];
+  const fallbackAdapter=new BrowserUiAdapter({
+    resolveTarget:async()=>({extensionId:'ext-fallback',tab:{id:10,windowId:1}}),
+    focusTarget:async({action})=>{fallbackFocus.push(action);if(String(action).startsWith('__body_fast_browser_ui__:'))throw new Error('browser_ui_fast_back_unavailable');return {verified:true,fastExecuted:false};},
+    finishTarget:async()=>({cleared:true}),
+    snapshot:async()=>fallbackStates[Math.min(fallbackSnapshot++,fallbackStates.length-1)],
+    runNativeInput:async(mode,value)=>{fallbackNative.push({mode,value});return {ok:true};},
+    sleepImpl:async()=>{},verifyTimeoutMs:100,verifyIntervalMs:20
+  });
+  const fallback=await fallbackAdapter.execute('back');
+  assert.equal(fallback.executionAudit.browserApiFastPath,false);
+  assert.equal(fallback.executionAudit.fastAttempted,true);
+  assert.match(fallback.executionAudit.fastError,/fast_back_unavailable/);
+  assert.equal(fallback.executionAudit.nativeInputUsed,true);
+  assert.equal(fallback.verified,true);
+  assert.ok(String(fallbackFocus[0]).startsWith('__body_fast_browser_ui__:back:'));
+  assert.equal(fallbackFocus[1],'back');
+  assert.deepEqual(fallbackNative,[{mode:'combo',value:'Alt+ArrowLeft'}]);
 
   const state={};
   const tab={id:1,active:true,windowId:1,title:'about:blank',url:'about:blank',status:'complete'};
