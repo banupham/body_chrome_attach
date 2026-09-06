@@ -7,6 +7,7 @@ function envBool(value,fallback){const raw=String(value??'').trim().toLowerCase(
 function envInt(value,fallback,min,max){const n=Number(value);return Number.isFinite(n)?Math.max(min,Math.min(max,Math.round(n))):fallback;}
 function deepSignals(browser){const evidence=Array.isArray(browser?.environment?.evidence)?browser.environment.evidence:[];const deep=evidence.find(x=>x?.type==='deep_fingerprint');return Array.isArray(deep?.signalIds)?deep.signalIds.map(String):[];}
 function transientEnvironment(browser){const reasons=Array.isArray(browser?.environment?.reasons)?browser.environment.reasons:[];return browser?.state==='ENV_CHECK'||String(browser?.stateReason||'').includes('waiting_for_http_tab')||reasons.includes('ENVIRONMENT_SIGNATURE_UNAVAILABLE')||reasons.includes('NO_BROWSER_TAB_FOR_ENVIRONMENT_PROBE');}
+function webTabContext(msg={}){const context=msg?.context||{},site=String(context.siteKey||'').toLowerCase(),scheme=String(context.urlScheme||'').toLowerCase();return context.contextSource==='content_script'||scheme==='http:'||scheme==='https:'||(site&&site!=='__non_web__'&&site!=='__unknown__');}
 
 class ProtectionSupervisor{
   constructor(runtime,{env=process.env,behavior=new BehaviorGuardian(),controllerProbe=new ExternalControllerProbe(),setIntervalImpl=setInterval,clearIntervalImpl=clearInterval}={}){
@@ -24,7 +25,7 @@ class ProtectionSupervisor{
   }
   _applyControllerObservation(online,observation){
     const observed=observation&&typeof observation==='object'?observation:{available:false,reason:'controller_probe_invalid_result'};
-    for(const browser of online){const assessment=assessControllerConflict(observed,deepSignals(browser));this.controllerByBrowser.set(browser.browserInstanceId,{...assessment,observedAt:new Date().toISOString()});this.enforce(browser.browserInstanceId);this._kickTransientProbe(browser);}return this.status();
+    for(const browser of online){const assessment=assessControllerConflict(observed,deepSignals(browser));this.controllerByBrowser.set(browser.browserInstanceId,{...assessment,observedAt:new Date().toISOString()});this.enforce(browser.browserInstanceId);}return this.status();
   }
   install(){
     if(this.installed)return this;this.installed=true;
@@ -32,7 +33,7 @@ class ProtectionSupervisor{
     this.runtime.recorderEvent=(extId,msg)=>{const result=this.original.recorderEvent(extId,msg);const browser=this.runtime.browsers.browserForExtension(extId);if(browser&&msg?.event){this.behavior.observe(browser.browserInstanceId,msg.event);this.enforce(browser.browserInstanceId);}return result;};
     if(typeof this.runtime.tabContext==='function'){
       this.original.tabContext=this.runtime.tabContext.bind(this.runtime);
-      this.runtime.tabContext=(extId,msg)=>{const result=this.original.tabContext(extId,msg);const browser=this.runtime.browsers.browserForExtension(extId);if(browser)this._kickTransientProbe(browser);return result;};
+      this.runtime.tabContext=(extId,msg)=>{const result=this.original.tabContext(extId,msg);const browser=this.runtime.browsers.browserForExtension(extId);if(browser&&webTabContext(msg))this._kickTransientProbe(browser);return result;};
     }
     this.original.taskCreate=this.runtime.tasks.create.bind(this.runtime.tasks);
     this.runtime.tasks.create=spec=>{this.assertAssignable(spec?.browserInstanceId);return this.original.taskCreate(spec);};
@@ -90,4 +91,4 @@ class ProtectionSupervisor{
   status(){const browsers={};for(const browser of this.runtime.browsers.list())if(browser.online)browsers[browser.browserInstanceId]=this.combined(browser.browserInstanceId);return {policy:{...this.policy},lightRunning:this.lightRunning,transientProbeInFlight:[...this.transientProbeInFlight],browsers};}
 }
 
-module.exports={ProtectionSupervisor,envBool,envInt,deepSignals,transientEnvironment};
+module.exports={ProtectionSupervisor,envBool,envInt,deepSignals,transientEnvironment,webTabContext};
