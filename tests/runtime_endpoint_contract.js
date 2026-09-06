@@ -8,12 +8,15 @@ const {
   endpointPaths,
   acquireRuntimeLock,
   releaseRuntimeLock,
+  assertRuntimeOwnershipAvailable,
   publishRuntimeEndpoint,
   clearRuntimeEndpoint,
   readRuntimeEndpoint,
   readRememberedRuntimePort,
   rememberRuntimePort,
-  preferredRuntimePort
+  preferredRuntimePort,
+  currentBootEpochMs,
+  timestampPredatesCurrentBoot
 } = require('../daemon/src/runtime_endpoint');
 const { ensureRememberedRuntimePort } = require('../daemon/src/runtime_port_migration');
 const {
@@ -38,6 +41,62 @@ function tmp(name) {
   assert.equal(fs.existsSync(endpointPaths(daemonDir).lock), true);
   assert.equal(releaseRuntimeLock(daemonDir, { pid: 111 }), true);
   assert.equal(fs.existsSync(endpointPaths(daemonDir).lock), false);
+
+  assert.equal(currentBootEpochMs({ now: () => 200000, uptimeImpl: () => 100 }), 100000);
+  assert.equal(timestampPredatesCurrentBoot(new Date(1000).toISOString(), { now: () => 200000, uptimeImpl: () => 100 }), true);
+  assert.equal(timestampPredatesCurrentBoot(new Date(150000).toISOString(), { now: () => 200000, uptimeImpl: () => 100 }), false);
+
+  const rebootProject = tmp('runtime-lock-reboot');
+  const rebootDaemonDir = path.join(rebootProject, 'daemon');
+  fs.mkdirSync(path.join(rebootDaemonDir, 'state'), { recursive: true });
+  fs.writeFileSync(endpointPaths(rebootDaemonDir).lock, JSON.stringify({ pid: 8720, createdAt: new Date(1000).toISOString() }) + '\n');
+  const recovered = acquireRuntimeLock(rebootDaemonDir, {
+    pid: 9000,
+    now: () => 200000,
+    uptimeImpl: () => 100,
+    killImpl: () => true
+  });
+  assert.equal(recovered.acquired, true);
+  assert.equal(JSON.parse(fs.readFileSync(endpointPaths(rebootDaemonDir).lock, 'utf8')).pid, 9000);
+  releaseRuntimeLock(rebootDaemonDir, { pid: 9000 });
+
+  fs.writeFileSync(endpointPaths(rebootDaemonDir).lock, JSON.stringify({ pid: 8720, createdAt: new Date(150000).toISOString() }) + '\n');
+  assert.throws(() => acquireRuntimeLock(rebootDaemonDir, {
+    pid: 9000,
+    now: () => 200000,
+    uptimeImpl: () => 100,
+    killImpl: () => true
+  }), /company_runtime_already_running:8720/);
+  fs.rmSync(endpointPaths(rebootDaemonDir).lock, { force: true });
+
+  fs.writeFileSync(endpointPaths(rebootDaemonDir).state, JSON.stringify({
+    schemaVersion: 2,
+    active: true,
+    host: '127.0.0.1',
+    port: 54321,
+    pid: 8720,
+    startedAt: new Date(1000).toISOString()
+  }) + '\n');
+  assert.equal(assertRuntimeOwnershipAvailable(endpointPaths(rebootDaemonDir).state, {
+    pid: 9000,
+    now: () => 200000,
+    uptimeImpl: () => 100,
+    killImpl: () => true
+  }), true);
+  fs.writeFileSync(endpointPaths(rebootDaemonDir).state, JSON.stringify({
+    schemaVersion: 2,
+    active: true,
+    host: '127.0.0.1',
+    port: 54321,
+    pid: 8720,
+    startedAt: new Date(150000).toISOString()
+  }) + '\n');
+  assert.throws(() => assertRuntimeOwnershipAvailable(endpointPaths(rebootDaemonDir).state, {
+    pid: 9000,
+    now: () => 200000,
+    uptimeImpl: () => 100,
+    killImpl: () => true
+  }), /company_runtime_already_running:8720:54321/);
 
   assert.equal(preferredRuntimePort(daemonDir), 0);
   const record = publishRuntimeEndpoint(daemonDir, 54321, { pid: 111, now: () => 0, killImpl: () => { const e = new Error('dead'); e.code = 'ESRCH'; throw e; } });
