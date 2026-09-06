@@ -42,8 +42,6 @@ class EnvironmentGuardian{
       const restored=this._recompute().find(x=>x.browserInstanceId===browser.browserInstanceId)||null;
       if(restored){this._persist();return {...restored,probeDeferred:true,deferReason:reason,reusedFreshObservation:true};}
     }
-    const previous=browser.environment||{};
-    if(previous.eligible===true){if(!['BUSY','HUMAN_CONTROL'].includes(browser.state))this.browserManager.setState(browser.browserInstanceId,'ACTIVE','environment_probe_deferred_non_http_tab');return {browserInstanceId:browser.browserInstanceId,...previous,probeDeferred:true,deferReason:reason};}
     this.browserManager.setState(browser.browserInstanceId,'ENV_CHECK','environment_waiting_for_http_tab');
     return {browserInstanceId:browser.browserInstanceId,eligible:false,status:'PENDING',observedAt:null,publicIp:null,environmentSignature:null,deepFingerprint:{available:false,error:'deep_probe_http_tab_required'},reasons:[reason],evidence:[],probeDeferred:true,deferReason:reason};
   }
