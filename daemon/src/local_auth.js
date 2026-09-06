@@ -13,6 +13,8 @@ function digest(value){return crypto.createHash('sha256').update(String(value||'
 function secureEqualHex(a,b){const aa=Buffer.from(String(a||''),'hex'),bb=Buffer.from(String(b||''),'hex');return aa.length===bb.length&&aa.length>0&&crypto.timingSafeEqual(aa,bb);}
 function normalizePairingCode(value){return String(value||'').toUpperCase().replace(/[^A-Z2-9]/g,'');}
 function makePairingCode(randomBytesImpl=crypto.randomBytes){const bytes=randomBytesImpl(8);let out='';for(let i=0;i<8;i++)out+=PAIRING_ALPHABET[bytes[i]&31];return `${out.slice(0,4)}-${out.slice(4)}`;}
+function normalizePairingBinding(binding={}){return {extensionId:String(binding.extensionId||'').trim(),browserInstanceId:String(binding.browserInstanceId||'').trim(),runtimeExtensionId:String(binding.runtimeExtensionId||'').trim(),origin:String(binding.origin||'').replace(/\/$/,'')};}
+function pairingBindingMatches(expected,actual){const a=normalizePairingBinding(expected),b=normalizePairingBinding(actual);return Boolean(a.extensionId&&a.browserInstanceId&&a.runtimeExtensionId&&a.origin&&a.extensionId===b.extensionId&&a.browserInstanceId===b.browserInstanceId&&a.runtimeExtensionId===b.runtimeExtensionId&&a.origin===b.origin);}
 
 class LocalAuth{
   constructor(baseDir,{now=()=>Date.now(),randomBytes=crypto.randomBytes}={}){
@@ -46,25 +48,37 @@ class LocalAuth{
     return current;
   }
 
-  openPairingWindow({ttlMs=DEFAULT_PAIRING_TTL_MS,maxAttempts=DEFAULT_PAIRING_ATTEMPTS}={}){
+  openPairingWindow({ttlMs=DEFAULT_PAIRING_TTL_MS,maxAttempts=DEFAULT_PAIRING_ATTEMPTS,binding={}}={}){
     const ttl=Math.max(30000,Math.min(300000,Number(ttlMs)||DEFAULT_PAIRING_TTL_MS));
     const attempts=Math.max(3,Math.min(20,Math.floor(Number(maxAttempts)||DEFAULT_PAIRING_ATTEMPTS)));
+    const normalizedBinding=normalizePairingBinding(binding);
+    if(!normalizedBinding.extensionId||!normalizedBinding.browserInstanceId||!normalizedBinding.runtimeExtensionId||!normalizedBinding.origin)throw new Error('pairing_binding_required');
     const openedAtMs=this.now(),code=makePairingCode(this.randomBytes),normalized=normalizePairingCode(code);
-    this.pairingWindow={codeHash:digest(normalized),openedAtMs,expiresAtMs:openedAtMs+ttl,maxAttempts:attempts,remainingAttempts:attempts,attemptedCodeHashes:new Set()};
-    return {active:true,code,openedAt:new Date(openedAtMs).toISOString(),expiresAt:new Date(openedAtMs+ttl).toISOString(),ttlMs:ttl,remainingAttempts:attempts};
+    this.pairingWindow={codeHash:digest(normalized),openedAtMs,expiresAtMs:openedAtMs+ttl,maxAttempts:attempts,remainingAttempts:attempts,attemptedCodeHashes:new Set(),binding:normalizedBinding};
+    return {active:true,code,openedAt:new Date(openedAtMs).toISOString(),expiresAt:new Date(openedAtMs+ttl).toISOString(),ttlMs:ttl,remainingAttempts:attempts,boundExtensionId:normalizedBinding.extensionId,boundBrowserInstanceId:normalizedBinding.browserInstanceId};
+  }
+
+  ensureAutomaticPairingWindow(binding,options={}){
+    const desired=normalizePairingBinding(binding),current=this._activePairingWindow();
+    if(current){
+      const same=pairingBindingMatches(current.binding,desired);
+      return {opened:false,busy:!same,...this.pairingStatus()};
+    }
+    return {opened:true,busy:false,...this.openPairingWindow({...options,binding:desired})};
   }
 
   closePairingWindow(){const wasActive=Boolean(this._activePairingWindow());this.pairingWindow=null;return {closed:wasActive,...this.pairingStatus()};}
 
   pairingStatus(){
     const current=this._activePairingWindow();
-    if(!current)return {active:false,expiresAt:null,remainingAttempts:0};
-    return {active:true,openedAt:new Date(current.openedAtMs).toISOString(),expiresAt:new Date(current.expiresAtMs).toISOString(),remainingAttempts:current.remainingAttempts,maxAttempts:current.maxAttempts};
+    if(!current)return {active:false,expiresAt:null,remainingAttempts:0,boundExtensionId:null,boundBrowserInstanceId:null};
+    return {active:true,openedAt:new Date(current.openedAtMs).toISOString(),expiresAt:new Date(current.expiresAtMs).toISOString(),remainingAttempts:current.remainingAttempts,maxAttempts:current.maxAttempts,boundExtensionId:current.binding?.extensionId||null,boundBrowserInstanceId:current.binding?.browserInstanceId||null};
   }
 
-  _authorizeFirstPair(presented){
+  _authorizeFirstPair(presented,binding){
     const current=this._activePairingWindow();
     if(!current)return {ok:false,error:'extension_pairing_required'};
+    if(!pairingBindingMatches(current.binding,binding))return {ok:false,error:'extension_pairing_window_bound_elsewhere'};
     const normalized=normalizePairingCode(presented);
     if(!normalized)return {ok:false,error:'extension_pairing_code_required'};
     const presentedHash=digest(normalized);
@@ -81,10 +95,10 @@ class LocalAuth{
   }
 
   authenticateExtension({extensionId,browserInstanceId=null,runtimeExtensionId,token:presented,origin}){
-    const instance=String(extensionId||'').trim(),browser=String(browserInstanceId||'').trim(),runtime=String(runtimeExtensionId||'').trim();
+    const instance=String(extensionId||'').trim(),browser=String(browserInstanceId||'').trim(),runtime=String(runtimeExtensionId||'').trim(),normalizedOrigin=String(origin||'').replace(/\/$/,'');
     if(!instance||!runtime)return {ok:false,error:'extension_identity_required'};
     const expectedOrigin=`chrome-extension://${runtime}`;
-    if(String(origin||'').replace(/\/$/,'')!==expectedOrigin)return {ok:false,error:'extension_origin_mismatch'};
+    if(normalizedOrigin!==expectedOrigin)return {ok:false,error:'extension_origin_mismatch'};
     const record=this.extensions[instance];
     if(record){
       if(record.runtimeExtensionId!==runtime)return {ok:false,error:'extension_runtime_id_mismatch'};
@@ -93,7 +107,7 @@ class LocalAuth{
       if(browser&&!record.browserInstanceId){record.browserInstanceId=browser;this._saveExtensions();}
       return {ok:true,paired:false};
     }
-    const firstPair=this._authorizeFirstPair(presented);
+    const firstPair=this._authorizeFirstPair(presented,{extensionId:instance,browserInstanceId:browser,runtimeExtensionId:runtime,origin:normalizedOrigin});
     if(!firstPair.ok)return firstPair;
     const pairedToken=token();
     this.extensions[instance]={runtimeExtensionId:runtime,browserInstanceId:browser||null,tokenHash:digest(pairedToken),pairedAt:new Date(this.now()).toISOString()};
@@ -112,4 +126,4 @@ class LocalAuth{
   status(){return {debugClientTokenPath:this.debugClientPath,brainTokenPath:this.brainPath,pairedExtensions:Object.keys(this.extensions).length,pairing:this.pairingStatus()};}
 }
 
-module.exports={LocalAuth,digest,secureEqualHex,normalizePairingCode,makePairingCode,DEFAULT_PAIRING_TTL_MS,DEFAULT_PAIRING_ATTEMPTS};
+module.exports={LocalAuth,digest,secureEqualHex,normalizePairingCode,makePairingCode,normalizePairingBinding,pairingBindingMatches,DEFAULT_PAIRING_TTL_MS,DEFAULT_PAIRING_ATTEMPTS};
