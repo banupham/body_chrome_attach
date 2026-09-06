@@ -7,7 +7,7 @@ Local-first **Company Runtime** for Chrome observation, Human-only motor learnin
 
 ## Product model
 
-One Company may own multiple Devices. By default each Device runs **one Company Runtime application**. The daemon/BODY engine, Local Identity, Browser Manager, Task Manager, Environment Guardian, Data Factory and later Brain are modules of this same application — never one app/daemon per Task, Tab or Chrome.
+One Company may own multiple Devices. By default each Device runs **one Company Runtime application**. The daemon/BODY engine, Local Identity, Browser Manager, Task Manager, Environment Guardian, Data Factory and Brain-facing control plane are modules of this same application — never one daemon per Task, Tab or Chrome.
 
 ```text
 Company
@@ -22,17 +22,11 @@ Company
                       -> 1..N Tabs / Tasks
 ```
 
-A single Chrome/Browser Instance may have many Tabs performing different legitimate Tasks. Tabs in the same Browser naturally share that Browser's environment/network identity and are **not** treated as duplicate Browsers.
+A single Chrome/Browser Instance may have many Tabs performing different legitimate Tasks. Tabs in the same Browser naturally share that Browser's environment/network identity and are not treated as duplicate Browsers.
 
-## Current roadmap state
+## Foundation hardening state
 
-```text
-PHASE 1 BODY CORE                                  COMPLETE
-PHASE 2 LOCAL IDENTITY                             COMPLETE
-PHASE 3 BROWSER + TASK MANAGER / TASKWORKSPACE    COMPLETE
-PHASE 4 ENVIRONMENT GUARDIAN / CHROME VALIDATOR   COMPLETE
-PHASE 5 SEMANTIC OBSERVATION + RAW EVIDENCE       NEXT
-```
+The five foundation-hardening items on `feat/main-foundation-hardening` are implemented: Browser BUSY lifecycle, automatic local Extension authentication, debug routing + Browser UI fast path, Browser-scoped learning identity, and semantic observation + Evidence Store.
 
 ## Identity
 
@@ -44,7 +38,7 @@ companyId
           -> platform/account/channel identity
 ```
 
-Persistent local files:
+Persistent local identity files:
 
 ```text
 daemon/identity/company.json
@@ -52,39 +46,54 @@ daemon/identity/device.json
 daemon/identity/browsers.json
 ```
 
-Chrome stores its persistent Browser/Extension identity and paired auth token in `chrome.storage.local`. Existing v5 profiles without `bodyBrowserInstanceId` migrate to `browser-<extensionInstanceId>`.
+Chrome stores its persistent Browser/Extension identity and daemon auth token in `chrome.storage.local`. Persistent learning is scoped by `browserInstanceId`; Extension IDs remain transport provenance.
 
-## Extension pairing
+## Automatic Extension authentication
 
-First-pair trust is **closed by default**. A new Extension Instance is not allowed to create its persistent token merely by connecting to localhost.
-
-Pairing flow:
+Manual pairing codes are removed. There is no `pair open` flow and no code entry in the Extension popup.
 
 ```text
-new Extension connects
- -> daemon rejects with extension_pairing_required
- -> Human opens a short local pairing window
- -> daemon generates one-time code
- -> Human enters that code in the Extension popup
- -> daemon binds extensionInstanceId + browserInstanceId + runtimeExtensionId
- -> daemon returns a random persistent Extension token
- -> one-time window closes immediately
+Extension starts
+ -> discovers current local daemon endpoint
+ -> connects from chrome-extension://<runtimeExtensionId>
+ -> daemon validates extensionInstanceId + browserInstanceId + runtimeExtensionId + Origin
+ -> daemon automatically issues a persistent random token on first valid connection
+ -> Extension stores the token in chrome.storage.local
+ -> reconnect reuses the token
 ```
 
-Open the window only from the daemon's local console:
+If the local token is missing or stale while the full stored binding still matches, the daemon rotates the token automatically. Runtime-ID, Browser-ID or Origin mismatches remain fail-closed.
+
+Local maintenance commands:
 
 ```text
-pair open
-pair open 60
 pair status
 pair list
-pair close
 pair forget <extensionInstanceId>
 ```
 
-`pair open` defaults to 120 seconds and accepts 30–300 seconds. The one-time code is 8 characters, is stored only in daemon memory, expires with the window, and cannot be reused for a second Extension. Repeated websocket retries of the exact same wrong code do not consume additional attempts; distinct wrong codes are rate-limited by the pairing window.
+`pair forget` revokes the current credential and disconnects the live socket. A later valid reconnect automatically receives a new token.
 
-After `pair open`, click the **Body Chrome Attach** Extension icon and enter the displayed code. Existing paired Extensions reconnect with their stored persistent token and do not require a new window.
+## Automatic daemon port discovery
+
+The daemon does **not** use a hard-coded WebSocket port.
+
+At startup it binds:
+
+```text
+127.0.0.1:0
+```
+
+The operating system selects an available TCP port. The daemon publishes the selected localhost endpoint to:
+
+```text
+daemon/state/runtime-endpoint.json
+dist/runtime-endpoint.json
+```
+
+`body.cmd` reads the daemon state endpoint automatically. The Extension reads its own `dist/runtime-endpoint.json` resource and re-resolves it on reconnect, so a daemon restart may use a different port without manual configuration.
+
+Only `127.0.0.1` is accepted. Runtime endpoint ownership is tied to the daemon PID so a second live Company Runtime cannot silently replace the first runtime's endpoint, and an old process cannot clear a newer runtime's endpoint.
 
 ## Browser Manager
 
@@ -101,7 +110,7 @@ QUARANTINED
 ERROR
 ```
 
-A Browser comes online in `ENV_CHECK`. It cannot receive Task work until the Guardian marks it Environment-eligible.
+A Browser comes online in `ENV_CHECK`. It cannot receive Task work until the Guardian marks it Environment-eligible. Physical work remains BUSY from first enqueue through final queued completion.
 
 ## Task Manager / TaskWorkspace
 
@@ -141,13 +150,11 @@ RESTRICTED
   proxy/VPN concealment
 ```
 
-A spam/RESTRICTED Task is rejected without automatically quarantining a healthy Browser.
+A RESTRICTED Task is rejected without automatically quarantining a healthy Browser.
 
 ## Environment Guardian / Chrome Validator
 
-Phase 4 is **read-only and fail-closed**.
-
-Browser flow:
+The Guardian is read-only and fail-closed.
 
 ```text
 Browser online
@@ -158,21 +165,9 @@ Browser online
  -> QUARANTINED   when ineligible
 ```
 
-The Guardian observes per **Browser Instance**, never per Tab. Therefore 10 Tabs in one Chrome still produce one Browser eligibility decision.
+Current evidence includes browser-visible environment signature hash, public egress IP, read-only Chrome proxy mode, device proxy signals, Windows WinINet/WinHTTP proxy presence, VPN/tunnel interface-name signals, and probe availability.
 
-Current evidence includes:
-
-```text
-browser-visible environment signature (stored as SHA-256 hash)
-public egress IP observed through that Chrome
-Chrome proxy mode (read-only chrome.proxy.settings.get)
-device proxy environment-variable presence
-Windows WinINet / WinHTTP proxy presence (read-only query/show commands)
-VPN/tunnel interface-name signals
-extension/environment probe availability
-```
-
-Default Company policy:
+Default policy:
 
 ```text
 BODY_ENV_DIRECT_ONLY=true
@@ -183,50 +178,19 @@ BODY_ENV_OBSERVATION_TTL_MS=300000
 BODY_PUBLIC_IP_ENDPOINT=https://api.ipify.org?format=json
 ```
 
-Meaning by default:
+The Guardian can observe, detect, evaluate, report, allow and quarantine. It does not set proxy/VPN/network identity, spoof browser identity or evade detection systems.
 
-- Proxy/VPN/tunnel signals make the Browser ineligible under DIRECT_ONLY.
-- Two **different Browser Instances** with the same observed public egress are quarantined while both are online.
-- Two different Browser Instances with the same browser-visible environment signature are quarantined while both are online.
-- Tabs of the **same Browser Instance** sharing those values are normal.
-- If one duplicate Browser goes offline, remaining online Browsers are re-evaluated.
+## Semantic observation and Evidence Store
 
-`BODY_PUBLIC_IP_ENDPOINT` must be HTTPS. The request uses `credentials: omit`; only the resulting public IP/provider evidence is stored locally.
+The YouTube semantic observer is read-only. The current MVP can form conservative `youtube.search` Human evidence without storing the actual query text, account identity or arbitrary page text.
 
-Environment state is local at:
+Evidence is stored separately from learning data:
 
 ```text
-daemon/state/environment.json
+evidence/by-browser/<browserInstanceId>/<siteKey>/evidence.jsonl
 ```
 
-Raw browser environment fields are not persisted; only the signature hash and evidence flags are stored.
-
-### Guardian safety boundary
-
-The Guardian can only:
-
-```text
-OBSERVE
-DETECT
-SCORE/EVALUATE
-REPORT
-ALLOW
-QUARANTINE
-```
-
-It has **no** code path to:
-
-```text
-set/clear Chrome proxy
-change Windows proxy
-turn VPN on/off
-change route/DNS/IP
-spoof/change browser fingerprint
-hide proxy/VPN
-evade anti-bot/detection systems
-```
-
-VPN detection in this MVP is evidence-based/heuristic (for example tunnel interface names), not a claim of perfect VPN classification.
+Records preserve Browser identity plus Extension transport provenance and use an append-only SHA-256 hash chain. Evidence is not silently promoted to `taskSuccess` and is not silently inserted into Human motor training data.
 
 ## Brain control protocol
 
@@ -261,14 +225,14 @@ TAB_SWITCH
 BROWSER_COMMAND
 ```
 
-require `taskId`. Task Manager resolves Browser/Extension/Tab ownership, and Browser environment eligibility is checked before BODY execution.
+require `taskId`. Task Manager resolves Browser/Extension/Tab ownership and Browser environment eligibility before BODY execution.
 
 The daemon console and `body.cmd` remain diagnostic/test paths, not production Brain control.
 
 ## BODY invariants
 
 - Page actions use only `Input.dispatchMouseEvent` and `Input.dispatchKeyEvent`.
-- Browser UI actions use the separate Windows `SendInput` path.
+- Browser UI actions are separate from page HUMAN_MOTOR execution.
 - Content scripts observe/read only; no DOM action mutations.
 - Only `source=human` may become Human behavior/habit ground truth.
 - Agent data is telemetry/evaluation only.
@@ -278,25 +242,21 @@ The daemon console and `body.cmd` remain diagnostic/test paths, not production B
 ## Install / verify
 
 ```bat
-git checkout main
-git pull origin main
+git fetch origin
+git switch feat/main-foundation-hardening
+git pull --ff-only origin feat/main-foundation-hardening
 npm install
 npm run verify
+npm run build
 ```
 
-Load `dist/` from `chrome://extensions`, then start the development entrypoint:
+Load `dist/` from `chrome://extensions`, then start:
 
 ```bat
 daemon.cmd
 ```
 
-For a brand-new Extension Instance, use the daemon console:
-
-```text
-pair open
-```
-
-Then click the Extension icon and enter the one-time code shown by the daemon.
+No port or pairing-code configuration is required. The daemon prints the OS-assigned localhost WebSocket endpoint after startup.
 
 Useful read-only debug commands:
 
@@ -316,8 +276,8 @@ body.cmd "envprobe <browserInstanceId>"
 body.cmd "envprobeall"
 ```
 
-`npm run verify` checks Body contracts, persistence/auth, Local Identity, Browser/Task ownership and recovery, Task policy, Environment Guardian, read-only environment probes, extension contracts and build. CI also validates the Windows native helper syntax.
+`npm run verify` checks BODY contracts, persistence/auth, Local Identity, Browser/Task ownership and recovery, Task policy, Environment Guardian, endpoint discovery, Extension contracts, build and Windows native-input ABI.
 
 ## Branch policy
 
-`main` is the working branch. Keep architecture changes synchronized with `ROADMAP.md`; do not accumulate feature branches after integration.
+`main` remains unchanged until an explicit merge decision. Architecture changes on the hardening branch should stay synchronized with the roadmap and review documents.
