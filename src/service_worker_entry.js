@@ -108,11 +108,14 @@ function recentEvents(tabId, limit = 250) {
 
 async function pairingStatus() {
   const saved = await chrome.storage.local.get({ bodyDaemonAuthToken: null });
+  const connected = daemon.socket?.readyState === 1;
+  if (connected) daemon.send({ type: 'READINESS_POLL', ts: Date.now() });
   return {
     paired: Boolean(saved.bodyDaemonAuthToken),
-    connected: daemon.socket?.readyState === 1,
+    connected,
     browserInstanceId: daemon.browserInstanceId,
     extensionInstanceId: daemon.extensionInstanceId,
+    readiness: daemon.readinessStatus,
     mode: 'automatic_local'
   };
 }
@@ -120,6 +123,7 @@ async function pairingStatus() {
 async function resetLocalPairing() {
   await chrome.storage.local.remove('bodyDaemonAuthToken');
   daemon.authToken = null;
+  daemon.readinessStatus = null;
   try { daemon.socket?.close(); } catch {}
   return { reset: true, paired: false, automaticReconnect: true };
 }
