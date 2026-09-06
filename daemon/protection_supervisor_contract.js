@@ -80,6 +80,7 @@ test('protection supervisor quarantines controller conflict and blocks new task 
   assert.equal(status.protection.browsers.b1.blocked,true);
   assert.equal(status.protection.browsers.b1.initialCheck.complete,true);
   assert.equal(status.protection.browsers.b1.initialCheck.status,'BLOCKED');
+  assert.equal(supervisor.readiness('b1').state,'BLOCKED');
   supervisor.stop();
 });
 
@@ -88,10 +89,13 @@ test('initial bot check gates tasks while controller scan is pending and passes 
   const supervisor=new ProtectionSupervisor(runtime,{controllerProbe:probe,setIntervalImpl:()=>({unref(){}}),clearIntervalImpl:()=>{}}).start();
   let check=supervisor.status().browsers.b1.initialCheck;
   assert.equal(check.complete,false);assert.equal(check.status,'PENDING');assert.equal(check.controllerComplete,false);assert.equal(check.deepComplete,true);
+  assert.equal(supervisor.readiness('b1').state,'CHECKING');
+  assert.equal(supervisor.readiness('b1').reason,'bot_check_pending');
   assert.throws(()=>runtime.tasks.create({browserInstanceId:'b1'}),/browser_protection_check_pending/);
   release();await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
   check=supervisor.status().browsers.b1.initialCheck;
   assert.equal(check.complete,true);assert.equal(check.status,'PASSED');assert.equal(check.controllerComplete,true);assert.equal(check.deepComplete,true);assert.equal(check.continuousMonitoring,true);
+  assert.equal(supervisor.readiness('b1').state,'READY');
   assert.equal(runtime.tasks.create({browserInstanceId:'b1'}).ok,true);supervisor.stop();
 });
 
@@ -100,7 +104,14 @@ test('initial bot check remains pending until Deep fingerprint evidence is avail
   const supervisor=new ProtectionSupervisor(runtime,{controllerProbe:{probe:()=>compactProcessSnapshot({processes:[],udp:[]})},setIntervalImpl:()=>({unref(){}}),clearIntervalImpl:()=>{}}).start();
   const check=supervisor.status().browsers.b1.initialCheck;
   assert.equal(check.complete,false);assert.equal(check.status,'PENDING');assert.equal(check.controllerComplete,true);assert.equal(check.deepComplete,false);assert.ok(check.reasons.includes('deep_fingerprint_pending'));
+  assert.equal(supervisor.readiness('b1').state,'CHECKING');
   assert.throws(()=>runtime.tasks.create({browserInstanceId:'b1'}),/browser_protection_check_pending/);supervisor.stop();
+});
+
+test('popup readiness stays checking while environment is not eligible',()=>{
+  const runtime=fakeRuntime(),row=runtime.browsers.require('b1');row.state='ENV_CHECK';row.stateReason='environment_waiting_for_http_tab';row.environment={eligible:false,status:'PENDING',reasons:['ENVIRONMENT_CHECK_REQUIRED'],evidence:[]};
+  const supervisor=new ProtectionSupervisor(runtime,{controllerProbe:{probe:()=>compactProcessSnapshot({processes:[],udp:[]})},setIntervalImpl:()=>({unref(){}}),clearIntervalImpl:()=>{}}).start();
+  const readiness=supervisor.readiness('b1');assert.equal(readiness.state,'CHECKING');assert.equal(readiness.reason,'environment_pending');supervisor.stop();
 });
 
 test('light supervisor accepts an asynchronous controller sensor without blocking startup',async()=>{
