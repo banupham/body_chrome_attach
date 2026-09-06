@@ -1,10 +1,11 @@
 'use strict';
 
 class ExecutionLane {
-  constructor(){
+  constructor({onStateChange=null}={}){
     this.tails=new Map();
     this.states=new Map();
     this.sequence=0;
+    this.onStateChange=typeof onStateChange==='function'?onStateChange:null;
   }
 
   _state(scope){
@@ -17,9 +18,37 @@ class ExecutionLane {
       lastStartedAt:null,
       lastFinishedAt:null,
       completed:0,
-      failed:0
+      failed:0,
+      observerErrors:0,
+      lastObserverError:null
     });
     return this.states.get(key);
+  }
+
+  _snapshot(state){
+    return {
+      scope:state.scope,
+      active:state.active,
+      queued:state.queued,
+      busy:state.active||state.queued>0,
+      current:state.current?{...state.current}:null,
+      lastStartedAt:state.lastStartedAt,
+      lastFinishedAt:state.lastFinishedAt,
+      completed:state.completed,
+      failed:state.failed,
+      observerErrors:state.observerErrors,
+      lastObserverError:state.lastObserverError
+    };
+  }
+
+  _emit(state){
+    if(!this.onStateChange)return;
+    try{
+      this.onStateChange(state.scope,this._snapshot(state));
+    }catch(error){
+      state.observerErrors++;
+      state.lastObserverError=String(error?.message||error);
+    }
   }
 
   run(scope,metadata={},work){
@@ -28,6 +57,7 @@ class ExecutionLane {
     const state=this._state(key);
     const sequence=++this.sequence;
     state.queued++;
+    this._emit(state);
 
     const previous=this.tails.get(key)||Promise.resolve();
     const task=previous.catch(()=>{}).then(async()=>{
@@ -35,6 +65,7 @@ class ExecutionLane {
       state.active=true;
       state.current={sequence,...metadata};
       state.lastStartedAt=new Date().toISOString();
+      this._emit(state);
       try{
         const result=await work();
         state.completed++;
@@ -46,6 +77,7 @@ class ExecutionLane {
         state.active=false;
         state.current=null;
         state.lastFinishedAt=new Date().toISOString();
+        this._emit(state);
       }
     });
 
@@ -58,21 +90,11 @@ class ExecutionLane {
   }
 
   status(scope=null){
-    const clone=state=>({
-      scope:state.scope,
-      active:state.active,
-      queued:state.queued,
-      current:state.current?{...state.current}:null,
-      lastStartedAt:state.lastStartedAt,
-      lastFinishedAt:state.lastFinishedAt,
-      completed:state.completed,
-      failed:state.failed
-    });
     if(scope!==null&&scope!==undefined){
       const state=this.states.get(String(scope));
-      return state?clone(state):null;
+      return state?this._snapshot(state):null;
     }
-    return [...this.states.values()].map(clone);
+    return [...this.states.values()].map(state=>this._snapshot(state));
   }
 }
 
