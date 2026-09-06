@@ -7,7 +7,12 @@ const { VIRTUAL_CURSOR_SCOPE, MESSAGE_TYPES } = require('./virtual_cursor_protoc
 const gateway = new CdpInputGateway(chrome);
 const daemon = new DaemonBridge(chrome, { gateway, WebSocketImpl: WebSocket });
 const observedUserMotorByTab = new Map();
+const pendingPageContextByTab = new Map();
 const MAX_OBSERVED_EVENTS_PER_TAB = 1500;
+const PAGE_CONTEXT_RETRY_MS = 250;
+const PAGE_CONTEXT_RETRY_WINDOW_MS = 15000;
+let pageContextRetryTimer = null;
+let pageContextRetryStartedAt = 0;
 
 async function activeTabId() {
   const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -51,11 +56,39 @@ function pageContextPacket(sender, message) {
   };
 }
 
+function flushPendingPageContexts() {
+  if (!pendingPageContextByTab.size) {
+    pageContextRetryStartedAt = 0;
+    return true;
+  }
+  let allSent = true;
+  for (const [tabId, packet] of [...pendingPageContextByTab.entries()]) {
+    if (daemon.send(packet)) pendingPageContextByTab.delete(tabId);
+    else allSent = false;
+  }
+  if (!pendingPageContextByTab.size) pageContextRetryStartedAt = 0;
+  return allSent;
+}
+
+function schedulePageContextFlush(delayMs = PAGE_CONTEXT_RETRY_MS) {
+  if (pageContextRetryTimer || !pendingPageContextByTab.size) return;
+  if (!pageContextRetryStartedAt) pageContextRetryStartedAt = Date.now();
+  if (Date.now() - pageContextRetryStartedAt > PAGE_CONTEXT_RETRY_WINDOW_MS) return;
+  pageContextRetryTimer = setTimeout(() => {
+    pageContextRetryTimer = null;
+    if (flushPendingPageContexts()) return;
+    daemon.connect().catch(() => {});
+    schedulePageContextFlush(PAGE_CONTEXT_RETRY_MS);
+  }, Math.max(0, Number(delayMs) || 0));
+}
+
 function pageContextFromContent(sender, message) {
   const packet = pageContextPacket(sender, message);
   if (!packet) return false;
-  if (daemon.send(packet)) return true;
-  daemon.connect().then(() => daemon.send(packet)).catch(() => {});
+  pendingPageContextByTab.set(packet.tabId, packet);
+  if (flushPendingPageContexts()) return true;
+  daemon.connect().catch(() => {});
+  schedulePageContextFlush(0);
   return false;
 }
 
@@ -143,7 +176,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return result(sendResponse, async () => ({
       daemon: daemon.status(),
       gateway: gateway.status(),
-      observedTabs: [...observedUserMotorByTab.keys()]
+      observedTabs: [...observedUserMotorByTab.keys()],
+      pendingPageContextTabs: [...pendingPageContextByTab.keys()]
     }));
   }
 
@@ -156,7 +190,11 @@ chrome.debugger.onDetach.addListener(debuggee => {
 });
 
 daemon.start()
-  .then(status => console.log('Body Chrome Attach ready. Production actions are daemon-only.', status))
+  .then(status => {
+    flushPendingPageContexts();
+    schedulePageContextFlush(0);
+    console.log('Body Chrome Attach ready. Production actions are daemon-only.', status);
+  })
   .catch(error => console.error('Body Chrome Attach startup error:', error));
 
-module.exports={pageContextPacket,pageContextFromContent};
+module.exports={pageContextPacket,pageContextFromContent,flushPendingPageContexts,schedulePageContextFlush};
