@@ -6,15 +6,22 @@ const {ExternalControllerProbe,assessControllerConflict}=require('./external_con
 function envBool(value,fallback){const raw=String(value??'').trim().toLowerCase();if(!raw)return fallback;if(['1','true','yes','on'].includes(raw))return true;if(['0','false','no','off'].includes(raw))return false;return fallback;}
 function envInt(value,fallback,min,max){const n=Number(value);return Number.isFinite(n)?Math.max(min,Math.min(max,Math.round(n))):fallback;}
 function deepSignals(browser){const evidence=Array.isArray(browser?.environment?.evidence)?browser.environment.evidence:[];const deep=evidence.find(x=>x?.type==='deep_fingerprint');return Array.isArray(deep?.signalIds)?deep.signalIds.map(String):[];}
+function transientEnvironment(browser){const reasons=Array.isArray(browser?.environment?.reasons)?browser.environment.reasons:[];return browser?.state==='ENV_CHECK'||String(browser?.stateReason||'').includes('waiting_for_http_tab')||reasons.includes('ENVIRONMENT_SIGNATURE_UNAVAILABLE')||reasons.includes('NO_BROWSER_TAB_FOR_ENVIRONMENT_PROBE');}
 
 class ProtectionSupervisor{
   constructor(runtime,{env=process.env,behavior=new BehaviorGuardian(),controllerProbe=new ExternalControllerProbe(),setIntervalImpl=setInterval,clearIntervalImpl=clearInterval}={}){
     if(!runtime?.browsers||!runtime?.tasks||!runtime?.guardian)throw new Error('protection_supervisor_runtime_required');
     this.runtime=runtime;this.env=env||{};this.behavior=behavior;this.controllerProbe=controllerProbe;this.setIntervalImpl=setIntervalImpl;this.clearIntervalImpl=clearIntervalImpl;
     this.policy={enabled:envBool(this.env.BODY_PROTECTION_GUARDIAN_ENABLED,true),controllerBlock:envBool(this.env.BODY_PROTECTION_CONTROLLER_BLOCK,true),behaviorBlock:envBool(this.env.BODY_PROTECTION_BEHAVIOR_BLOCK,true),lightIntervalMs:envInt(this.env.BODY_PROTECTION_LIGHT_INTERVAL_MS,15000,5000,300000),fullIntervalMs:envInt(this.env.BODY_PROTECTION_FULL_INTERVAL_MS,300000,60000,3600000)};
-    this.controllerByBrowser=new Map();this.timers=[];this.installed=false;this.lightRunning=false;this.fullRunning=false;this.original={};
+    this.controllerByBrowser=new Map();this.timers=[];this.installed=false;this.lightRunning=false;this.fullRunning=false;this.transientProbeInFlight=new Set();this.original={};
   }
-  _decorateProbeResult(result,browserId){const protection=this.browserStatus(browserId),reasons=[...(Array.isArray(result?.reasons)?result.reasons:[]),...protection.reasons];return {...result,eligible:result?.eligible===true&&!protection.blocked,status:result?.eligible===true&&!protection.blocked?String(result?.status||'ELIGIBLE'):'INELIGIBLE',reasons:[...new Set(reasons)],protection};}
+  _decorateProbeResult(result,browserId){const protection=this.browserStatus(browserId),reasons=[...(Array.isArray(result?.reasons)?result.reasons:[]),...protection.reasons];const pending=result?.status==='PENDING'||result?.probeDeferred===true;return {...result,eligible:pending?false:result?.eligible===true&&!protection.blocked,status:pending?'PENDING':result?.eligible===true&&!protection.blocked?String(result?.status||'ELIGIBLE'):'INELIGIBLE',reasons:[...new Set(reasons)],protection};}
+  _kickTransientProbe(browser){
+    const id=String(browser?.browserInstanceId||'');if(!id||!browser?.online||['BUSY','HUMAN_CONTROL'].includes(browser.state)||!transientEnvironment(browser)||typeof this.original.probeEnvironment!=='function'||this.transientProbeInFlight.has(id))return false;
+    this.transientProbeInFlight.add(id);
+    Promise.resolve().then(()=>this.original.probeEnvironment(id)).then(()=>this.enforce(id)).catch(()=>{}).finally(()=>this.transientProbeInFlight.delete(id));
+    return true;
+  }
   install(){
     if(this.installed)return this;this.installed=true;
     this.original.recorderEvent=this.runtime.recorderEvent.bind(this.runtime);
@@ -46,7 +53,7 @@ class ProtectionSupervisor{
       const observation=this.controllerProbe.probe();
       for(const browser of online){
         const assessment=assessControllerConflict(observation,deepSignals(browser));
-        this.controllerByBrowser.set(browser.browserInstanceId,{...assessment,observedAt:new Date().toISOString()});this.enforce(browser.browserInstanceId);
+        this.controllerByBrowser.set(browser.browserInstanceId,{...assessment,observedAt:new Date().toISOString()});this.enforce(browser.browserInstanceId);this._kickTransientProbe(browser);
       }
       return this.status();
     }finally{this.lightRunning=false;}
@@ -74,7 +81,7 @@ class ProtectionSupervisor{
   }
   assertAssignable(browserInstanceId){const id=String(browserInstanceId||'').trim();if(!id)return;const decision=this.combined(id);if(decision.blocked)throw new Error(`browser_protection_blocked:${id}:${decision.reasons.join(',')}`);}
   browserStatus(browserInstanceId){return this.combined(browserInstanceId);}
-  status(){const browsers={};for(const browser of this.runtime.browsers.list())if(browser.online)browsers[browser.browserInstanceId]=this.combined(browser.browserInstanceId);return {policy:{...this.policy},browsers};}
+  status(){const browsers={};for(const browser of this.runtime.browsers.list())if(browser.online)browsers[browser.browserInstanceId]=this.combined(browser.browserInstanceId);return {policy:{...this.policy},transientProbeInFlight:[...this.transientProbeInFlight],browsers};}
 }
 
-module.exports={ProtectionSupervisor,envBool,envInt,deepSignals};
+module.exports={ProtectionSupervisor,envBool,envInt,deepSignals,transientEnvironment};
