@@ -25,6 +25,8 @@ test('pairing popup uses external script and service worker exposes local pairin
     assert.match(popup,new RegExp(escaped));
     assert.match(worker,new RegExp(escaped));
   }
+  assert.match(popup,/reset\.hidden=state\.connected/);
+  assert.match(popup,/pair forget/);
   assert.match(worker,/bodyDaemonAuthToken/);
   assert.match(worker,/storage\.local\.remove\('bodyDaemonAuthToken'\)/);
   assert.match(worker,/extension_already_paired/);
