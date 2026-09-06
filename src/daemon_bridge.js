@@ -1,7 +1,7 @@
 'use strict';
 
 const {environmentProbe}=require('./environment_probe');
-const DEFAULT_DAEMON_URL='ws://127.0.0.1:8765';
+const {resolveRuntimeEndpoint}=require('./runtime_endpoint_client');
 const PROTOCOL_VERSION=5;
 const ALLOWED_METHODS=new Set(['Input.dispatchMouseEvent','Input.dispatchKeyEvent']);
 const FAST_BROWSER_UI_PREFIX='__body_fast_browser_ui__:';
@@ -37,9 +37,9 @@ function parseFastBrowserUiAction(raw){
 }
 
 class DaemonBridge{
-  constructor(chromeApi,{gateway,WebSocketImpl=WebSocket,url=DEFAULT_DAEMON_URL}={}){
+  constructor(chromeApi,{gateway,WebSocketImpl=WebSocket,url=null,resolveEndpoint=resolveRuntimeEndpoint,fetchImpl=globalThis.fetch}={}){
     if(!chromeApi||!gateway)throw new Error('daemon_bridge_dependencies_required');
-    this.chrome=chromeApi;this.gateway=gateway;this.WebSocketImpl=WebSocketImpl;this.url=url;this.socket=null;this.reconnectTimer=null;this.keepaliveTimer=null;this.browserInstanceId=null;this.extensionInstanceId=null;this.authToken=null;this.recordingEnabled=true;this.cursorEnabled=true;this.expectedTabSwitch=new Map();this.expectedBrowserUi=null;this.navigationEpochByTab=new Map();this.started=false;
+    this.chrome=chromeApi;this.gateway=gateway;this.WebSocketImpl=WebSocketImpl;this.url=url?String(url):null;this.urlOverride=Boolean(url);this.resolveEndpoint=resolveEndpoint;this.fetchImpl=fetchImpl;this.socket=null;this.reconnectTimer=null;this.keepaliveTimer=null;this.browserInstanceId=null;this.extensionInstanceId=null;this.authToken=null;this.recordingEnabled=true;this.cursorEnabled=true;this.expectedTabSwitch=new Map();this.expectedBrowserUi=null;this.navigationEpochByTab=new Map();this.started=false;this.connecting=null;
   }
   async identity(){
     const saved=await this.chrome.storage.local.get({bodyBrowserInstanceId:null,bodyDaemonExtensionInstanceId:null,bodyDaemonAuthToken:null});
@@ -54,8 +54,19 @@ class DaemonBridge{
   async instanceId(){await this.identity();return this.extensionInstanceId;}
   send(obj){if(!this.socket||this.socket.readyState!==1)return false;this.socket.send(JSON.stringify({browserInstanceId:this.browserInstanceId,extensionId:this.extensionInstanceId,...obj}));return true;}
   async tabSnapshot(){const tabs=await this.chrome.tabs.query({});return tabs.map(t=>({id:t.id,active:t.active,windowId:t.windowId,title:t.title||'',siteKey:siteKeyFromUrl(t.url),navigationToken:navigationToken(t.url),navigationEpoch:Number(this.navigationEpochByTab.get(Number(t.id))||0),urlScheme:(()=>{try{return new URL(t.url).protocol;}catch{return '';}})()}));}
-  async start(){if(this.started)return this.status();this.started=true;await this.identity();this.installTabListeners();this.connect();return this.status();}
-  connect(){clearTimeout(this.reconnectTimer);let socket;try{socket=new this.WebSocketImpl(this.url);}catch{this.reconnectTimer=setTimeout(()=>this.connect(),1200);return;}this.socket=socket;socket.onopen=async()=>{const tabs=await this.tabSnapshot();this.send({type:'HELLO',role:'extension',protocolVersion:PROTOCOL_VERSION,token:this.authToken||null,extensionVersion:this.chrome.runtime.getManifest().version,runtimeExtensionId:this.chrome.runtime.id,tabs});clearInterval(this.keepaliveTimer);this.keepaliveTimer=setInterval(()=>this.send({type:'KEEPALIVE',ts:Date.now()}),20000);};socket.onmessage=event=>this.onMessage(event.data);socket.onerror=()=>{try{socket.close();}catch{}};socket.onclose=()=>{clearInterval(this.keepaliveTimer);if(this.started)this.reconnectTimer=setTimeout(()=>this.connect(),1200);};}
+  async start(){if(this.started)return this.status();this.started=true;await this.identity();this.installTabListeners();await this.connect();return this.status();}
+  scheduleReconnect(){clearTimeout(this.reconnectTimer);if(this.started)this.reconnectTimer=setTimeout(()=>{this.connect().catch(()=>{});},1200);}
+  async endpointUrl(){if(this.urlOverride&&this.url)return this.url;const endpoint=await this.resolveEndpoint(this.chrome,{fetchImpl:this.fetchImpl});this.url=endpoint.wsUrl;return this.url;}
+  async connect(){
+    clearTimeout(this.reconnectTimer);if(this.connecting)return this.connecting;
+    this.connecting=(async()=>{
+      let url;try{url=await this.endpointUrl();}catch{this.scheduleReconnect();return;}
+      let socket;try{socket=new this.WebSocketImpl(url);}catch{this.scheduleReconnect();return;}this.socket=socket;
+      socket.onopen=async()=>{const tabs=await this.tabSnapshot();this.send({type:'HELLO',role:'extension',protocolVersion:PROTOCOL_VERSION,token:this.authToken||null,extensionVersion:this.chrome.runtime.getManifest().version,runtimeExtensionId:this.chrome.runtime.id,tabs});clearInterval(this.keepaliveTimer);this.keepaliveTimer=setInterval(()=>this.send({type:'KEEPALIVE',ts:Date.now()}),20000);};
+      socket.onmessage=event=>this.onMessage(event.data);socket.onerror=()=>{try{socket.close();}catch{}};socket.onclose=()=>{clearInterval(this.keepaliveTimer);if(this.socket===socket)this.socket=null;this.scheduleReconnect();};
+    })();
+    try{return await this.connecting;}finally{this.connecting=null;}
+  }
   async onMessage(raw){let msg;try{msg=JSON.parse(String(raw));}catch{return;}if(msg?.type==='AUTH_PAIRED'&&msg.token){this.authToken=String(msg.token);await this.chrome.storage.local.set({bodyDaemonAuthToken:this.authToken});return;}if(msg?.type==='AUTH_ERROR'){console.error('Body daemon authentication failed:',msg.error||'auth_error');try{this.socket?.close();}catch{}return;}if(!msg?.type)return;try{const result=await this.handle(msg);if(msg.requestId)this.send({type:'RESPONSE',requestId:msg.requestId,ok:true,result});}catch(error){if(msg.requestId)this.send({type:'RESPONSE',requestId:msg.requestId,ok:false,error:{code:error?.code||'extension_error',message:String(error?.message||error)}});}}
   activeTab(){return this.chrome.tabs.query({active:true,lastFocusedWindow:true}).then(tabs=>{const tab=tabs?.[0];if(!tab||!Number.isInteger(tab.id))throw new Error('active_tab_not_found');return tab;});}
   validatePlan(plan){if(!plan||plan.executionCapability!=='HUMAN_MOTOR')throw new Error('human_motor_capability_required');if(!Array.isArray(plan.steps)||plan.steps.length<1||plan.steps.length>20000)throw new Error('invalid_plan_steps');for(const [index,step] of plan.steps.entries()){if(!ALLOWED_METHODS.has(step?.method))throw new Error(`forbidden_method:${step?.method}:${index}`);const d=Number(step.delayMs||0),p=Number(step.postDelayMs||0);if(!Number.isFinite(d)||d<0||d>15000||!Number.isFinite(p)||p<0||p>15000)throw new Error(`invalid_delay:${index}`);}return plan;}
@@ -127,4 +138,4 @@ class DaemonBridge{
   status(){return {url:this.url,started:this.started,connected:this.socket?.readyState===1,protocolVersion:PROTOCOL_VERSION,browserInstanceId:this.browserInstanceId,extensionInstanceId:this.extensionInstanceId,authenticated:Boolean(this.authToken),recordingEnabled:this.recordingEnabled,cursorEnabled:this.cursorEnabled};}
 }
 
-module.exports={DEFAULT_DAEMON_URL,PROTOCOL_VERSION,ALLOWED_METHODS,FAST_BROWSER_UI_PREFIX,FAST_BROWSER_UI_ACTIONS,parseFastBrowserUiAction,siteKeyFromUrl,navigationToken,observedEffect,DaemonBridge};
+module.exports={PROTOCOL_VERSION,ALLOWED_METHODS,FAST_BROWSER_UI_PREFIX,FAST_BROWSER_UI_ACTIONS,parseFastBrowserUiAction,siteKeyFromUrl,navigationToken,observedEffect,DaemonBridge};
