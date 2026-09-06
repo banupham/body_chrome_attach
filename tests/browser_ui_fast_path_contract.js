@@ -8,7 +8,7 @@ const {DaemonBridge,parseFastBrowserUiAction,ALLOWED_METHODS}=require('../src/da
   const request=fastBrowserUiRequest('address','https://www.youtube.com/');
   assert.ok(request.startsWith('__body_fast_browser_ui__:address:'));
   assert.deepEqual(parseFastBrowserUiAction(request),{action:'address',value:'https://www.youtube.com/'});
-  assert.equal(parseFastBrowserUiAction(fastBrowserUiRequest('back')),null?.value??parseFastBrowserUiAction(fastBrowserUiRequest('back')));
+  assert.deepEqual(parseFastBrowserUiAction(fastBrowserUiRequest('back')),{action:'back',value:''});
 
   let snapshotIndex=0,focusAction=null;
   const native=[];
