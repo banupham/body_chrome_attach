@@ -8,23 +8,31 @@ const {DebugCommandAdapter,createCommandAccumulator}=require('./src/debug_comman
 const {LocalAuth}=require('./src/local_auth');
 const {pairingConsoleCommand}=require('./src/local_pairing_console');
 const {ControllerLease}=require('./src/controller_lease');
+const {publishRuntimeEndpoint,clearRuntimeEndpoint}=require('./src/runtime_endpoint');
 
-const PORT=8765,CONTROL_PROTOCOL_VERSION=7,EXTENSION_PROTOCOL_VERSIONS=new Set([5,6]);let rl=null;
+const LISTEN_HOST='127.0.0.1',CONTROL_PROTOCOL_VERSION=7,EXTENSION_PROTOCOL_VERSIONS=new Set([5,6]);let rl=null,runtimeEndpoint=null;
 const prompt=()=>runtime.registry.selectedId?`BODY[${runtime.registry.selectedId.slice(0,8)}]> `:'BODY> ',printAsync=text=>{if(rl)process.stdout.write(`\n${text}\n${prompt()}`);},updatePrompt=()=>rl?.setPrompt(prompt());
 const runtime=createDaemonRuntime({baseDir:__dirname,printAsync}),router=createCommandRouter(runtime,{updatePrompt}),debugAdapter=new DebugCommandAdapter(runtime,router,{updatePrompt}),localAccumulator=createCommandAccumulator(),auth=new LocalAuth(__dirname),controller=new ControllerLease(),debugClients=new Set();
-const wss=new WebSocketServer({host:'127.0.0.1',port:PORT,verifyClient:({origin},done)=>!origin||origin.startsWith('chrome-extension://')?done(true):done(false,403,'Forbidden Origin')});
+const wss=new WebSocketServer({host:LISTEN_HOST,port:0,verifyClient:({origin},done)=>!origin||origin.startsWith('chrome-extension://')?done(true):done(false,403,'Forbidden Origin')});
 function rejectAuth(ws,error){runtime.send(ws,{type:'AUTH_ERROR',ok:false,error});try{ws.close(1008,'Authentication required');}catch{}}
 function brainSend(type,payload={}){if(!controller.brainSocket)return false;return runtime.send(controller.brainSocket,{type,...payload});}
 function protocolAllowed(role,version){const v=Number(version);return role==='extension'?EXTENSION_PROTOCOL_VERSIONS.has(v):v===CONTROL_PROTOCOL_VERSION;}
 function browserIdFromHello(msg){const explicit=String(msg.browserInstanceId||'').trim();if(explicit)return explicit;const extensionId=String(msg.extensionId||'').trim();if(Number(msg.protocolVersion)===5&&extensionId)return `browser-${extensionId}`;return '';}
 function requireTaskId(msg){const id=String(msg.taskId||'').trim();if(!id)throw new Error('brain_task_id_required');return id;}
 function requireBrowserId(msg){const id=String(msg.browserInstanceId||'').trim();if(!id)throw new Error('browser_instance_id_required');return id;}
-function ensureAutomaticPairing({extensionId,browserInstanceId,runtimeExtensionId,origin}){
-  if(auth.extensions[String(extensionId||'').trim()])return null;
-  const pairing=auth.ensureAutomaticPairingWindow({extensionId,browserInstanceId,runtimeExtensionId,origin});
-  if(pairing.opened)printAsync(`[PAIRING] automatic window opened extension=${extensionId} browser=${browserInstanceId} code=${pairing.code} expires=${pairing.expiresAt}`);
-  return pairing;
-}
+
+wss.once('listening',()=>{
+  try{
+    const address=wss.address(),port=Number(address&&typeof address==='object'?address.port:0);
+    runtimeEndpoint=publishRuntimeEndpoint(__dirname,port);
+    console.log(`Body runtime transport: ${runtimeEndpoint.wsUrl} (auto-assigned)`);
+  }catch(error){
+    console.error('[FATAL]',String(error?.message||error));
+    try{wss.close();}catch{}
+    process.exitCode=1;
+    setImmediate(()=>process.exit(1));
+  }
+});
 
 async function handleBrainMessage(ws,msg){
   let result,type;
@@ -59,11 +67,10 @@ wss.on('connection',(ws,request)=>{
       const requestedRole=String(msg.role||'unknown');if(!protocolAllowed(requestedRole,msg.protocolVersion)){rejectAuth(ws,'protocol_version_mismatch');return;}
       if(requestedRole==='extension'){
         const extId=String(msg.extensionId||'').trim(),browserInstanceId=browserIdFromHello(msg);if(!browserInstanceId){rejectAuth(ws,'browser_instance_id_required');return;}
-        try{ensureAutomaticPairing({extensionId:extId,browserInstanceId,runtimeExtensionId:msg.runtimeExtensionId,origin});}catch(error){rejectAuth(ws,String(error?.message||error));return;}
         const authResult=auth.authenticateExtension({extensionId:extId,browserInstanceId,runtimeExtensionId:msg.runtimeExtensionId,token:msg.token,origin});if(!authResult.ok){rejectAuth(ws,authResult.error);return;}
         let identity;try{identity=runtime.registerExtensionIdentity({browserInstanceId,extensionInstanceId:extId,runtimeExtensionId:msg.runtimeExtensionId});}catch(error){if(authResult.paired)auth.forgetExtension(extId);rejectAuth(ws,String(error?.message||error));return;}
         role='extension';const item=runtime.registry.register(extId,ws,{...msg,...identity,browserInstanceId});let management;try{management=runtime.extensionOnline(item);}catch(error){runtime.registry.unregisterSocket(ws);if(authResult.paired)auth.forgetExtension(extId);rejectAuth(ws,String(error?.message||error));return;}
-        if(authResult.paired)runtime.send(ws,{type:'AUTH_PAIRED',role:'extension',protocolVersion:Number(msg.protocolVersion),token:authResult.pairedToken,identity});for(const t of msg.tabs||[])runtime.tabSites.set(runtime.ctx(extId,t.id),String(t.siteKey||'').toLowerCase());
+        if(authResult.paired)runtime.send(ws,{type:'AUTH_PAIRED',role:'extension',protocolVersion:Number(msg.protocolVersion),token:authResult.pairedToken,identity,rotated:authResult.rotated===true});for(const t of msg.tabs||[])runtime.tabSites.set(runtime.ctx(extId,t.id),String(t.siteKey||'').toLowerCase());
         printAsync(`[ONLINE] browser=${browserInstanceId} state=ENV_CHECK tabs=${item.tabs.size} tasksFailedOnReconcile=${management.reconcile.failedTasks.length}`);runtime.requestExtension(extId,'RECORD_SET',{enabled:runtime.recordingEnabled}).catch(()=>{});updatePrompt();brainSend('BODY_EVENT',{event:{eventType:'browserOnline',identity:runtime.identityForExtension(extId),browser:management.browser,ts:Date.now()}});
         runtime.probeEnvironment(browserInstanceId).then(environment=>{printAsync(`[GUARDIAN] browser=${browserInstanceId} ${environment.eligible?'ACTIVE':'QUARANTINED'} reasons=${environment.reasons.join(',')||'none'}`);brainSend('BODY_EVENT',{event:{eventType:'environmentResult',browserInstanceId,environment,ts:Date.now()}});updatePrompt();}).catch(error=>{printAsync(`[GUARDIAN] browser=${browserInstanceId} ERROR ${String(error?.message||error)}`);brainSend('BODY_EVENT',{event:{eventType:'environmentError',browserInstanceId,error:String(error?.message||error),ts:Date.now()}});});return;
       }
@@ -92,7 +99,9 @@ wss.on('connection',(ws,request)=>{
 
 function disconnectExtensionForRevocation(extensionId){const item=runtime.registry.get(extensionId);if(!item?.online||!item.ws)return false;try{if(typeof item.ws.terminate==='function')item.ws.terminate();else item.ws.close(1008,'Pairing revoked');return true;}catch{return false;}}
 function flushStores(){try{return runtime.flushSync();}catch{return null;}}
-process.once('SIGINT',()=>{flushStores();process.exit(0);});process.once('SIGTERM',()=>{flushStores();process.exit(0);});process.once('exit',flushStores);
-const localIdentity=runtime.identity.snapshot();console.log(`Company runtime identity: company=${localIdentity.companyId} device=${localIdentity.deviceId}`);console.log(`Body runtime transport: ws://127.0.0.1:${PORT}`);console.log(`Environment policy: ${JSON.stringify(runtime.guardian.status().policy)}`);console.log(`Brain auth token: ${auth.status().brainTokenPath}`);console.log(`Debug client token: ${auth.status().debugClientTokenPath}`);console.log('Extension pairing is automatic: an unknown Extension opens a bound one-time window and prints its code here. Local console: pair status | pair list | pair close | pair forget <extensionId>');console.log('Company Runtime validates Browser eligibility before Task assignment. Guardian is read-only: observe/report/quarantine only.');
+function clearEndpoint(){try{return clearRuntimeEndpoint(__dirname,{pid:process.pid});}catch{return false;}}
+function shutdown(){flushStores();clearEndpoint();process.exit(0);}
+process.once('SIGINT',shutdown);process.once('SIGTERM',shutdown);process.once('exit',()=>{flushStores();clearEndpoint();});
+const localIdentity=runtime.identity.snapshot();console.log(`Company runtime identity: company=${localIdentity.companyId} device=${localIdentity.deviceId}`);console.log('Body runtime transport: requesting an available localhost port from Windows...');console.log(`Environment policy: ${JSON.stringify(runtime.guardian.status().policy)}`);console.log(`Brain auth token: ${auth.status().brainTokenPath}`);console.log(`Debug client token: ${auth.status().debugClientTokenPath}`);console.log('Extension authentication is automatic and bound to Extension/Browser/Runtime/Origin. Local console: pair status | pair list | pair forget <extensionId>');console.log('Company Runtime validates Browser eligibility before Task assignment. Guardian is read-only: observe/report/quarantine only.');
 rl=readline.createInterface({input:process.stdin,output:process.stdout,prompt:prompt()});rl.prompt();rl.on('line',async line=>{try{if(!localAccumulator.waiting){const pairing=pairingConsoleCommand(auth,line,{disconnectExtension:disconnectExtensionForRevocation});if(pairing.handled){if(pairing.result!==null)console.log(typeof pairing.result==='string'?pairing.result:JSON.stringify(pairing.result,null,2));updatePrompt();rl.prompt();return;}}const accumulated=localAccumulator.feed(line);if(!accumulated.ready){rl.setPrompt('... ');rl.prompt();return;}const out=await debugAdapter.run(accumulated.command,{assertControl:()=>controller.assertDebugControlAllowed()});if(out!==null)console.log(typeof out==='string'?out:JSON.stringify(out,null,2));}catch(error){localAccumulator.reset();console.log('[LỖI]',String(error?.message||error));}updatePrompt();rl.prompt();});
-module.exports={runtime,router,debugAdapter,wss,auth,controller,handleBrainMessage,CONTROL_PROTOCOL_VERSION,EXTENSION_PROTOCOL_VERSIONS,protocolAllowed,browserIdFromHello,requireTaskId,requireBrowserId,ensureAutomaticPairing,disconnectExtensionForRevocation,flushStores};
+module.exports={runtime,router,debugAdapter,wss,auth,controller,handleBrainMessage,CONTROL_PROTOCOL_VERSION,EXTENSION_PROTOCOL_VERSIONS,protocolAllowed,browserIdFromHello,requireTaskId,requireBrowserId,disconnectExtensionForRevocation,flushStores,clearEndpoint};
