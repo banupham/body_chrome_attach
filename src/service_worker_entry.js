@@ -67,6 +67,11 @@ function result(sendResponse, work) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.scope === VIRTUAL_CURSOR_SCOPE && message?.type === MESSAGE_TYPES.USER_MOTOR_EVENT) {
     const tabId = Number(sender?.tab?.id);
+    if (message?.payload?.kind === 'trust_audit') {
+      const event = message.payload.event || {};
+      if (daemon.recordingEnabled && Number.isInteger(tabId)) daemon.send({type:'RECORDER_EVENT',tabId,event:{eventType:'synthetic_input',ts:Number(event.at||Date.now()),source:'human',sourceConfidence:1,isTrusted:false,syntheticEventType:String(event.type||'unknown')}});
+      return false;
+    }
     rememberUserMotor(tabId, message.payload);
     daemon.forwardUserMotor(tabId, message.payload);
     return false;
