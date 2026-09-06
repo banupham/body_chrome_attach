@@ -37,6 +37,11 @@ class EnvironmentGuardian{
     const results=[];for(const browser of this.browserManager.browsers.values()){if(!browser.online)continue;const obs=this.state.observations[browser.browserInstanceId];let reasons=[];if(!obs||!this._fresh(obs))reasons=['ENVIRONMENT_OBSERVATION_STALE'];else reasons=[...(obs.baseReasons||[]),...(cross.get(browser.browserInstanceId)||[])];reasons=[...new Set(reasons)];const eligible=reasons.length===0,environment={eligible,status:eligible?'ELIGIBLE':'INELIGIBLE',observedAt:obs?.observedAt||null,publicIp:obs?.publicIp||null,environmentSignature:obs?.environmentSignature||null,deepFingerprint:obs?.deepFingerprint||{available:false,error:'deep_fingerprint_unavailable'},reasons,evidence:obs?.evidence||[]};this.browserManager.setEnvironment(browser.browserInstanceId,environment,eligible?'environment_eligible':'environment_policy_failed');results.push({browserInstanceId:browser.browserInstanceId,...environment});}return results;
   }
   _deferred(browser,reason='HTTP_TAB_REQUIRED_FOR_ENVIRONMENT_PROBE'){
+    const cached=this.state.observations[browser.browserInstanceId];
+    if(cached&&this._fresh(cached)){
+      const restored=this._recompute().find(x=>x.browserInstanceId===browser.browserInstanceId)||null;
+      if(restored){this._persist();return {...restored,probeDeferred:true,deferReason:reason,reusedFreshObservation:true};}
+    }
     const previous=browser.environment||{};
     if(previous.eligible===true){if(!['BUSY','HUMAN_CONTROL'].includes(browser.state))this.browserManager.setState(browser.browserInstanceId,'ACTIVE','environment_probe_deferred_non_http_tab');return {browserInstanceId:browser.browserInstanceId,...previous,probeDeferred:true,deferReason:reason};}
     this.browserManager.setState(browser.browserInstanceId,'ENV_CHECK','environment_waiting_for_http_tab');
