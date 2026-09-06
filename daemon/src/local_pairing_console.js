@@ -6,11 +6,6 @@ function pairingConsoleCommand(auth,line,{disconnectExtension=()=>false}={}){
   if(cmd!=='pair')return {handled:false,result:null};
   if(!auth)throw new Error('local_auth_required');
 
-  if(action==='open'){
-    const seconds=arg===undefined?120:Number(arg);
-    if(!Number.isFinite(seconds)||seconds<30||seconds>300)throw new Error('pair_open_seconds_must_be_30_to_300');
-    return {handled:true,result:auth.openPairingWindow({ttlMs:Math.round(seconds*1000)})};
-  }
   if(action==='status')return {handled:true,result:{...auth.status(),paired:pairedList(auth)}};
   if(action==='list')return {handled:true,result:pairedList(auth)};
   if(action==='close')return {handled:true,result:auth.closePairingWindow()};
@@ -22,7 +17,8 @@ function pairingConsoleCommand(auth,line,{disconnectExtension=()=>false}={}){
     if(forgotten)disconnected=disconnectExtension(extensionId)===true;
     return {handled:true,result:{extensionId,forgotten,disconnected}};
   }
-  throw new Error('pair_usage: pair open [30-300 seconds] | pair status | pair list | pair close | pair forget <extensionId>');
+  if(action==='open')throw new Error('pair_open_removed_pairing_is_automatic');
+  throw new Error('pair_usage: pair status | pair list | pair close | pair forget <extensionId>');
 }
 
 function pairedList(auth){
