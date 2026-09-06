@@ -15,6 +15,7 @@ function resolver(ref){
   const map={
     'ext-a':{browserInstanceId:'browser-a',extensionInstanceId:'ext-a',runtimeExtensionId:'runtime'},
     'ext-b':{browserInstanceId:'browser-a',extensionInstanceId:'ext-b',runtimeExtensionId:'runtime'},
+    'ext-late':{browserInstanceId:'browser-a',extensionInstanceId:'ext-late',runtimeExtensionId:'runtime'},
     'ext-c':{browserInstanceId:'browser-c',extensionInstanceId:'ext-c',runtimeExtensionId:'runtime'},
     'ext-conflict':{browserInstanceId:'browser-conflict',extensionInstanceId:'ext-conflict',runtimeExtensionId:'runtime'}
   };
@@ -61,6 +62,17 @@ test('replacement transport identity reuses the same Browser learning scope with
   assert.ok(a.every(row=>row.browserInstanceId==='browser-a'));
   assert.ok(c.every(row=>row.browserInstanceId==='browser-c'));
   assert.equal(fs.existsSync(path.join(profiles,'ext-b')),false);
+});
+
+test('cached Browser scope still detects a later legacy transport conflict',()=>{
+  const root=tempDir(),profiles=path.join(root,'profiles');
+  const learning=new ScopedLearningManager(profiles,{resolveIdentity:resolver});
+  learning.observeHumanSample('ext-a','example.com',{action:'click',source:'human'},{learn:false});
+  learning.flushSync();
+  const late=path.join(profiles,'ext-late','example.com','data','human_samples.jsonl');
+  writeJsonl(late,[{source:'human',action:'legacy-late'}]);
+  assert.throws(()=>learning.scope('ext-late','example.com'),/legacy_learning_migration_conflict/);
+  assert.equal(fs.existsSync(late),true);
 });
 
 test('migration conflict fails closed and preserves both legacy and Browser payloads',()=>{
