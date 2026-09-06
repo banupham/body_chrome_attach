@@ -129,7 +129,7 @@ function tmp(name) {
   assert.doesNotMatch(server, /ensureAutomaticPairingWindow/);
   assert.match(launcher, /sticky_runtime_port_preload\.js/);
   assert.match(preload, /preferredRuntimePort/);
-  assert.match(preload, /port: rememberedPort/);
+  assert.match(preload, /installStickyRuntimePort/);
   assert.match(build, /ensureRememberedRuntimePort/);
   assert.match(build, /inactiveRecord\(rememberedPort\)/);
 
