@@ -8,5 +8,5 @@
   "host_permissions": ["*://*/*"],
   "background": {"service_worker": "service_worker.js"},
   "content_scripts": [{"matches": ["*://*/*"], "js": ["virtual_cursor_content.js"], "run_at": "document_start", "all_frames": false}],
-  "action": {"default_title": "Body Chrome Attach"}
+  "action": {"default_title": "Body Chrome Attach", "default_popup": "pairing.html"}
 }
