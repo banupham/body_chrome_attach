@@ -1,5 +1,7 @@
 'use strict';
 
+const {deepEnvironmentProbe}=require('./deep_environment_probe');
+
 function ipLike(value){const text=String(value||'').trim();return text.length>2&&text.length<=64&&/^[0-9a-fA-F:.]+$/.test(text)&&(text.includes('.')||text.includes(':'));}
 function endpointUrl(value){const url=new URL(String(value||''));if(url.protocol!=='https:')throw new Error('public_ip_endpoint_https_required');return url;}
 
@@ -31,8 +33,13 @@ async function publicIpObservation(fetchImpl,endpoint,timeoutMs=5000){
 }
 
 async function environmentProbe(chromeApi,tabId,{publicIpEndpoint='https://api.ipify.org?format=json',fetchImpl=globalThis.fetch?.bind(globalThis),timeoutMs=5000}={}){
-  const [pageEnvironment,proxy,publicEgress]=await Promise.all([pageEnvironmentObservation(chromeApi,tabId),proxyObservation(chromeApi),publicIpObservation(fetchImpl,publicIpEndpoint,timeoutMs)]);
-  return {tabId:Number(tabId),observedAt:new Date().toISOString(),pageEnvironment,proxy,publicEgress};
+  const [pageEnvironment,proxy,publicEgress,deepFingerprint]=await Promise.all([
+    pageEnvironmentObservation(chromeApi,tabId),
+    proxyObservation(chromeApi),
+    publicIpObservation(fetchImpl,publicIpEndpoint,timeoutMs),
+    deepEnvironmentProbe(chromeApi,tabId,{timeoutMs:Math.min(7000,Math.max(1500,Number(timeoutMs)||5000))})
+  ]);
+  return {tabId:Number(tabId),observedAt:new Date().toISOString(),pageEnvironment,proxy,publicEgress,deepFingerprint};
 }
 
 module.exports={ipLike,endpointUrl,proxyObservation,pageEnvironmentObservation,publicIpObservation,environmentProbe};
