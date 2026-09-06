@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const RUNTIME_ENDPOINT_VERSION = 2;
@@ -9,6 +10,7 @@ const RUNTIME_HOST = '127.0.0.1';
 const RUNTIME_ENDPOINT_FILENAME = 'runtime-endpoint.json';
 const RUNTIME_PORT_FILENAME = 'runtime-port.json';
 const RUNTIME_LOCK_FILENAME = 'runtime.lock';
+const BOOT_STALE_TOLERANCE_MS = 5000;
 
 function validPort(value) {
   const port = Number(value);
@@ -58,6 +60,27 @@ function processAlive(pid, killImpl = process.kill) {
   } catch (error) {
     return error?.code === 'EPERM';
   }
+}
+
+function currentBootEpochMs({ now = Date.now, uptimeImpl = os.uptime } = {}) {
+  let nowMs, uptimeSeconds;
+  try { nowMs = Number(now()); } catch { return null; }
+  try { uptimeSeconds = Number(uptimeImpl()); } catch { return null; }
+  if (!Number.isFinite(nowMs) || !Number.isFinite(uptimeSeconds) || uptimeSeconds < 0) return null;
+  return nowMs - uptimeSeconds * 1000;
+}
+
+function timestampPredatesCurrentBoot(value, { now = Date.now, uptimeImpl = os.uptime, toleranceMs = BOOT_STALE_TOLERANCE_MS } = {}) {
+  const timestamp = Date.parse(String(value || ''));
+  const bootEpoch = currentBootEpochMs({ now, uptimeImpl });
+  if (!Number.isFinite(timestamp) || !Number.isFinite(bootEpoch)) return false;
+  const tolerance = Math.max(0, Number(toleranceMs) || 0);
+  return timestamp + tolerance < bootEpoch;
+}
+
+function runtimeRecordPredatesCurrentBoot(record, options = {}) {
+  if (!record || typeof record !== 'object') return false;
+  return timestampPredatesCurrentBoot(record.createdAt || record.startedAt, options);
 }
 
 function readJson(file) {
@@ -122,7 +145,7 @@ function lockAgeMs(file, now = Date.now()) {
   }
 }
 
-function acquireRuntimeLock(baseDir, { pid = process.pid, killImpl = process.kill, now = Date.now } = {}) {
+function acquireRuntimeLock(baseDir, { pid = process.pid, killImpl = process.kill, now = Date.now, uptimeImpl = os.uptime } = {}) {
   const paths = endpointPaths(baseDir);
   const ownerPid = Number(pid);
   if (!Number.isInteger(ownerPid) || ownerPid <= 0) throw new Error('runtime_lock_pid_invalid');
@@ -136,6 +159,10 @@ function acquireRuntimeLock(baseDir, { pid = process.pid, killImpl = process.kil
       if (error?.code !== 'EEXIST') throw error;
       const current = readJson(paths.lock);
       const currentPid = Number(current?.pid);
+      if (runtimeRecordPredatesCurrentBoot(current, { now, uptimeImpl })) {
+        try { fs.rmSync(paths.lock, { force: true }); } catch {}
+        continue;
+      }
       if (currentPid === ownerPid) return { acquired: false, pid: ownerPid, path: paths.lock, alreadyOwned: true };
       if (Number.isInteger(currentPid) && currentPid > 0 && processAlive(currentPid, killImpl)) throw new Error(`company_runtime_already_running:${currentPid}`);
       if ((!Number.isInteger(currentPid) || currentPid <= 0) && lockAgeMs(paths.lock, now()) < 10000) throw new Error('company_runtime_lock_busy');
@@ -157,10 +184,11 @@ function releaseRuntimeLock(baseDir, { pid = process.pid } = {}) {
   }
 }
 
-function assertRuntimeOwnershipAvailable(stateFile, { pid = process.pid, killImpl = process.kill } = {}) {
+function assertRuntimeOwnershipAvailable(stateFile, { pid = process.pid, killImpl = process.kill, now = Date.now, uptimeImpl = os.uptime } = {}) {
   const current = readJson(stateFile);
   const ownerPid = Number(current?.pid);
   if (current?.active === true && Number.isInteger(ownerPid) && ownerPid > 0 && ownerPid !== Number(pid) && processAlive(ownerPid, killImpl)) {
+    if (runtimeRecordPredatesCurrentBoot(current, { now, uptimeImpl })) return true;
     throw new Error(`company_runtime_already_running:${ownerPid}:${validPort(current.port) || 'unknown'}`);
   }
   return true;
@@ -171,7 +199,12 @@ function publishRuntimeEndpoint(baseDir, port, options = {}) {
   const paths = endpointPaths(baseDir);
   const remembered = rememberRuntimePort(baseDir, record.port, { now: options.now || (() => Date.now()) });
   if (remembered !== record.port) throw new Error(`runtime_port_publish_mismatch:${remembered}:${record.port}`);
-  assertRuntimeOwnershipAvailable(paths.state, { pid: record.pid, killImpl: options.killImpl || process.kill });
+  assertRuntimeOwnershipAvailable(paths.state, {
+    pid: record.pid,
+    killImpl: options.killImpl || process.kill,
+    now: options.now || Date.now,
+    uptimeImpl: options.uptimeImpl || os.uptime
+  });
   writeJsonAtomic(paths.state, record);
   if (fs.existsSync(path.dirname(paths.extension))) {
     writeJsonAtomic(paths.extension, {
@@ -225,11 +258,15 @@ module.exports = {
   RUNTIME_ENDPOINT_FILENAME,
   RUNTIME_PORT_FILENAME,
   RUNTIME_LOCK_FILENAME,
+  BOOT_STALE_TOLERANCE_MS,
   validPort,
   endpointPaths,
   endpointRecord,
   inactiveRecord,
   processAlive,
+  currentBootEpochMs,
+  timestampPredatesCurrentBoot,
+  runtimeRecordPredatesCurrentBoot,
   readJson,
   writeJsonAtomic,
   readRememberedRuntimePort,
