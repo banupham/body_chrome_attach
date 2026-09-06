@@ -22,6 +22,10 @@ class ProtectionSupervisor{
     Promise.resolve().then(()=>this.original.probeEnvironment(id)).then(()=>this.enforce(id)).catch(()=>{}).finally(()=>this.transientProbeInFlight.delete(id));
     return true;
   }
+  _applyControllerObservation(online,observation){
+    const observed=observation&&typeof observation==='object'?observation:{available:false,reason:'controller_probe_invalid_result'};
+    for(const browser of online){const assessment=assessControllerConflict(observed,deepSignals(browser));this.controllerByBrowser.set(browser.browserInstanceId,{...assessment,observedAt:new Date().toISOString()});this.enforce(browser.browserInstanceId);this._kickTransientProbe(browser);}return this.status();
+  }
   install(){
     if(this.installed)return this;this.installed=true;
     this.original.recorderEvent=this.runtime.recorderEvent.bind(this.runtime);
@@ -49,14 +53,12 @@ class ProtectionSupervisor{
   stop(){for(const timer of this.timers)if(timer)this.clearIntervalImpl(timer);this.timers=[];}
   scanLightAll(){
     if(!this.policy.enabled||this.lightRunning)return this.status();const online=this.runtime.browsers.list().filter(x=>x.online);if(!online.length)return this.status();this.lightRunning=true;
-    try{
-      const observation=this.controllerProbe.probe();
-      for(const browser of online){
-        const assessment=assessControllerConflict(observation,deepSignals(browser));
-        this.controllerByBrowser.set(browser.browserInstanceId,{...assessment,observedAt:new Date().toISOString()});this.enforce(browser.browserInstanceId);this._kickTransientProbe(browser);
-      }
+    let observation;try{observation=this.controllerProbe.probe();}catch(error){observation={available:false,reason:`controller_probe_exception:${String(error?.message||error).slice(0,120)}`};}
+    if(observation&&typeof observation.then==='function'){
+      observation.then(value=>this._applyControllerObservation(online,value)).catch(error=>this._applyControllerObservation(online,{available:false,reason:`controller_probe_rejected:${String(error?.message||error).slice(0,120)}`})).finally(()=>{this.lightRunning=false;});
       return this.status();
-    }finally{this.lightRunning=false;}
+    }
+    try{return this._applyControllerObservation(online,observation);}finally{this.lightRunning=false;}
   }
   async scanFullAll(){
     if(!this.policy.enabled||this.fullRunning)return this.status();this.fullRunning=true;
@@ -67,7 +69,7 @@ class ProtectionSupervisor{
     }finally{this.fullRunning=false;}
   }
   combined(browserInstanceId){
-    const id=String(browserInstanceId||''),controller=this.controllerByBrowser.get(id)||{score:0,blocked:false,review:false,signalIds:[],available:false},behavior=this.behavior.status(id);const combinedScore=Math.min(100,Number(controller.score||0)+Number(behavior.score||0));
+    const id=String(browserInstanceId||''),controller=this.controllerByBrowser.get(id)||{available:false,reason:'controller_scan_pending',score:0,blocked:false,review:false,signalIds:[],details:{}},behavior=this.behavior.status(id);const combinedScore=Math.min(100,Number(controller.score||0)+Number(behavior.score||0));
     const crossBlocked=Number(controller.score||0)>=25&&Number(behavior.score||0)>=40&&combinedScore>=80;
     const blocked=(this.policy.controllerBlock&&controller.blocked===true)||(this.policy.behaviorBlock&&behavior.blocked===true)||((this.policy.controllerBlock||this.policy.behaviorBlock)&&crossBlocked);
     const reasons=[];if(this.policy.controllerBlock&&controller.blocked)reasons.push('EXTERNAL_CONTROLLER_CONFLICT');if(this.policy.behaviorBlock&&behavior.blocked)reasons.push('BOT_BEHAVIOR_HIGH_CONFIDENCE');if(crossBlocked)reasons.push('CONTROLLER_BEHAVIOR_CORRELATED');
@@ -81,7 +83,7 @@ class ProtectionSupervisor{
   }
   assertAssignable(browserInstanceId){const id=String(browserInstanceId||'').trim();if(!id)return;const decision=this.combined(id);if(decision.blocked)throw new Error(`browser_protection_blocked:${id}:${decision.reasons.join(',')}`);}
   browserStatus(browserInstanceId){return this.combined(browserInstanceId);}
-  status(){const browsers={};for(const browser of this.runtime.browsers.list())if(browser.online)browsers[browser.browserInstanceId]=this.combined(browser.browserInstanceId);return {policy:{...this.policy},transientProbeInFlight:[...this.transientProbeInFlight],browsers};}
+  status(){const browsers={};for(const browser of this.runtime.browsers.list())if(browser.online)browsers[browser.browserInstanceId]=this.combined(browser.browserInstanceId);return {policy:{...this.policy},lightRunning:this.lightRunning,transientProbeInFlight:[...this.transientProbeInFlight],browsers};}
 }
 
 module.exports={ProtectionSupervisor,envBool,envInt,deepSignals,transientEnvironment};
