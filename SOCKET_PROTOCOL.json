@@ -17,7 +17,7 @@
     "extension": "TOFU pairing bound to extensionInstanceId + runtimeExtensionId + browserInstanceId when supplied"
   },
   "controllerPolicy": {
-    "brain": "exclusive controller; physical execution requires an existing executable taskId",
+    "brain": "exclusive controller; physical execution requires an explicitly RUNNING taskId",
     "debugClient": "diagnostic/test only; mutating commands rejected while Brain is attached",
     "daemonConsole": "diagnostic/test only",
     "bodyRuntime": "continues recording and learning with or without Brain"
@@ -27,7 +27,7 @@
     "queries": ["BODY_STATUS", "BODY_OBSERVE", "EXTENSIONS_LIST", "BROWSERS_LIST", "TABS_LIST", "TASKS_LIST", "TASK_GET", "ENVIRONMENT_STATUS"],
     "managerActions": ["TASK_CREATE", "TASK_APPROVE", "TASK_START", "TASK_COMPLETE", "TASK_FAIL", "TASK_CANCEL", "ENVIRONMENT_PROBE", "ENVIRONMENT_PROBE_ALL"],
     "physicalActions": ["BODY_STEP"],
-    "physicalActionRequirement": "BODY_STEP requires contractVersion=1.0, taskId, stepId and exactly one Body step; TaskManager resolves Browser/Tab ownership and Browser eligibility before the one physical attempt",
+    "physicalActionRequirement": "BODY_STEP requires contractVersion=1.0, stepId, an explicitly RUNNING taskId, and exactly one Body step; TaskManager resolves Browser/Tab ownership and Browser eligibility before the one physical attempt",
     "legacyPhysicalActionsRejected": ["INTENT_EXECUTE", "STRATEGY_EXECUTE", "TAB_SWITCH", "BROWSER_COMMAND"],
     "events": ["BODY_EVENT"],
     "freeformCommandStrings": false
@@ -38,6 +38,7 @@
     "observeResult": "BODY_OBSERVE_RESULT",
     "stepCommand": "BODY_STEP",
     "stepResult": "BODY_STEP_RESULT",
+    "eyes": "BODY_OBSERVE requests a live Extension snapshot when available; cached facts remain explicitly age-tagged if live refresh fails",
     "invariants": [
       "one BODY_STEP command requests one Body step and produces one result",
       "BODY returns facts and technical execution state, never task judgment",
@@ -82,7 +83,7 @@
   "extension": {
     "hello": {"type": "HELLO", "role": "extension", "protocolVersion": "5 or 6", "browserInstanceId": "persistent logical Chrome identity", "extensionId": "persistent extensionInstanceId", "token": "paired token or null on first pairing"},
     "authEvents": ["AUTH_PAIRED", "AUTH_ERROR"],
-    "requests": ["PING", "LIST_TABS", "ACTIVE_TAB", "POINTER_STATUS", "ENVIRONMENT_PROBE", "BODY_EXECUTE", "BODY_DETACH", "TAB_SWITCH", "FOCUS_WINDOW", "BROWSER_UI_END", "RECORD_SET", "CURSOR_SET"],
+    "requests": ["PING", "LIST_TABS", "ACTIVE_TAB", "POINTER_STATUS", "BODY_OBSERVE_SNAPSHOT", "ENVIRONMENT_PROBE", "BODY_EXECUTE", "BODY_DETACH", "TAB_SWITCH", "FOCUS_WINDOW", "BROWSER_UI_END", "RECORD_SET", "CURSOR_SET"],
     "events": ["RECORDER_EVENT", "SEMANTIC_OBSERVATION", "TAB_EVENT", "TAB_CONTEXT", "TAB_REMOVED", "KEEPALIVE"]
   },
   "trainingGroundTruth": "human-only",
