@@ -27,7 +27,7 @@
     "queries": ["BODY_STATUS", "BODY_OBSERVE", "EXTENSIONS_LIST", "BROWSERS_LIST", "TABS_LIST", "TASKS_LIST", "TASK_GET", "ENVIRONMENT_STATUS"],
     "managerActions": ["TASK_CREATE", "TASK_APPROVE", "TASK_START", "TASK_COMPLETE", "TASK_FAIL", "TASK_CANCEL", "ENVIRONMENT_PROBE", "ENVIRONMENT_PROBE_ALL"],
     "physicalActions": ["BODY_STEP"],
-    "physicalActionRequirement": "BODY_STEP requires contractVersion=1.0, stepId, an explicitly RUNNING taskId, and exactly one Body step; TaskManager resolves Browser/Tab ownership and Browser eligibility before the one physical attempt",
+    "physicalActionRequirement": "BODY_STEP requires contractVersion=1.0, a durable stepId, an explicitly RUNNING taskId, and exactly one Body step; TaskManager resolves Browser/Tab ownership and Browser eligibility before the at-most-one physical attempt",
     "legacyPhysicalActionsRejected": ["INTENT_EXECUTE", "STRATEGY_EXECUTE", "TAB_SWITCH", "BROWSER_COMMAND"],
     "events": ["BODY_EVENT"],
     "freeformCommandStrings": false
@@ -38,9 +38,12 @@
     "observeResult": "BODY_OBSERVE_RESULT",
     "stepCommand": "BODY_STEP",
     "stepResult": "BODY_STEP_RESULT",
+    "stepIdentity": "taskId + stepId; requestId is transport-only and does not change Body step identity",
+    "deliverySemantics": "durable at-most-once physical execution; duplicate completed steps replay the stored result; unresolved durable reservations return body_step_outcome_unknown and are never physically re-executed",
     "eyes": "BODY_OBSERVE requests a live Extension snapshot when available; cached facts remain explicitly age-tagged if live refresh fails",
+    "browserUiActions": ["back", "forward", "reload", "hardreload", "stop", "newtab", "closetab", "reopentab", "nexttab", "prevtab", "newwindow", "addressbar", "find", "downloads", "history", "devtools", "fullscreen", "bookmark", "zoomin", "zoomout", "zoomreset", "address", "findtext"],
     "invariants": [
-      "one BODY_STEP command requests one Body step and produces one result",
+      "one taskId+stepId identity requests one Body step and permits at most one physical attempt",
       "BODY returns facts and technical execution state, never task judgment",
       "Brain alone decides semantic success/failure and next step",
       "BODY learning changes HOW, never WHAT goal to pursue",
