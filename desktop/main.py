@@ -13,7 +13,7 @@ if __package__ in {None, ""}:
 from brain.runtime import BrainRuntimeError, GoalRunner
 from brain.store import BrainStore
 from desktop.body_client import BodyClient, BodyClientError
-from desktop.config import SOURCE_ROOT, ensure_runtime_dirs, load_runtime_config
+from desktop.config import ensure_runtime_dirs, load_runtime_config
 from desktop.supervisor import BodyRuntimeSupervisor, SupervisorError
 
 
@@ -56,7 +56,7 @@ def _run_goal(client: BodyClient, query: str, as_json: bool) -> int:
         runner = GoalRunner(
             client,
             store,
-            evidence_root=SOURCE_ROOT / "daemon" / "evidence",
+            evidence_root=paths["body"] / "evidence",
         )
         result = runner.run_youtube_search(query)
         _print({"product": "BodyBrain", "brainResult": result, "brainStore": store.counts()}, as_json)
