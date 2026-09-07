@@ -4,6 +4,7 @@ const crypto=require('node:crypto');
 const fs=require('node:fs');
 const path=require('node:path');
 const {SafeJsonPersistence}=require('./safe_json_persistence');
+const {runtimeDataDir}=require('./runtime_data_dir');
 
 function clone(value){return value===undefined?undefined:JSON.parse(JSON.stringify(value));}
 function stable(value){if(Array.isArray(value))return value.map(stable);if(value&&typeof value==='object'){const out={};for(const key of Object.keys(value).sort())out[key]=stable(value[key]);return out;}return value;}
@@ -14,9 +15,10 @@ function ledgerKey(taskId,stepId){return `${String(taskId)}::${String(stepId)}`;
 function codedError(code,message=code){const error=new Error(message);error.code=code;return error;}
 
 class BodyStepLedger{
-  constructor(baseDir,{now=()=>Date.now(),fsImpl=fs}={}){
+  constructor(baseDir,{now=()=>Date.now(),fsImpl=fs,env=process.env}={}){
     if(!baseDir)throw new Error('body_step_ledger_base_dir_required');
-    this.now=now;this.fs=fsImpl;this.dir=path.join(baseDir,'state');this.file=path.join(this.dir,'body_step_ledger.json');this.state=this._load();
+    const resolvedBaseDir=runtimeDataDir(baseDir,env);
+    this.now=now;this.fs=fsImpl;this.dir=path.join(resolvedBaseDir,'state');this.file=path.join(this.dir,'body_step_ledger.json');this.state=this._load();
     this.persistence=new SafeJsonPersistence(this.file,{getValue:()=>this.state,debounceMs:0,retryAfterMs:1000,fsImpl:this.fs,log:null});
   }
   _load(){
