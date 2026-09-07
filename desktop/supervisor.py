@@ -4,6 +4,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -26,8 +27,12 @@ class BodyRuntimeSupervisor:
         self.paths = ensure_runtime_dirs()
 
     @property
+    def body_data_dir(self) -> Path:
+        return self.paths["body"]
+
+    @property
     def brain_token_path(self) -> Path:
-        return self.daemon_dir / "profiles" / ".auth" / "brain.token"
+        return self.body_data_dir / "profiles" / ".auth" / "brain.token"
 
     def _port_open(self) -> bool:
         try:
@@ -37,6 +42,11 @@ class BodyRuntimeSupervisor:
             return False
 
     def _node(self) -> str:
+        if getattr(sys, "frozen", False):
+            bundled = self.root / "runtime" / "node" / "node.exe"
+            if not bundled.exists():
+                raise SupervisorError(f"bundled_node_runtime_missing:{bundled}")
+            return str(bundled)
         explicit = os.environ.get("BODY_NODE_PATH", "").strip()
         if explicit:
             path = Path(explicit)
@@ -48,6 +58,14 @@ class BodyRuntimeSupervisor:
             raise SupervisorError("node_runtime_not_found")
         return located
 
+    def _native_helper(self) -> Path | None:
+        if not getattr(sys, "frozen", False):
+            return None
+        helper = self.root / "runtime" / "BodyWinInput.exe"
+        if not helper.exists():
+            raise SupervisorError(f"bundled_windows_input_helper_missing:{helper}")
+        return helper
+
     def start(self) -> subprocess.Popen[bytes]:
         if self.process and self.process.poll() is None:
             return self.process
@@ -58,7 +76,11 @@ class BodyRuntimeSupervisor:
         self.log_handle = open(log_path, "ab", buffering=0)
         env = os.environ.copy()
         env["BODY_RUNTIME_PORT"] = str(self.config.port)
+        env["BODY_RUNTIME_DATA_DIR"] = str(self.body_data_dir)
         env["BODY_DESKTOP_HOSTED"] = "1"
+        native_helper = self._native_helper()
+        if native_helper is not None:
+            env["BODY_WINDOWS_INPUT_HELPER_EXE"] = str(native_helper)
         command = [
             self._node(),
             "-r",
