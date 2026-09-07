@@ -46,8 +46,9 @@ test('service worker has a Chrome-alarm reconnect backstop for Desktop restarts 
   assert.match(worker,/chrome\.alarms\.onAlarm\.addListener/);
   assert.match(worker,/periodInMinutes:\s*DAEMON_WAKE_PERIOD_MINUTES/);
   assert.match(worker,/type:\s*'KEEPALIVE'/);
-  assert.match(worker,/daemon\.connect\(\)\.catch/);
+  assert.match(worker,/daemon\.connect\(\)\.then\(\(\)\s*=>\s*observeDaemonSocket\(\)\)\.catch/);
   assert.match(worker,/chrome\.runtime\.onStartup\.addListener/);
+  assert.match(worker,/Body daemon WebSocket closed/);
 });
 
 test('Guardian page overlay is passive, periodic, and maps readiness to three compact states',()=>{
