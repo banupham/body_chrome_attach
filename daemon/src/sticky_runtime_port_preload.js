@@ -2,9 +2,9 @@
 
 const path = require('node:path');
 const ws = require('ws');
-const { RUNTIME_HOST, preferredRuntimePort } = require('./runtime_endpoint');
+const { RUNTIME_HOST, preferredRuntimePort, rememberRuntimePort, validPort } = require('./runtime_endpoint');
 
-function installStickyRuntimePort(wsModule, rememberedPort) {
+function installStickyRuntimePort(wsModule, rememberedPort, mode = 'remembered_auto_port') {
   const port = Number(rememberedPort);
   if (!Number.isInteger(port) || port < 1 || port > 65535) return false;
   const OriginalWebSocketServer = wsModule?.WebSocketServer;
@@ -16,7 +16,7 @@ function installStickyRuntimePort(wsModule, rememberedPort) {
       const nextOptions = shouldReuse ? { ...options, port } : options;
       super(nextOptions, callback);
       if (shouldReuse) {
-        this.bodyRuntimePortMode = 'remembered_auto_port';
+        this.bodyRuntimePortMode = mode;
         this.bodyRuntimeRequestedPort = port;
       }
     }
@@ -28,10 +28,15 @@ function installStickyRuntimePort(wsModule, rememberedPort) {
 }
 
 const baseDir = path.resolve(__dirname, '..');
-const rememberedPort = preferredRuntimePort(baseDir);
+const configuredPort = validPort(process.env.BODY_RUNTIME_PORT);
+const rememberedPort = configuredPort
+  ? rememberRuntimePort(baseDir, configuredPort, { allowChange: true })
+  : preferredRuntimePort(baseDir);
+const portMode = configuredPort ? 'bodybrain_product_port' : 'remembered_auto_port';
+
 if (rememberedPort) {
-  installStickyRuntimePort(ws, rememberedPort);
+  installStickyRuntimePort(ws, rememberedPort, portMode);
   process.env.BODY_RUNTIME_REMEMBERED_PORT = String(rememberedPort);
 }
 
-module.exports = { rememberedPort, installStickyRuntimePort };
+module.exports = { rememberedPort, configuredPort, portMode, installStickyRuntimePort };
