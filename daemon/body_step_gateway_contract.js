@@ -31,6 +31,9 @@ test('BODY Contract v1 validates one atomic motor step',()=>{
   assert.equal(command.tabId,'primary');
   assert.throws(()=>validateBodyStepCommand({contractVersion:'1.0',type:'BODY_STEP',stepId:'STEP-2',taskId:'TASK-1',step:{kind:'motor',intent:{type:'click',actions:[{type:'pressKey',key:'Enter'}]}}}),/body_motor_composite_forbidden/);
   assert.throws(()=>validateBodyStepCommand({contractVersion:'1.0',type:'BODY_STEP',stepId:'STEP-3',taskId:'TASK-1',step:{kind:'motor',intent:{type:'strategy'}}}),/body_motor_intent_unsupported/);
+  assert.throws(()=>validateBodyStepCommand({contractVersion:'1.0',type:'BODY_STEP',stepId:'STEP-4',taskId:'TASK-1',tabId:'',step:{kind:'motor',intent:{type:'pressKey',key:'Enter'}}}),/body_tab_ref_invalid/);
+  assert.throws(()=>validateBodyStepCommand({contractVersion:'1.0',type:'BODY_STEP',stepId:'STEP-5',taskId:'TASK-1',step:{kind:'tab_switch',targetTabId:null}}),/body_target_tab_required/);
+  assert.throws(()=>validateBodyStepCommand({contractVersion:'1.0',type:'BODY_STEP',stepId:'STEP-6',taskId:'TASK-1',step:{kind:'tab_switch',targetTabId:' '}}),/body_target_tab_required/);
 });
 
 test('Eyes observation returns known control/content/environment facts with freshness',async()=>{
@@ -47,6 +50,19 @@ test('Eyes observation returns known control/content/environment facts with fres
   assert.equal(observation.bodyState.pointer.known,true);
   assert.equal(observation.freshness.semanticAgeMs,200);
   assert.equal(judgmentPaths(observation).length,0);
+});
+
+test('Eyes never converts missing optional integers into invented zero values',async()=>{
+  const runtime=runtimeStub();
+  const browser=runtime.browsers.require('browser-a');
+  browser.activeTabId=null;
+  browser.tabs.get(1).windowId=null;
+  browser.tabs.get(1).navigationEpoch=null;
+  const body=new BodyStepGateway(runtime,{now:()=>1000});
+  const observation=await body.observe({browserInstanceId:'browser-a',tabId:1});
+  assert.equal(observation.scope.windowId,null);
+  assert.equal(observation.scope.navigationEpoch,null);
+  assert.equal(observation.bodyState.activeTabId,null);
 });
 
 test('one BODY_STEP invokes one motor execution and strips all task judgment fields',async()=>{
