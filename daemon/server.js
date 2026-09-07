@@ -14,7 +14,7 @@ const {acquireRuntimeLock,releaseRuntimeLock,publishRuntimeEndpoint,clearRuntime
 const LISTEN_HOST='127.0.0.1',CONTROL_PROTOCOL_VERSION=7,EXTENSION_PROTOCOL_VERSIONS=new Set([5,6]);let rl=null,runtimeEndpoint=null;
 const runtimeLock=acquireRuntimeLock(__dirname);
 const prompt=()=>runtime.registry.selectedId?`BODY[${runtime.registry.selectedId.slice(0,8)}]> `:'BODY> ',printAsync=text=>{if(rl)process.stdout.write(`\n${text}\n${prompt()}`);},updatePrompt=()=>rl?.setPrompt(prompt());
-const runtime=createDaemonRuntime({baseDir:__dirname,printAsync}),bodyGateway=new BodyStepGateway(runtime),router=createCommandRouter(runtime,{updatePrompt}),debugAdapter=new DebugCommandAdapter(runtime,router,{updatePrompt}),localAccumulator=createCommandAccumulator(),auth=new LocalAuth(__dirname),controller=new ControllerLease(),debugClients=new Set();
+const runtime=createDaemonRuntime({baseDir:__dirname,printAsync}),bodyGateway=new BodyStepGateway(runtime,{baseDir:__dirname}),router=createCommandRouter(runtime,{updatePrompt}),debugAdapter=new DebugCommandAdapter(runtime,router,{updatePrompt}),localAccumulator=createCommandAccumulator(),auth=new LocalAuth(__dirname),controller=new ControllerLease(),debugClients=new Set();
 let wss;try{wss=new WebSocketServer({host:LISTEN_HOST,port:0,verifyClient:({origin},done)=>!origin||origin.startsWith('chrome-extension://')?done(true):done(false,403,'Forbidden Origin')});}catch(error){releaseRuntimeLock(__dirname,{pid:process.pid});throw error;}
 function rejectAuth(ws,error){runtime.send(ws,{type:'AUTH_ERROR',ok:false,error});try{ws.close(1008,'Authentication required');}catch{}}
 function brainSend(type,payload={}){if(!controller.brainSocket)return false;return runtime.send(controller.brainSocket,{type,...payload});}
@@ -116,7 +116,7 @@ wss.on('connection',(ws,request)=>{
 });
 
 function disconnectExtensionForRevocation(extensionId){const item=runtime.registry.get(extensionId);if(!item?.online||!item.ws)return false;try{if(typeof item.ws.terminate==='function')item.ws.terminate();else item.ws.close(1008,'Pairing revoked');return true;}catch{return false;}}
-function flushStores(){try{return runtime.flushSync();}catch{return null;}}
+function flushStores(){try{return {runtime:runtime.flushSync(),body:bodyGateway.flushSync()};}catch{return null;}}
 function clearEndpoint(){let endpoint=false,lock=false;try{endpoint=clearRuntimeEndpoint(__dirname,{pid:process.pid});}catch{}try{lock=releaseRuntimeLock(__dirname,{pid:process.pid});}catch{}return {endpoint,lock};}
 function shutdown(){flushStores();clearEndpoint();process.exit(0);}
 process.once('SIGINT',shutdown);process.once('SIGTERM',shutdown);process.once('exit',()=>{flushStores();clearEndpoint();});
