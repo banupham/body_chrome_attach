@@ -56,6 +56,8 @@ test('pointer-dependent motor actions fail closed instead of inventing coordinat
   assert.throws(()=>planner.plan({type:'moveTo',x:100,y:100}),/pointer_state_required/);
   assert.throws(()=>planner.plan({type:'scrollVertical',delta:100}),/pointer_state_required/);
   assert.throws(()=>planner.plan({type:'drag',x1:10,y1:10,x2:50,y2:50}),/pointer_state_required/);
+  assert.throws(()=>planner.plan({type:'click',x:100,y:100},{pointerStart:{x:null,y:null}}),/pointer_state_required/);
+  assert.throws(()=>planner.plan({type:'scrollVertical',delta:100},{pointerStart:{x:'',y:200}}),/pointer_state_required/);
   assert.doesNotThrow(()=>planner.plan({type:'pressKey',key:'Enter'}));
   const root=path.join(__dirname,'..');
   const runtime=fs.readFileSync(path.join(__dirname,'src','daemon_runtime.js'),'utf8');
@@ -64,4 +66,5 @@ test('pointer-dependent motor actions fail closed instead of inventing coordinat
     assert.equal(/\{\s*x\s*:\s*400\s*,\s*y\s*:\s*300\s*\}/.test(source),false,'400,300 pointer fallback must not exist');
     assert.equal(/\{\s*x\s*:\s*500\s*,\s*y\s*:\s*400\s*\}/.test(source),false,'500,400 scroll fallback must not exist');
   }
+  assert.ok(runtime.includes("'POINTER_STATUS'"),'daemon must resync pointer state from extension instead of fabricating coordinates');
 });
