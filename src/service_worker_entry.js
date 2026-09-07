@@ -8,6 +8,7 @@ const gateway = new CdpInputGateway(chrome);
 const daemon = new DaemonBridge(chrome, { gateway, WebSocketImpl: WebSocket });
 const observedUserMotorByTab = new Map();
 const pendingPageContextByTab = new Map();
+const observedDaemonSockets = new WeakSet();
 const MAX_OBSERVED_EVENTS_PER_TAB = 1500;
 const PAGE_CONTEXT_RETRY_MS = 250;
 const PAGE_CONTEXT_RETRY_WINDOW_MS = 15000;
@@ -21,6 +22,25 @@ async function activeTabId() {
   const id = Number(tabs?.[0]?.id);
   if (!Number.isInteger(id)) throw new Error('active_tab_required');
   return id;
+}
+
+function observeDaemonSocket(socket = daemon.socket) {
+  if (!socket || observedDaemonSockets.has(socket) || typeof socket.addEventListener !== 'function') return false;
+  observedDaemonSockets.add(socket);
+  socket.addEventListener('error', event => {
+    console.warn('Body daemon WebSocket error', {
+      type: String(event?.type || 'error'),
+      readyState: Number(socket.readyState)
+    });
+  });
+  socket.addEventListener('close', event => {
+    console.warn('Body daemon WebSocket closed', {
+      code: Number(event?.code || 0),
+      reason: String(event?.reason || ''),
+      wasClean: event?.wasClean === true
+    });
+  });
+  return true;
 }
 
 function rememberUserMotor(tabId, payload) {
@@ -79,7 +99,7 @@ function schedulePageContextFlush(delayMs = PAGE_CONTEXT_RETRY_MS) {
   pageContextRetryTimer = setTimeout(() => {
     pageContextRetryTimer = null;
     if (flushPendingPageContexts()) return;
-    daemon.connect().catch(() => {});
+    daemon.connect().then(() => observeDaemonSocket()).catch(() => {});
     schedulePageContextFlush(PAGE_CONTEXT_RETRY_MS);
   }, Math.max(0, Number(delayMs) || 0));
 }
@@ -89,7 +109,7 @@ function pageContextFromContent(sender, message) {
   if (!packet) return false;
   pendingPageContextByTab.set(packet.tabId, packet);
   if (flushPendingPageContexts()) return true;
-  daemon.connect().catch(() => {});
+  daemon.connect().then(() => observeDaemonSocket()).catch(() => {});
   schedulePageContextFlush(0);
   return false;
 }
@@ -142,7 +162,7 @@ function wakeDaemonConnection() {
     daemon.send({ type: 'KEEPALIVE', ts: Date.now(), source: 'alarm' });
     return true;
   }
-  daemon.connect().catch(() => {});
+  daemon.connect().then(() => observeDaemonSocket()).catch(() => {});
   return false;
 }
 
@@ -230,10 +250,11 @@ ensureDaemonWakeAlarm().catch(() => {});
 
 daemon.start()
   .then(status => {
+    observeDaemonSocket();
     flushPendingPageContexts();
     schedulePageContextFlush(0);
     console.log('Body Chrome Attach ready. Production actions are daemon-only.', status);
   })
   .catch(error => console.error('Body Chrome Attach startup error:', error));
 
-module.exports={pageContextPacket,pageContextFromContent,flushPendingPageContexts,schedulePageContextFlush};
+module.exports={pageContextPacket,pageContextFromContent,flushPendingPageContexts,schedulePageContextFlush,observeDaemonSocket};
