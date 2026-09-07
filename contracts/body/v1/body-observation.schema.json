@@ -37,8 +37,9 @@
     "control": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["lastObservedTarget", "semanticControls"],
+      "required": ["activeTarget", "lastObservedTarget", "semanticControls"],
       "properties": {
+        "activeTarget": {"type": ["object", "null"]},
         "lastObservedTarget": {"type": ["object", "null"]},
         "semanticControls": {"type": ["object", "null"]}
       }
@@ -46,9 +47,10 @@
     "content": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["tabContext", "semantic"],
+      "required": ["tabContext", "page", "semantic"],
       "properties": {
         "tabContext": {"type": ["object", "null"]},
+        "page": {"type": ["object", "null"]},
         "semantic": {"type": ["object", "null"]}
       }
     },
@@ -67,9 +69,12 @@
     "freshness": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["tabContextAgeMs", "semanticAgeMs", "controlAgeMs"],
+      "required": ["liveRefreshAttempted", "liveRefreshSucceeded", "tabContextAgeMs", "pageAgeMs", "semanticAgeMs", "controlAgeMs"],
       "properties": {
+        "liveRefreshAttempted": {"type": "boolean"},
+        "liveRefreshSucceeded": {"type": "boolean"},
         "tabContextAgeMs": {"type": ["integer", "null"], "minimum": 0},
+        "pageAgeMs": {"type": ["integer", "null"], "minimum": 0},
         "semanticAgeMs": {"type": ["integer", "null"], "minimum": 0},
         "controlAgeMs": {"type": ["integer", "null"], "minimum": 0}
       }
