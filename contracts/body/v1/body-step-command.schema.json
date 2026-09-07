@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "body-step-command.schema.json",
+  "title": "BodyStepCommand v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "type", "stepId", "taskId", "step"],
+  "properties": {
+    "contractVersion": {"const": "1.0"},
+    "type": {"const": "BODY_STEP"},
+    "requestId": {"type": ["string", "null"]},
+    "stepId": {"type": "string", "minLength": 1},
+    "taskId": {"type": "string", "minLength": 1},
+    "tabId": {
+      "oneOf": [
+        {"type": "integer", "minimum": 0},
+        {"const": "primary"}
+      ]
+    },
+    "step": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "intent"],
+          "properties": {
+            "kind": {"const": "motor"},
+            "intent": {
+              "type": "object",
+              "minProperties": 1,
+              "required": ["type"],
+              "properties": {
+                "type": {
+                  "enum": ["click", "doubleClick", "moveTo", "hover", "drag", "scrollVertical", "scrollHorizontal", "typeText", "pressKey", "keyCombo"]
+                }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "action"],
+          "properties": {
+            "kind": {"const": "browser_ui"},
+            "action": {
+              "enum": ["back", "forward", "reload", "hardreload", "stop", "newtab", "closetab", "reopentab", "nexttab", "prevtab", "newwindow", "addressbar", "find", "downloads", "history", "devtools", "fullscreen", "bookmark", "zoomin", "zoomout", "zoomreset", "address", "findtext"]
+            },
+            "value": {}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "targetTabId"],
+          "properties": {
+            "kind": {"const": "tab_switch"},
+            "targetTabId": {"type": "integer", "minimum": 0}
+          }
+        }
+      ]
+    }
+  }
+}

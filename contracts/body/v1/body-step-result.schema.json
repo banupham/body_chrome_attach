@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "body-step-result.schema.json",
+  "title": "BodyStepResult v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "type", "stepId", "taskId", "action", "execution", "observation"],
+  "properties": {
+    "contractVersion": {"const": "1.0"},
+    "type": {"const": "BODY_STEP_RESULT"},
+    "requestId": {"type": ["string", "null"]},
+    "stepId": {"type": "string", "minLength": 1},
+    "taskId": {"type": "string", "minLength": 1},
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": {"enum": ["motor", "browser_ui", "tab_switch", "unknown"]},
+        "name": {"type": ["string", "null"]}
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accepted", "attemptCount", "replayed", "dispatched", "completed", "commandId", "error"],
+      "properties": {
+        "accepted": {"type": ["boolean", "null"]},
+        "attemptCount": {
+          "oneOf": [
+            {"type": "integer", "minimum": 0, "maximum": 1},
+            {"type": "null"}
+          ]
+        },
+        "replayed": {"type": "boolean"},
+        "dispatched": {"type": ["boolean", "null"]},
+        "completed": {"type": ["boolean", "null"]},
+        "commandId": {"type": ["string", "null"]},
+        "plannedLowLevelSteps": {"type": ["integer", "null"], "minimum": 0},
+        "completedLowLevelSteps": {"type": ["integer", "null"], "minimum": 0},
+        "error": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["code", "message"],
+              "properties": {
+                "code": {"type": "string", "minLength": 1},
+                "message": {"type": "string"}
+              }
+            }
+          ]
+        }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["before", "after", "changes"],
+      "properties": {
+        "before": {"oneOf": [{"$ref": "body-observation.schema.json"}, {"type": "null"}]},
+        "after": {"oneOf": [{"$ref": "body-observation.schema.json"}, {"type": "null"}]},
+        "changes": {"type": ["object", "null"], "additionalProperties": true}
+      }
+    }
+  }
+}
