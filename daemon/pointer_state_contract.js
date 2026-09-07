@@ -11,19 +11,24 @@ function modelNull(){return {sampleMouse(){return null;},sampleTyping(){return n
 
 test('pointer state is isolated by stable browser identity and tab',()=>{
   let now=1000;const state=new PointerStateManager({now:()=>++now});
-  state.update('browser-a',10,{x:111,y:222},{source:'human'});
+  const first=state.update('browser-a',10,{x:111,y:222},{source:'human'});
   state.update('browser-a',11,{x:333,y:444},{source:'agent'});
   state.update('browser-b',10,{x:555,y:666},{source:'human'});
+  assert.equal(first.updatedAt,1001);
   assert.deepEqual({x:state.require('browser-a',10).x,y:state.require('browser-a',10).y,source:state.require('browser-a',10).source},{x:111,y:222,source:'human'});
   assert.deepEqual({x:state.require('browser-a',11).x,y:state.require('browser-a',11).y},{x:333,y:444});
   assert.deepEqual({x:state.require('browser-b',10).x,y:state.require('browser-b',10).y},{x:555,y:666});
   assert.equal(state.snapshot('browser-a',99).known,false);
   assert.throws(()=>state.require('browser-a',99),/pointer_state_required/);
+  assert.throws(()=>state.update('browser-a',null,{x:1,y:2}),/pointer_tab_id_required/);
+  assert.throws(()=>state.update('browser-a',1,{x:null,y:2}),/pointer_coordinates_required/);
+  assert.throws(()=>state.update('browser-a',1,{x:'',y:2}),/pointer_coordinates_required/);
 });
 
-test('recorder updates pointer provenance without treating keyboard as pointer state',()=>{
+test('recorder updates pointer provenance without treating keyboard or null coordinates as pointer state',()=>{
   const state=new PointerStateManager({now:()=>5000});
   assert.equal(state.observeRecorder({browserInstanceId:'browser-a'},7,{source:'human',eventType:'keydown',x:1,y:2,ts:10}),null);
+  assert.equal(state.observeRecorder({browserInstanceId:'browser-a'},7,{source:'human',eventType:'mousemove',x:null,y:null,ts:10}),null);
   const human=state.observeRecorder({browserInstanceId:'browser-a'},7,{source:'human',eventType:'mousemove',x:120,y:240,ts:11});
   assert.equal(human.source,'human');assert.equal(human.eventType,'mousemove');
   const agent=state.observeRecorder({browserInstanceId:'browser-a'},7,{source:'agent',eventType:'mouseup',x:130,y:250,ts:12});
