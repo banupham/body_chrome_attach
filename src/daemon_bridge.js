@@ -59,7 +59,7 @@ class DaemonBridge{
   pointerStorageKey(tabId){return `bodyPointerState:${Number(tabId)}`;}
   rememberPointer(tabId,event,source=null){
     const id=Number(tabId);if(!Number.isInteger(id)||!finiteCoordinate(event?.x)||!finiteCoordinate(event?.y))return null;
-    const rawAt=event?.updatedAt??event?.at??event?.ts,updatedAt=Number.isFinite(Number(rawAt))?Number(rawAt):Date.now();
+    const rawAt=event?.updatedAt??event?.at??event?.ts,updatedAt=finiteCoordinate(rawAt)?Number(rawAt):Date.now();
     const state={tabId:id,known:true,x:Number(event.x),y:Number(event.y),source:normalizedPointerSource(source||event?.source),updatedAt};
     this.pointerByTab.set(id,state);
     const session=this.chrome.storage?.session;if(session?.set){const pending=session.set({[this.pointerStorageKey(id)]:state});pending?.catch?.(()=>{});}
@@ -91,8 +91,20 @@ class DaemonBridge{
   }
   async onMessage(raw){let msg;try{msg=JSON.parse(String(raw));}catch{return;}if(msg?.type==='AUTH_PAIRED'&&msg.token){this.authToken=String(msg.token);await this.chrome.storage.local.set({bodyDaemonAuthToken:this.authToken});return;}if(msg?.type==='AUTH_ERROR'){this.readinessStatus=null;console.error('Body daemon authentication failed:',msg.error||'auth_error');try{this.socket?.close();}catch{}return;}if(!msg?.type)return;try{const result=await this.handle(msg);if(msg.requestId)this.send({type:'RESPONSE',requestId:msg.requestId,ok:true,result});}catch(error){if(msg.requestId)this.send({type:'RESPONSE',requestId:msg.requestId,ok:false,error:{code:error?.code||'extension_error',message:String(error?.message||error)}});}}
   activeTab(){return this.chrome.tabs.query({active:true,lastFocusedWindow:true}).then(tabs=>{const tab=tabs?.[0];if(!tab||!Number.isInteger(tab.id))throw new Error('active_tab_not_found');return tab;});}
-  validatePlan(plan){if(!plan||plan.executionCapability!=='HUMAN_MOTOR')throw new Error('human_motor_capability_required');if(!Array.isArray(plan.steps)||plan.steps.length<1||plan.steps.length>20000)throw new Error('invalid_plan_steps');for(const [index,step] of plan.steps.entries()){if(!ALLOWED_METHODS.has(step?.method))throw new Error(`forbidden_method:${step?.method}:${index}`);const d=Number(step.delayMs||0),p=Number(step.postDelayMs||0);if(!Number.isFinite(d)||d<0||d>15000||!Number.isFinite(p)||p<0||p>15000)throw new Error(`invalid_delay:${index}`);}return plan;}
-  agentEventFromStep(commandId,stepIndex,step){if(step.method==='Input.dispatchMouseEvent'){const eventType=pointerEventType(step.params?.type);if(!eventType)return null;return {eventType,ts:Date.now(),source:'agent',sourceConfidence:1,agentCommandId:commandId||null,agentStepIndex:stepIndex,x:Number(step.params?.x),y:Number(step.params?.y),deltaX:Number(step.params?.deltaX||0),deltaY:Number(step.params?.deltaY||0)};}if(step.method==='Input.dispatchKeyEvent'){const eventType=keyEventType(step.params?.type);if(!eventType)return null;return {eventType,ts:Date.now(),source:'agent',sourceConfidence:1,agentCommandId:commandId||null,agentStepIndex:stepIndex,key:step.params?.key||null,code:step.params?.code||null};}return null;}
+  validatePlan(plan){
+    if(!plan||plan.executionCapability!=='HUMAN_MOTOR')throw new Error('human_motor_capability_required');
+    if(!Array.isArray(plan.steps)||plan.steps.length<1||plan.steps.length>20000)throw new Error('invalid_plan_steps');
+    for(const [index,step] of plan.steps.entries()){
+      if(!ALLOWED_METHODS.has(step?.method))throw new Error(`forbidden_method:${step?.method}:${index}`);
+      const d=Number(step.delayMs||0),p=Number(step.postDelayMs||0);if(!Number.isFinite(d)||d<0||d>15000||!Number.isFinite(p)||p<0||p>15000)throw new Error(`invalid_delay:${index}`);
+      if(step.method==='Input.dispatchMouseEvent'){
+        const type=String(step.params?.type||'');
+        if(!pointerEventType(type)||!finiteCoordinate(step.params?.x)||!finiteCoordinate(step.params?.y))throw new Error(`invalid_pointer_params:${index}`);
+      }
+    }
+    return plan;
+  }
+  agentEventFromStep(commandId,stepIndex,step){if(step.method==='Input.dispatchMouseEvent'){const eventType=pointerEventType(step.params?.type);if(!eventType||!finiteCoordinate(step.params?.x)||!finiteCoordinate(step.params?.y))return null;return {eventType,ts:Date.now(),source:'agent',sourceConfidence:1,agentCommandId:commandId||null,agentStepIndex:stepIndex,x:Number(step.params.x),y:Number(step.params.y),deltaX:Number(step.params?.deltaX||0),deltaY:Number(step.params?.deltaY||0)};}if(step.method==='Input.dispatchKeyEvent'){const eventType=keyEventType(step.params?.type);if(!eventType)return null;return {eventType,ts:Date.now(),source:'agent',sourceConfidence:1,agentCommandId:commandId||null,agentStepIndex:stepIndex,key:step.params?.key||null,code:step.params?.code||null};}return null;}
   async pageObservation(tabId){try{const response=await this.chrome.tabs.sendMessage(Number(tabId),{action:'body.pageObservation'});if(response?.ok&&response.result)return response.result;}catch{}return {available:false};}
   async semanticObservation(tabId){try{const response=await this.chrome.tabs.sendMessage(Number(tabId),{action:'body.semanticObservation'});if(response?.ok&&response.result)return response.result;}catch{}return {available:false};}
   async observeState(tabId){let tab=null;try{tab=await this.chrome.tabs.get(Number(tabId));}catch{}return {tabId:Number(tabId),siteKey:siteKeyFromUrl(tab?.url),navigationToken:navigationToken(tab?.url),navigationEpoch:Number(this.navigationEpochByTab.get(Number(tabId))||0),status:tab?.status||null,page:await this.pageObservation(tabId)};}
@@ -139,7 +151,7 @@ class DaemonBridge{
     let row=null;
     if(payload.kind==='pointer'){
       const eventType=pointerEventType(event.type);
-      if(eventType)row={eventType,ts:Number(event.at||Date.now()),source:'human',sourceConfidence:1,agentCommandId:null,agentStepIndex:null,x:Number(event.x),y:Number(event.y),button:event.button,buttons:Number(event.buttons||0),deltaX:Number(event.deltaX||0),deltaY:Number(event.deltaY||0),target,isTrusted:true};
+      if(eventType&&finiteCoordinate(event.x)&&finiteCoordinate(event.y))row={eventType,ts:Number(event.at||Date.now()),source:'human',sourceConfidence:1,agentCommandId:null,agentStepIndex:null,x:Number(event.x),y:Number(event.y),button:event.button,buttons:Number(event.buttons||0),deltaX:Number(event.deltaX||0),deltaY:Number(event.deltaY||0),target,isTrusted:true};
     }else if(payload.kind==='keyboard'){
       const rawKey=String(event.key||''),printable=rawKey.length===1;
       const semanticBefore=event.type==='keydown'&&rawKey==='Enter'?await this.semanticObservation(tabId):null;
