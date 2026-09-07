@@ -8,6 +8,7 @@ const root = path.join(__dirname, '..');
 const distDir = path.join(root, 'dist');
 const artifactsDir = path.join(root, 'artifacts');
 const packageJson = require('../package.json');
+const runtimeConfig = require('../config/bodybrain-runtime.json');
 
 const EXPECTED_ENTRIES = Object.freeze([
   'manifest.json',
@@ -50,8 +51,16 @@ function assertReleaseDist() {
   }
 
   const endpoint = JSON.parse(fs.readFileSync(path.join(distDir, 'runtime-endpoint.json'), 'utf8'));
-  if (endpoint.active !== false || endpoint.port !== null || endpoint.wsUrl !== null) {
-    throw new Error('extension_release_runtime_endpoint_not_neutral');
+  const expectedHost = String(runtimeConfig.host || '');
+  const expectedPort = Number(runtimeConfig.port);
+  const expectedUrl = `ws://${expectedHost}:${expectedPort}`;
+  if (
+    endpoint.active !== false ||
+    endpoint.host !== expectedHost ||
+    endpoint.port !== expectedPort ||
+    endpoint.wsUrl !== expectedUrl
+  ) {
+    throw new Error('extension_release_runtime_endpoint_contract_mismatch');
   }
 
   for (const name of files.filter(name => name.endsWith('.js'))) {
