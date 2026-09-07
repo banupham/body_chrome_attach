@@ -1,6 +1,12 @@
 'use strict';
 
 function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+function finiteCoordinate(value){return value!==null&&value!==undefined&&!(typeof value==='string'&&value.trim()==='')&&Number.isFinite(Number(value));}
+function requirePointerStart(context={}){
+  const raw=context?.pointerStart;
+  if(!finiteCoordinate(raw?.x)||!finiteCoordinate(raw?.y)){const error=new Error('pointer_state_required');error.code='pointer_state_required';throw error;}
+  return {x:Number(raw.x),y:Number(raw.y)};
+}
 
 function mapTemplatePath(template,start,end) {
   const dx=end.x-start.x;
@@ -147,24 +153,26 @@ class MotorPlanner {
   }
 
   _pointer(intent,context) {
+    const action=intent.type;
     const rect=this._targetRect(intent);
     const center={x:rect.x+rect.width/2,y:rect.y+rect.height/2};
-    const start=context.pointerStart || {x:400,y:300};
+    const start=requirePointerStart(context);
     const distance=Math.hypot(center.x-start.x,center.y-start.y);
-    const learned=this.model.sampleMouse({action:intent.type==='doubleClick'?'click':intent.type==='focus'?'click':intent.type,role:intent.role||'unknown',distance,targetWidth:rect.width,targetHeight:rect.height});
+    const learned=this.model.sampleMouse({action:action==='doubleClick'?'click':action==='focus'?'click':action,role:intent.role||'unknown',distance,targetWidth:rect.width,targetHeight:rect.height});
 
     let end=center,steps,source='bootstrap',holdMs=55;
     if(learned) {
       source='learned';
       const t=learned.template;
-      end={x:center.x+Number(t.endOffsetXRatio||0)*rect.width,y:center.y+Number(t.endOffsetYRatio||0)*rect.height};
-      end.x=clamp(end.x,rect.x+1,rect.x+rect.width-1);
-      end.y=clamp(end.y,rect.y+1,rect.y+rect.height-1);
+      if(!['moveTo','hover'].includes(action)){
+        end={x:center.x+Number(t.endOffsetXRatio||0)*rect.width,y:center.y+Number(t.endOffsetYRatio||0)*rect.height};
+        end.x=clamp(end.x,rect.x+1,rect.x+rect.width-1);
+        end.y=clamp(end.y,rect.y+1,rect.y+rect.height-1);
+      }
       steps=mapTemplatePath(t,start,end);
       holdMs=Math.max(20,Number(t.holdMs||55));
     } else steps=bootstrapMove(start,end);
 
-    const action=intent.type;
     if(['moveTo','hover'].includes(action)) return this._wrap(action,steps,source,learned);
 
     const clicks=action==='doubleClick'?2:1;
@@ -179,7 +187,7 @@ class MotorPlanner {
     const start={x:Number(intent.x1),y:Number(intent.y1)};
     const end={x:Number(intent.x2),y:Number(intent.y2)};
     if (![start.x,start.y,end.x,end.y].every(Number.isFinite)) throw new Error('drag_coordinates_required');
-    const approach=bootstrapMove(context.pointerStart||{x:400,y:300},start);
+    const approach=bootstrapMove(requirePointerStart(context),start);
     const distance=Math.hypot(end.x-start.x,end.y-start.y);
     const learned=this.model.sampleMouse({action:'drag',role:intent.role||'unknown',distance,targetWidth:12,targetHeight:12});
     let dragPath,source='bootstrap';
@@ -198,7 +206,7 @@ class MotorPlanner {
     const delta=Number(intent.delta??intent.amount);
     if(!Number.isFinite(delta)) throw new Error('scroll_delta_required');
     const learned=this.model.sampleScroll(action,delta);
-    const p=context.pointerStart || {x:500,y:400};
+    const p=requirePointerStart(context);
     const steps=[];
     if(learned) {
       const t=learned.template;
@@ -240,8 +248,8 @@ class MotorPlanner {
   _combo(intent) { return this._wrap('keyCombo',comboSteps(intent.key||intent.combo),'bootstrap',null); }
 
   _wrap(actionType,steps,source,learned) {
-    return {source,learnedGroup:learned?.groupKey || null,learnedTemplateCount:learned?.count || 0,plan:{executionCapability:'HUMAN_MOTOR',actionType,steps}};
+    return {source,learnedGroup:learned?.groupKey || null,learnedTemplateCount:learned?.count || 0,learnedSelection:learned?.selection||null,learnedTemplateIndex:Number.isInteger(learned?.index)?learned.index:null,plan:{executionCapability:'HUMAN_MOTOR',actionType,steps}};
   }
 }
 
-module.exports={MotorPlanner,mapTemplatePath,bootstrapMove,comboSteps};
+module.exports={MotorPlanner,mapTemplatePath,bootstrapMove,comboSteps,requirePointerStart};
