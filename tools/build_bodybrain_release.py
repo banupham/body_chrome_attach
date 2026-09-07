@@ -32,6 +32,13 @@ def run(command: list[str], *, cwd: Path = ROOT, expected: set[int] | None = Non
     return result
 
 
+def env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def pyinstaller(*args: str) -> None:
     run([sys.executable, "-m", "PyInstaller", *args])
 
@@ -64,6 +71,32 @@ def authenticode_status(executable: Path) -> str:
         return "UNKNOWN"
     value = result.stdout.strip().upper()
     return value or "UNKNOWN"
+
+
+def maybe_sign(executable: Path) -> str:
+    pfx = os.environ.get("BODYBRAIN_SIGN_PFX", "").strip()
+    require_signature = env_flag("BODYBRAIN_REQUIRE_SIGNATURE", False)
+    if pfx:
+        pfx_path = Path(pfx).expanduser().resolve()
+        if not pfx_path.exists():
+            raise ReleaseBuildError(f"bodybrain_sign_pfx_missing:{pfx_path}")
+        run([
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(ROOT / "tools" / "sign_bodybrain.ps1"),
+            "-PfxPath",
+            str(pfx_path),
+            "-Executable",
+            str(executable),
+        ])
+    status = authenticode_status(executable)
+    if require_signature and status != "VALID":
+        raise ReleaseBuildError(f"bodybrain_signature_required:{status}")
+    return status
 
 
 def build_native_helper() -> Path:
@@ -137,12 +170,13 @@ def build_bodybrain(helper: Path) -> Path:
     return executable
 
 
-def write_release_manifest(executable: Path) -> Path:
+def write_release_manifest(executable: Path, signing_status: str | None = None) -> Path:
     package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
     runtime = json.loads((ROOT / "config" / "bodybrain-runtime.json").read_text(encoding="utf-8"))
     extension = ARTIFACTS / f"body-chrome-attach-v{package['version']}.zip"
     if not extension.exists():
         raise ReleaseBuildError("extension_release_artifact_missing:run_npm_run_extension_package")
+    status = signing_status or authenticode_status(executable)
     manifest = {
         "schemaVersion": 1,
         "product": "BodyBrain",
@@ -153,7 +187,7 @@ def write_release_manifest(executable: Path) -> Path:
         "artifacts": {
             "BodyBrain.exe": {
                 "sha256": sha256(executable),
-                "authenticodeStatus": authenticode_status(executable),
+                "authenticodeStatus": status,
             },
             extension.name: {"sha256": sha256(extension)},
         },
@@ -174,8 +208,10 @@ def main() -> int:
     SPEC_DIR.mkdir(parents=True, exist_ok=True)
     helper = build_native_helper()
     executable = build_bodybrain(helper)
-    manifest = write_release_manifest(executable)
+    signing_status = maybe_sign(executable)
+    manifest = write_release_manifest(executable, signing_status)
     print(f"Built BodyBrain: {executable}")
+    print(f"Authenticode status: {signing_status}")
     print(f"Release manifest: {manifest}")
     return 0
 
