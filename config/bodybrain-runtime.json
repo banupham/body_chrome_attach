@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "host": "127.0.0.1",
+  "port": 53147,
+  "controlProtocolVersion": 7,
+  "bodyContractVersion": "1.0",
+  "startupTimeoutSeconds": 15,
+  "readinessPollSeconds": 2
+}
