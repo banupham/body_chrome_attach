@@ -9,6 +9,7 @@ const { ensureRememberedRuntimePort } = require('./daemon/src/runtime_port_migra
 const root = __dirname;
 const dist = path.join(root, 'dist');
 const daemonDir = path.join(root, 'daemon');
+const devBuild = process.argv.includes('--dev');
 
 function assertLauncher(pathname, marker) {
   let text = '';
@@ -35,12 +36,24 @@ esbuild.buildSync({
   target: ['chrome125'],
   outdir: dist,
   entryNames: '[name]',
-  sourcemap: true,
+  minify: !devBuild,
+  sourcemap: devBuild ? 'external' : false,
+  sourcesContent: devBuild,
   legalComments: 'none'
 });
 
 fs.copyFileSync(path.join(root, 'manifest.json'), path.join(dist, 'manifest.json'));
 fs.copyFileSync(path.join(root, 'pairing.html'), path.join(dist, 'pairing.html'));
-const rememberedPort = ensureRememberedRuntimePort(daemonDir);
-fs.writeFileSync(path.join(dist, 'runtime-endpoint.json'), JSON.stringify(inactiveRecord(rememberedPort), null, 2) + '\n');
-console.log(`Built extension: ${dist}${rememberedPort ? ` (remembered runtime port ${rememberedPort})` : ''}`);
+
+// Development builds may remember a local daemon port for convenience. Production
+// release artifacts must be machine-neutral and never embed a developer port.
+const rememberedPort = devBuild ? ensureRememberedRuntimePort(daemonDir) : null;
+fs.writeFileSync(
+  path.join(dist, 'runtime-endpoint.json'),
+  JSON.stringify(inactiveRecord(rememberedPort), null, 2) + '\n'
+);
+
+console.log(
+  `Built ${devBuild ? 'development' : 'release'} extension: ${dist}` +
+  (rememberedPort ? ` (remembered runtime port ${rememberedPort})` : '')
+);
