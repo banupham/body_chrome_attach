@@ -8,7 +8,8 @@ const {SafeJsonPersistence}=require('./safe_json_persistence');
 function clone(value){return value===undefined?undefined:JSON.parse(JSON.stringify(value));}
 function stable(value){if(Array.isArray(value))return value.map(stable);if(value&&typeof value==='object'){const out={};for(const key of Object.keys(value).sort())out[key]=stable(value[key]);return out;}return value;}
 function stableStringify(value){return JSON.stringify(stable(value));}
-function commandHash(command){return crypto.createHash('sha256').update(stableStringify(command)).digest('hex');}
+function commandIdentity(command){const value=clone(command)||{};delete value.requestId;return value;}
+function commandHash(command){return crypto.createHash('sha256').update(stableStringify(commandIdentity(command))).digest('hex');}
 function ledgerKey(taskId,stepId){return `${String(taskId)}::${String(stepId)}`;}
 function codedError(code,message=code){const error=new Error(message);error.code=code;return error;}
 
@@ -48,14 +49,9 @@ class BodyStepLedger{
     if(!persisted.ok)throw codedError('body_step_ledger_commit_failed',persisted.lastError?.message||'body_step_ledger_commit_failed');
     return clone(entry);
   }
-  replay(command){
-    const found=this.lookup(command);if(found.status==='done'&&found.entry?.result)return clone(found.entry.result);return null;
-  }
-  stats(){
-    let reserved=0,done=0;for(const entry of Object.values(this.state.entries)){if(entry.state==='DONE')done++;else if(entry.state==='RESERVED')reserved++;}
-    return {schemaVersion:1,file:this.file,total:Object.keys(this.state.entries).length,reserved,done,persistence:this.persistence.status()};
-  }
+  replay(command){const found=this.lookup(command);if(found.status==='done'&&found.entry?.result)return clone(found.entry.result);return null;}
+  stats(){let reserved=0,done=0;for(const entry of Object.values(this.state.entries)){if(entry.state==='DONE')done++;else if(entry.state==='RESERVED')reserved++;}return {schemaVersion:1,file:this.file,total:Object.keys(this.state.entries).length,reserved,done,persistence:this.persistence.status()};}
   flushSync(){return this.persistence.flushSync();}
 }
 
-module.exports={BodyStepLedger,stableStringify,commandHash,ledgerKey};
+module.exports={BodyStepLedger,stableStringify,commandIdentity,commandHash,ledgerKey};
