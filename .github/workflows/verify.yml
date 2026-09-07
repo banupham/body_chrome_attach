@@ -20,9 +20,21 @@ jobs:
       - name: Verify
         run: npm run verify
       - name: Check Python runtime syntax
-        run: python3 -m py_compile daemon/native/windows_input.py desktop/__init__.py desktop/config.py desktop/body_client.py desktop/supervisor.py desktop/main.py tests/desktop_host_contract.py tests/desktop_runtime_smoke.py
+        run: >-
+          python3 -m py_compile
+          daemon/native/windows_input.py
+          desktop/__init__.py desktop/config.py desktop/body_client.py desktop/supervisor.py desktop/main.py
+          brain/__init__.py brain/contracts.py brain/store.py brain/data_factory.py brain/context_builder.py brain/director.py brain/feedback.py brain/runtime.py
+          tests/desktop_host_contract.py tests/desktop_runtime_smoke.py tests/brain_v1_runtime_contract.py
+          tests/brain_evidence_integrity_contract.py tests/brain_evidence_cross_runtime_contract.py
       - name: Verify BodyBrain desktop contract
         run: python3 tests/desktop_host_contract.py
+      - name: Verify Brain v1 data and Director contract
+        run: python3 tests/brain_v1_runtime_contract.py
+      - name: Verify Brain evidence integrity
+        run: python3 tests/brain_evidence_integrity_contract.py
+      - name: Verify Node EvidenceStore to Python Data Factory integrity
+        run: python3 tests/brain_evidence_cross_runtime_contract.py
       - name: Smoke BodyBrain desktop runtime
         run: python3 tests/desktop_runtime_smoke.py
       - name: Upload Chrome BODY extension package
@@ -46,3 +58,7 @@ jobs:
         run: python daemon/native/windows_input.py selftest
       - name: Verify BodyBrain desktop contract on Windows
         run: python tests/desktop_host_contract.py
+      - name: Verify Brain v1 data and Director contract on Windows
+        run: python tests/brain_v1_runtime_contract.py
+      - name: Verify Brain evidence integrity on Windows
+        run: python tests/brain_evidence_integrity_contract.py

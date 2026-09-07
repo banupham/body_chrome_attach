@@ -10,8 +10,10 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from brain.runtime import BrainRuntimeError, GoalRunner
+from brain.store import BrainStore
 from desktop.body_client import BodyClient, BodyClientError
-from desktop.config import load_runtime_config
+from desktop.config import SOURCE_ROOT, ensure_runtime_dirs, load_runtime_config
 from desktop.supervisor import BodyRuntimeSupervisor, SupervisorError
 
 
@@ -39,11 +41,26 @@ def _print(payload, as_json: bool = False) -> None:
 
 
 def parser() -> argparse.ArgumentParser:
-    value = argparse.ArgumentParser(description="BodyBrain desktop host: Guardian + Brain shell + BODY Core")
-    value.add_argument("--check", action="store_true", help="start runtime, report one readiness snapshot, then exit")
+    value = argparse.ArgumentParser(description="BodyBrain desktop host: Guardian + Brain + BODY Core")
+    mode = value.add_mutually_exclusive_group()
+    mode.add_argument("--check", action="store_true", help="start runtime, report one readiness snapshot, then exit")
+    mode.add_argument("--youtube-search", metavar="QUERY", help="run the first proven Brain capability through BODY Contract v1")
     value.add_argument("--json", action="store_true", help="emit machine-readable status lines")
-    value.add_argument("--ready-timeout", type=float, default=None, help="seconds to wait for a READY Browser before entering monitor mode")
+    value.add_argument("--ready-timeout", type=float, default=None, help="seconds to wait for a READY Browser")
     return value
+
+
+def _run_goal(client: BodyClient, query: str, as_json: bool) -> int:
+    paths = ensure_runtime_dirs()
+    with BrainStore(paths["brain"] / "brain.db") as store:
+        runner = GoalRunner(
+            client,
+            store,
+            evidence_root=SOURCE_ROOT / "daemon" / "evidence",
+        )
+        result = runner.run_youtube_search(query)
+        _print({"product": "BodyBrain", "brainResult": result, "brainStore": store.counts()}, as_json)
+        return 0 if result.get("status") == "COMPLETED" else 3
 
 
 def run(argv: list[str] | None = None) -> int:
@@ -69,6 +86,11 @@ def run(argv: list[str] | None = None) -> int:
         _print(status, args.json)
         if args.check:
             return 0 if readiness.get("state") == "READY" else 2
+        if args.youtube_search is not None:
+            if readiness.get("state") != "READY":
+                _print({"product": "BodyBrain", "brainResult": {"status": "WAIT", "reason": "guardian_not_ready"}}, args.json)
+                return 2
+            return _run_goal(client, args.youtube_search, args.json)
 
         last = json.dumps(readiness, sort_keys=True)
         while not StopRequested.value:
@@ -83,7 +105,7 @@ def run(argv: list[str] | None = None) -> int:
                 _print({"product": "BodyBrain", "guardianReadiness": current}, args.json)
                 last = serialized
         return 0
-    except (SupervisorError, BodyClientError, OSError, ValueError) as exc:
+    except (SupervisorError, BodyClientError, BrainRuntimeError, OSError, ValueError) as exc:
         _print({"product": "BodyBrain", "state": "ERROR", "error": str(exc)}, args.json)
         return 1
     finally:
