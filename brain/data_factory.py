@@ -21,6 +21,22 @@ def _record_id(evidence_id: str) -> str:
     return f"BRR-{digest}"
 
 
+def evidence_record_hash(row: dict[str, Any]) -> str:
+    # EvidenceStore writes JSON.stringify({...record without recordHash}). Parsed
+    # JSON preserves property insertion order in Python, so this compact encoder
+    # reproduces the stored byte representation for the JSON values EvidenceStore
+    # emits. If a future numeric representation cannot be reproduced exactly,
+    # this fails closed rather than trusting unverifiable evidence.
+    payload = {key: value for key, value in row.items() if key != "recordHash"}
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _page_type(state: dict[str, Any]) -> str | None:
     route = (state or {}).get("route") or {}
     value = str(route.get("pageType") or "").strip()
@@ -37,6 +53,12 @@ def verify_chain_links(rows: Iterable[dict[str, Any]]) -> None:
         record_hash = str(row.get("recordHash") or "").strip()
         if not record_hash:
             raise EvidenceInputError(f"evidence_record_hash_required:{index}")
+        try:
+            expected_hash = evidence_record_hash(row)
+        except (TypeError, ValueError) as exc:
+            raise EvidenceInputError(f"evidence_hash_unverifiable:{index}") from exc
+        if record_hash != expected_hash:
+            raise EvidenceInputError(f"evidence_integrity_violation:{index}")
         previous = record_hash
 
 
