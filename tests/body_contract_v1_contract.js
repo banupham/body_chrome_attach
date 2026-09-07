@@ -10,6 +10,8 @@ const command=JSON.parse(fs.readFileSync(path.join(contractDir,'body-step-comman
 const result=JSON.parse(fs.readFileSync(path.join(contractDir,'body-step-result.schema.json'),'utf8'));
 const observation=JSON.parse(fs.readFileSync(path.join(contractDir,'body-observation.schema.json'),'utf8'));
 const socket=JSON.parse(fs.readFileSync(path.join(root,'SOCKET_PROTOCOL.json'),'utf8'));
+const manifest=JSON.parse(fs.readFileSync(path.join(root,'manifest.json'),'utf8'));
+const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
 const bodyDoc=fs.readFileSync(path.join(root,'BODY_CONTRACT.md'),'utf8');
 const server=fs.readFileSync(path.join(root,'daemon','server.js'),'utf8');
 
@@ -20,10 +22,17 @@ assert.ok(command.required.includes('taskId'));
 assert.equal(result.properties.contractVersion.const,'1.0');
 assert.equal(result.properties.type.const,'BODY_STEP_RESULT');
 assert.equal(observation.properties.contractVersion.const,'1.0');
+assert.ok(observation.properties.content.required.includes('page'));
+assert.ok(observation.properties.control.required.includes('activeTarget'));
+assert.ok(observation.properties.freshness.required.includes('liveRefreshSucceeded'));
 
+assert.equal(pkg.version,'0.8.0');
+assert.equal(manifest.version,pkg.version,'package and Extension versions must stay aligned');
 assert.equal(socket.bodyContractVersion,'1.0');
 assert.deepEqual(socket.brain.physicalActions,['BODY_STEP']);
 assert.ok(socket.brain.queries.includes('BODY_OBSERVE'));
+assert.ok(socket.extension.requests.includes('BODY_OBSERVE_SNAPSHOT'));
+assert.match(socket.brain.physicalActionRequirement,/explicitly RUNNING taskId/);
 for(const legacy of ['INTENT_EXECUTE','STRATEGY_EXECUTE','TAB_SWITCH','BROWSER_COMMAND'])assert.equal(socket.brain.physicalActions.includes(legacy),false);
 
 const docUpper=bodyDoc.toUpperCase();
