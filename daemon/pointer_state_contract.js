@@ -6,6 +6,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const {PointerStateManager}=require('./src/pointer_state_manager');
 const {MotorPlanner}=require('./src/motor_planner');
+const {HumanActionSegmenter}=require('./src/segmenter');
 
 function modelNull(){return {sampleMouse(){return null;},sampleTyping(){return null;},sampleScroll(){return null;}};}
 
@@ -48,6 +49,18 @@ test('scroll is anchored to current pointer and completed agent plan advances po
   const last=click.plan.steps.filter(step=>step.method==='Input.dispatchMouseEvent').at(-1).params;
   assert.deepEqual([afterClick.x,afterClick.y],[last.x,last.y]);
   assert.equal(afterClick.source,'agent');
+});
+
+test('short movement fragments are discarded at a boundary instead of leaking into a later sample',()=>{
+  const rows=[],segmenter=new HumanActionSegmenter(sample=>rows.push(sample),{moveIdleMs:10000,minMoveDistance:10,minMovePoints:3});
+  segmenter.handle(1,{source:'human',eventType:'mousemove',ts:10,x:0,y:0,target:{}});
+  segmenter.handle(1,{source:'human',eventType:'mousemove',ts:20,x:5,y:2,target:{}});
+  assert.equal(segmenter.flush(1).emitted,0);
+  segmenter.handle(1,{source:'human',eventType:'mousemove',ts:100,x:100,y:100,target:{}});
+  segmenter.handle(1,{source:'human',eventType:'mousemove',ts:110,x:120,y:110,target:{}});
+  segmenter.handle(1,{source:'human',eventType:'mousemove',ts:120,x:150,y:125,target:{}});
+  assert.equal(segmenter.flush(1).emitted,1);
+  assert.equal(rows.length,1);assert.deepEqual(rows[0].pointer_start,{x:100,y:100});
 });
 
 test('pointer-dependent motor actions fail closed instead of inventing coordinates',()=>{

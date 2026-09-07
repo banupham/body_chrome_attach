@@ -50,13 +50,14 @@ class HumanActionSegmenter {
 
   _flushMove(tabId,s){
     clearTimeout(s.moveTimer);s.moveTimer=null;
-    if(s.down||s.recentMouse.length<this.minMovePoints)return false;
-    const points=[...s.recentMouse],first=points[0],last=points.at(-1);
-    const distance=Math.hypot(Number(last.x)-Number(first.x),Number(last.y)-Number(first.y));
-    s.recentMouse=last?[last]:[];
+    if(s.down)return false;
+    const points=[...s.recentMouse],target=s.mouseTarget;
+    s.recentMouse=[];s.mouseLastTs=0;s.mouseTarget=null;
+    if(points.length<this.minMovePoints)return false;
+    const first=points[0],last=points.at(-1),distance=Math.hypot(Number(last.x)-Number(first.x),Number(last.y)-Number(first.y));
     if(!Number.isFinite(distance)||distance<this.minMoveDistance)return false;
     const t0=Number(first.ts||0),normalizedPoints=points.map(p=>({t:Math.max(0,Number(p.ts)-t0),x:Number(p.x),y:Number(p.y)}));
-    this.onSample({source:'human',action:'movePointer',tabId,context:{target_role:s.mouseTarget?.role||null,target_tag:s.mouseTarget?.tag||null,target_rect:s.mouseTarget?.rect||null,target_editable:s.mouseTarget?.editable===true},pointer_start:{x:normalizedPoints[0].x,y:normalizedPoints[0].y},points:normalizedPoints});
+    this.onSample({source:'human',action:'movePointer',tabId,context:{target_role:target?.role||null,target_tag:target?.tag||null,target_rect:target?.rect||null,target_editable:target?.editable===true},pointer_start:{x:normalizedPoints[0].x,y:normalizedPoints[0].y},points:normalizedPoints});
     return true;
   }
 

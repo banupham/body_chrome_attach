@@ -141,8 +141,11 @@ class DaemonBridge{
     throw new Error(`unsupported_daemon_message:${msg.type}`);
   }
   async forwardUserMotor(tabId,payload){
-    if(!this.recordingEnabled||payload?.source!=='USER')return false;
-    const event=payload.event||{};let context={...(payload.context||{})};
+    if(payload?.source!=='USER')return false;
+    const event=payload.event||{},pointerType=payload.kind==='pointer'?pointerEventType(event.type):null;
+    if(pointerType&&finiteCoordinate(event.x)&&finiteCoordinate(event.y))this.rememberPointer(tabId,event,'human');
+    if(!this.recordingEnabled)return false;
+    let context={...(payload.context||{})};
     const pointerBoundary=payload.kind==='pointer'&&['mousePressed','mouseReleased'].includes(String(event.type));
     const needsTargetContext=payload.kind==='keyboard'||pointerBoundary;
     if(needsTargetContext){try{const response=await this.chrome.tabs.sendMessage(Number(tabId),{action:'body.targetContextAt',x:event.x,y:event.y});if(response?.ok&&response.result)context={...context,...response.result};}catch{}}
@@ -150,8 +153,7 @@ class DaemonBridge{
     const target={tag,role:context.role||null,inputType,editable:context.editable===true||(!sensitive&&['input','textarea'].includes(tag)),sensitive,rect:context.rect||null};
     let row=null;
     if(payload.kind==='pointer'){
-      const eventType=pointerEventType(event.type);
-      if(eventType&&finiteCoordinate(event.x)&&finiteCoordinate(event.y))row={eventType,ts:Number(event.at||Date.now()),source:'human',sourceConfidence:1,agentCommandId:null,agentStepIndex:null,x:Number(event.x),y:Number(event.y),button:event.button,buttons:Number(event.buttons||0),deltaX:Number(event.deltaX||0),deltaY:Number(event.deltaY||0),target,isTrusted:true};
+      if(pointerType&&finiteCoordinate(event.x)&&finiteCoordinate(event.y))row={eventType:pointerType,ts:Number(event.at||Date.now()),source:'human',sourceConfidence:1,agentCommandId:null,agentStepIndex:null,x:Number(event.x),y:Number(event.y),button:event.button,buttons:Number(event.buttons||0),deltaX:Number(event.deltaX||0),deltaY:Number(event.deltaY||0),target,isTrusted:true};
     }else if(payload.kind==='keyboard'){
       const rawKey=String(event.key||''),printable=rawKey.length===1;
       const semanticBefore=event.type==='keydown'&&rawKey==='Enter'?await this.semanticObservation(tabId):null;
@@ -160,7 +162,6 @@ class DaemonBridge{
       row={eventType:'synthetic_input',ts:Number(event.at||payload.at||Date.now()),source:'unattributed',sourceConfidence:1,agentCommandId:null,agentStepIndex:null,auditEventType:String(event.type||'unknown'),target,isTrusted:false};
     }
     if(!row)return false;
-    if(payload.kind==='pointer')this.rememberPointer(tabId,row,'human');
     return this.send({type:'RECORDER_EVENT',tabId:Number(tabId),siteKey:siteKeyFromUrl(payload.url),event:row});
   }
   keyClass(key){const s=String(key??'');if(s.length===1){if(/\s/.test(s))return 'space';if(/[A-Za-zÀ-ỹ]/u.test(s))return 'alpha';if(/[0-9]/.test(s))return 'digit';return 'punct';}if(['Enter','Tab','Backspace','Delete','Escape','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Home','End'].includes(s))return s;if(['Shift','Control','Alt','Meta'].includes(s))return 'modifier';return 'special';}
