@@ -2,11 +2,24 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 
-SOURCE_ROOT = Path(__file__).resolve().parents[1]
+def resource_root() -> Path:
+    """Return the immutable application resource root.
+
+    In a PyInstaller one-file build resources are extracted to ``sys._MEIPASS``.
+    Mutable state must never be written here; it belongs under local app data.
+    """
+    frozen_root = getattr(sys, "_MEIPASS", None)
+    if frozen_root:
+        return Path(frozen_root)
+    return Path(__file__).resolve().parents[1]
+
+
+SOURCE_ROOT = resource_root()
 DEFAULT_CONFIG_PATH = SOURCE_ROOT / "config" / "bodybrain-runtime.json"
 
 
