@@ -17,16 +17,25 @@ jobs:
           node-version: '22'
       - name: Install dependencies
         run: npm install
-      - name: Verify
-        run: npm run verify
+      - name: Check Node syntax
+        run: npm run check
+      - name: Verify Extension and contract tests
+        run: npm test
+      - name: Verify daemon contracts
+        run: npm run daemon:test
+      - name: Build and package Chrome BODY Extension
+        run: npm run extension:package
+      - name: Verify Extension release package
+        run: node tests/extension_package_contract.js
       - name: Check Python runtime syntax
         run: >-
           python3 -m py_compile
           daemon/native/windows_input.py
-          desktop/__init__.py desktop/config.py desktop/body_client.py desktop/supervisor.py desktop/main.py
+          desktop/__init__.py desktop/config.py desktop/autostart.py desktop/body_client.py desktop/supervisor.py desktop/main.py
           brain/__init__.py brain/contracts.py brain/store.py brain/data_factory.py brain/context_builder.py brain/director.py brain/feedback.py brain/runtime.py
+          tools/build_bodybrain_release.py
           tests/desktop_host_contract.py tests/desktop_runtime_smoke.py tests/brain_v1_runtime_contract.py
-          tests/brain_evidence_integrity_contract.py tests/brain_evidence_cross_runtime_contract.py
+          tests/brain_evidence_integrity_contract.py tests/brain_evidence_cross_runtime_contract.py tests/bodybrain_exe_smoke.py
       - name: Verify BodyBrain desktop contract
         run: python3 tests/desktop_host_contract.py
       - name: Verify Brain v1 data and Director contract
