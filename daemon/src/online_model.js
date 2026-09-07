@@ -47,12 +47,26 @@ function normalizePath(points, start, end) {
   });
 }
 
+function finitePathPoint(p){return Number.isFinite(Number(p?.t))&&Number.isFinite(Number(p?.along))&&Number.isFinite(Number(p?.lateral));}
+function usableMouseTemplate(template,{minMovementDurationMs=10,maxNormalizedExcursion=10}={}){
+  const duration=Number(template?.movementDurationMs),path=Array.isArray(template?.path)?template.path:[];
+  if(!Number.isFinite(duration)||duration<minMovementDurationMs||path.length<2)return false;
+  let maxExcursion=0;
+  for(const p of path){
+    if(!finitePathPoint(p))return false;
+    maxExcursion=Math.max(maxExcursion,Math.abs(Number(p.along)),Math.abs(Number(p.lateral)));
+  }
+  return maxExcursion<=maxNormalizedExcursion;
+}
+
 class OnlineBehaviorModel {
-  constructor(modelPath, {maxTemplatesPerGroup=240,persistenceOptions={}}={}) {
+  constructor(modelPath, {maxTemplatesPerGroup=240,persistenceOptions={},random=Math.random,mouseCandidatePoolSize=4,minMovementDurationMs=10,maxNormalizedExcursion=10}={}) {
     this.modelPath=modelPath;
     this.maxTemplatesPerGroup=maxTemplatesPerGroup;
+    this.random=typeof random==='function'?random:Math.random;
+    this.mouseCandidatePoolSize=Math.max(1,Number(mouseCandidatePoolSize)||4);
+    this.mouseQuality={minMovementDurationMs:Math.max(1,Number(minMovementDurationMs)||10),maxNormalizedExcursion:Math.max(1,Number(maxNormalizedExcursion)||10)};
     this.model={version:1,revision:0,updatedAt:null,groups:{}};
-    this.selectionCursor={};
     this.persistence=new SafeJsonPersistence(this.modelPath,{getValue:()=>this.model,...persistenceOptions});
     this.load();
   }
@@ -87,7 +101,7 @@ class OnlineBehaviorModel {
     if (sample?.source !== 'human') return false;
 
     let item=null;
-    if (['click','drag'].includes(sample.action)) item=this._mouseTemplate(sample);
+    if (['click','drag','movePointer'].includes(sample.action)) item=this._mouseTemplate(sample);
     else if (sample.action==='typeText') item=this._typingTemplate(sample);
     else if (['scrollVertical','scrollHorizontal'].includes(sample.action)) item=this._scrollTemplate(sample);
 
@@ -103,6 +117,7 @@ class OnlineBehaviorModel {
 
     const start={x:Number(sample.pointer_start?.x ?? points[0].x),y:Number(sample.pointer_start?.y ?? points[0].y)};
     const actualEnd={x:Number(points.at(-1).x),y:Number(points.at(-1).y)};
+    if(![start.x,start.y,actualEnd.x,actualEnd.y].every(Number.isFinite))return null;
 
     const target=sample.context?.target_rect || {};
     const role=String(sample.context?.target_role || 'unknown').toLowerCase();
@@ -172,27 +187,39 @@ class OnlineBehaviorModel {
     return {groupKey:`scroll|${sample.action}|${Math.abs(total)<=600?'small':'large'}`,template:{source:'human',learnedAt:new Date().toISOString(),ratios,gaps:gaps.length?gaps:[55]}};
   }
 
-  _choose(keys) {
+  _randomIndex(length){
+    const raw=Number(this.random());
+    const unit=Number.isFinite(raw)?Math.max(0,Math.min(0.999999999999,raw)):0;
+    return Math.floor(unit*Math.max(1,length));
+  }
+
+  _choose(keys,{targetPoolSize=1,accept=()=>true}={}) {
+    const pool=[],seen=new Set();
     for(const key of keys) {
+      if(seen.has(key))continue;seen.add(key);
       const arr=this.model.groups[key];
-      if(arr?.length) {
-        const cursor=Number(this.selectionCursor[key]||0);
-        const index=Math.abs(cursor)%arr.length;
-        this.selectionCursor[key]=cursor+1;
-        return {groupKey:key,template:arr[index],count:arr.length,index,selection:'deterministic-cycle'};
-      }
+      if(!arr?.length)continue;
+      for(let index=0;index<arr.length;index++)if(accept(arr[index]))pool.push({groupKey:key,template:arr[index],groupIndex:index,groupCount:arr.length});
+      if(pool.length>=targetPoolSize)break;
     }
-    return null;
+    if(!pool.length)return null;
+    const index=this._randomIndex(pool.length),chosen=pool[index];
+    return {...chosen,count:pool.length,index,selection:'empirical-random'};
   }
 
   sampleMouse({action='click',role='unknown',distance,targetWidth=12,targetHeight=12}) {
     const d=distanceBucket(distance);
     const s=sizeBucket(targetWidth,targetHeight);
     const roleNorm=String(role||'unknown').toLowerCase();
-    const exact=`mouse|${action}|${roleNorm}|${d}|${s}`;
-    const unknownRole=`mouse|${action}|unknown|${d}|${s}`;
-    const sameAction=Object.keys(this.model.groups).filter(k=>k.startsWith(`mouse|${action}|`)).sort();
-    return this._choose([exact,unknownRole,...sameAction]);
+    const keys=[];
+    const addAction=mouseAction=>{
+      keys.push(`mouse|${mouseAction}|${roleNorm}|${d}|${s}`);
+      keys.push(`mouse|${mouseAction}|unknown|${d}|${s}`);
+      keys.push(...Object.keys(this.model.groups).filter(k=>k.startsWith(`mouse|${mouseAction}|`)).sort());
+    };
+    addAction(action);
+    if(['moveTo','hover'].includes(action)){addAction('movePointer');addAction('click');addAction('drag');}
+    return this._choose(keys,{targetPoolSize:this.mouseCandidatePoolSize,accept:t=>usableMouseTemplate(t,this.mouseQuality)});
   }
 
   sampleTyping() { return this._choose(['typing|typeText']); }
@@ -208,7 +235,7 @@ class OnlineBehaviorModel {
     for(const sample of samples) {
       if(sample?.source==='human') {
         let item=null;
-        if(['click','drag'].includes(sample.action)) item=this._mouseTemplate(sample);
+        if(['click','drag','movePointer'].includes(sample.action)) item=this._mouseTemplate(sample);
         else if(sample.action==='typeText') item=this._typingTemplate(sample);
         else if(['scrollVertical','scrollHorizontal'].includes(sample.action)) item=this._scrollTemplate(sample);
         if(item) this._push(item.groupKey,item.template);
@@ -219,10 +246,13 @@ class OnlineBehaviorModel {
 
   stats() {
     const groups={};
-    let total=0;
-    for(const [k,v] of Object.entries(this.model.groups)) { groups[k]=v.length; total+=v.length; }
-    return {revision:this.model.revision,updatedAt:this.model.updatedAt,totalTemplates:total,groups,persistence:this.persistence.status()};
+    let total=0,usableMouseTemplates=0,rejectedMouseTemplates=0;
+    for(const [k,v] of Object.entries(this.model.groups)) {
+      groups[k]=v.length;total+=v.length;
+      if(k.startsWith('mouse|'))for(const template of v)(usableMouseTemplate(template,this.mouseQuality)?usableMouseTemplates++:rejectedMouseTemplates++);
+    }
+    return {revision:this.model.revision,updatedAt:this.model.updatedAt,totalTemplates:total,groups,selection:'empirical-random',mouseCandidatePoolSize:this.mouseCandidatePoolSize,usableMouseTemplates,rejectedMouseTemplates,persistence:this.persistence.status()};
   }
 }
 
-module.exports={OnlineBehaviorModel,normalizePath,distanceBucket,sizeBucket};
+module.exports={OnlineBehaviorModel,normalizePath,distanceBucket,sizeBucket,usableMouseTemplate};

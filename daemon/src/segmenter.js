@@ -1,14 +1,17 @@
 'use strict';
 
 class HumanActionSegmenter {
-  constructor(onSample) {
+  constructor(onSample,{moveIdleMs=450,minMoveDistance=12,minMovePoints=3}={}) {
     this.onSample = onSample;
     this.tabs = new Map();
+    this.moveIdleMs=Math.max(50,Number(moveIdleMs)||450);
+    this.minMoveDistance=Math.max(1,Number(minMoveDistance)||12);
+    this.minMovePoints=Math.max(2,Number(minMovePoints)||3);
   }
 
   _state(tabId) {
     if (!this.tabs.has(tabId)) {
-      this.tabs.set(tabId, {recentMouse: [],mouseLastTs: 0,down: null,typing: null,typingTimer: null,scroll: null,scrollTimer: null});
+      this.tabs.set(tabId, {recentMouse: [],mouseLastTs: 0,mouseTarget:null,moveTimer:null,down: null,typing: null,typingTimer: null,scroll: null,scrollTimer: null});
     }
     return this.tabs.get(tabId);
   }
@@ -18,26 +21,47 @@ class HumanActionSegmenter {
     if (event?.target?.sensitive) return;
 
     const s = this._state(tabId);
-    if (event.eventType === 'mousemove') return this._mouseMove(s, event);
+    if (event.eventType === 'mousemove') return this._mouseMove(tabId,s,event);
     if (event.eventType === 'mousedown') return this._mouseDown(tabId, s, event);
     if (event.eventType === 'mouseup') return this._mouseUp(tabId, s, event);
-    if (event.eventType === 'keydown' || event.eventType === 'keyup') return this._typing(tabId, s, event);
-    if (event.eventType === 'wheel') this._scroll(tabId, s, event);
+    if (event.eventType === 'keydown' || event.eventType === 'keyup') {this._flushMove(tabId,s);return this._typing(tabId, s, event);}
+    if (event.eventType === 'wheel') {this._flushMove(tabId,s);this._scroll(tabId, s, event);}
   }
 
-  _mouseMove(s, e) {
-    if (s.mouseLastTs && e.ts - s.mouseLastTs > 450) s.recentMouse = [];
+  _scheduleMove(tabId,s){
+    if(s.down)return;
+    clearTimeout(s.moveTimer);
+    s.moveTimer=setTimeout(()=>this._flushMove(tabId,s),this.moveIdleMs);
+    s.moveTimer.unref?.();
+  }
+
+  _mouseMove(tabId,s, e) {
+    if (s.mouseLastTs && e.ts - s.mouseLastTs > this.moveIdleMs) this._flushMove(tabId,s);
     s.mouseLastTs = e.ts;
+    s.mouseTarget=e.target||s.mouseTarget;
     const p = {ts:e.ts, x:e.x, y:e.y};
     s.recentMouse.push(p);
     if (s.recentMouse.length > 300) s.recentMouse.shift();
     if (s.down) {
       s.down.points.push(p);
       if (s.down.points.length > 500) s.down.points.shift();
-    }
+    } else this._scheduleMove(tabId,s);
+  }
+
+  _flushMove(tabId,s){
+    clearTimeout(s.moveTimer);s.moveTimer=null;
+    if(s.down||s.recentMouse.length<this.minMovePoints)return false;
+    const points=[...s.recentMouse],first=points[0],last=points.at(-1);
+    const distance=Math.hypot(Number(last.x)-Number(first.x),Number(last.y)-Number(first.y));
+    s.recentMouse=last?[last]:[];
+    if(!Number.isFinite(distance)||distance<this.minMoveDistance)return false;
+    const t0=Number(first.ts||0),normalizedPoints=points.map(p=>({t:Math.max(0,Number(p.ts)-t0),x:Number(p.x),y:Number(p.y)}));
+    this.onSample({source:'human',action:'movePointer',tabId,context:{target_role:s.mouseTarget?.role||null,target_tag:s.mouseTarget?.tag||null,target_rect:s.mouseTarget?.rect||null,target_editable:s.mouseTarget?.editable===true},pointer_start:{x:normalizedPoints[0].x,y:normalizedPoints[0].y},points:normalizedPoints});
+    return true;
   }
 
   _mouseDown(tabId, s, e) {
+    clearTimeout(s.moveTimer);s.moveTimer=null;
     this._flushTyping(tabId, s);
     const recent = s.recentMouse.filter(p => e.ts - p.ts <= 1800);
     if (!recent.length || recent.at(-1).x !== e.x || recent.at(-1).y !== e.y) recent.push({ts:e.ts,x:e.x,y:e.y});
@@ -45,7 +69,7 @@ class HumanActionSegmenter {
   }
 
   _mouseUp(tabId, s, e) {
-    if (!s.down) { s.recentMouse = [{ts:e.ts,x:e.x,y:e.y}]; return; }
+    if (!s.down) { s.recentMouse = [{ts:e.ts,x:e.x,y:e.y}];s.mouseLastTs=e.ts; return; }
 
     const d = s.down;
     const points = [...d.points, {ts:e.ts,x:e.x,y:e.y}];
@@ -75,6 +99,8 @@ class HumanActionSegmenter {
     if (normalizedPoints.length >= 2) this.onSample(sample);
     s.down = null;
     s.recentMouse = [{ts:e.ts,x:e.x,y:e.y}];
+    s.mouseLastTs=e.ts;
+    s.mouseTarget=e.target||s.mouseTarget;
   }
 
   _typing(tabId, s, e) {
@@ -148,6 +174,7 @@ class HumanActionSegmenter {
     let emitted=0;
     for(const id of ids){
       const s=this.tabs.get(id);if(!s)continue;
+      if(this._flushMove(id,s))emitted++;
       if(this._flushTyping(id,s))emitted++;
       if(this._flushScroll(id,s))emitted++;
     }
@@ -160,10 +187,11 @@ class HumanActionSegmenter {
     for(const id of ids){
       const s=this.tabs.get(id);if(!s)continue;
       if(flush){
+        if(this._flushMove(id,s))emitted++;
         if(this._flushTyping(id,s))emitted++;
         if(this._flushScroll(id,s))emitted++;
       }else{
-        clearTimeout(s.typingTimer);clearTimeout(s.scrollTimer);
+        clearTimeout(s.moveTimer);clearTimeout(s.typingTimer);clearTimeout(s.scrollTimer);
       }
       s.down=null;
       s.recentMouse=[];
