@@ -1,7 +1,10 @@
 node_modules/
 dist/
+artifacts/
 daemon/node_modules/
 daemon/profiles/
 daemon/identity/
 daemon/state/
 *.log
+*.pem
+*.crx
