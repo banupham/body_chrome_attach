@@ -1,10 +1,15 @@
 node_modules/
 dist/
 artifacts/
+.release-build/
+build/
+*.spec
 daemon/node_modules/
 daemon/profiles/
 daemon/identity/
 daemon/state/
+daemon/evidence/
 *.log
 *.pem
+*.pfx
 *.crx
