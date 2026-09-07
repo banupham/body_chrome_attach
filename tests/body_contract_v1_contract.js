@@ -26,11 +26,14 @@ assert.deepEqual(socket.brain.physicalActions,['BODY_STEP']);
 assert.ok(socket.brain.queries.includes('BODY_OBSERVE'));
 for(const legacy of ['INTENT_EXECUTE','STRATEGY_EXECUTE','TAB_SWITCH','BROWSER_COMMAND'])assert.equal(socket.brain.physicalActions.includes(legacy),false);
 
-for(const term of ['Brain decides WHAT','BODY learns HOW','One BODY_STEP command','BODY returns facts'])assert.ok(bodyDoc.includes(term),term);
+const docUpper=bodyDoc.toUpperCase();
+for(const term of ['BRAIN DECIDES WHAT','BODY LEARNS HOW','ONE BODY_STEP COMMAND','BODY RETURNS FACTS'])assert.ok(docUpper.includes(term),term);
 assert.match(server,/BODY_STEP/);
 assert.match(server,/BODY_OBSERVE/);
 assert.equal(/msg\.type==='STRATEGY_EXECUTE'/.test(server),false,'production Brain router must not expose multi-action strategy execution');
 assert.equal(/msg\.type==='INTENT_EXECUTE'/.test(server),false,'production Brain router must not expose raw intent execution');
+assert.equal(/msg\.type==='TAB_SWITCH'/.test(server),false,'production Brain router must not expose raw tab switching');
+assert.equal(/msg\.type==='BROWSER_COMMAND'/.test(server),false,'production Brain router must not expose raw browser commands');
 
 const forbidden=['success','taskSuccess','verified','verification','goalAchieved','correct','wrong','shouldRetry','nextAction','recommendedAction'];
 const resultText=JSON.stringify(result);
