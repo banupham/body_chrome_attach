@@ -12,6 +12,8 @@ sys.path.insert(0, str(ROOT))
 from desktop.autostart import autostart_command
 from desktop.body_status_client import BodyStatusClient, _encode_client_frame
 from desktop.config import load_runtime_config
+from desktop.health import HealthModel
+from desktop.main import _apply_readiness
 
 
 class DesktopHostContractTest(unittest.TestCase):
@@ -52,6 +54,19 @@ class DesktopHostContractTest(unittest.TestCase):
         blocked = BodyStatusClient.readiness_from_status(status)
         self.assertEqual(blocked["state"], "BLOCKED")
         self.assertEqual(blocked["browsers"][0]["reason"], "EXTERNAL_CONTROLLER_CONFLICT")
+
+    def test_offline_extension_never_reports_connectivity_ready(self):
+        health = HealthModel()
+        _apply_readiness(health, {
+            "state": "BLOCKED",
+            "reason": None,
+            "browsers": [{"browserInstanceId":"browser-old","state":"BLOCKED","reason":"browser_offline"}],
+        })
+        snapshot = health.snapshot()
+        self.assertEqual(snapshot["extensionConnectivity"]["state"], "WAITING")
+        self.assertEqual(snapshot["extensionConnectivity"]["reason"], "browser_offline")
+        self.assertEqual(snapshot["guardian"]["state"], "BLOCKED")
+        self.assertEqual(snapshot["guardian"]["reason"], "browser_offline")
 
     def test_production_desktop_control_plane_is_read_only(self):
         status_client = (ROOT / "desktop" / "body_status_client.py").read_text(encoding="utf-8")
