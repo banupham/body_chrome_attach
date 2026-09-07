@@ -3,6 +3,7 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
+const {BROWSER_COMMANDS,COMPOUND_COMMANDS}=require('../daemon/src/browser_ui_adapter');
 
 const root=path.join(__dirname,'..');
 const contractDir=path.join(root,'contracts','body','v1');
@@ -19,8 +20,16 @@ assert.equal(command.properties.contractVersion.const,'1.0');
 assert.equal(command.properties.type.const,'BODY_STEP');
 assert.ok(command.required.includes('stepId'));
 assert.ok(command.required.includes('taskId'));
+const browserUiSchema=command.properties.step.oneOf.find(row=>row.properties?.kind?.const==='browser_ui');
+const expectedBrowserActions=[...Object.keys(BROWSER_COMMANDS),...Object.keys(COMPOUND_COMMANDS)].sort();
+assert.deepEqual([...browserUiSchema.properties.action.enum].sort(),expectedBrowserActions);
+
 assert.equal(result.properties.contractVersion.const,'1.0');
 assert.equal(result.properties.type.const,'BODY_STEP_RESULT');
+assert.ok(result.properties.execution.required.includes('attemptCount'));
+assert.ok(result.properties.execution.required.includes('replayed'));
+assert.equal(result.properties.execution.properties.attemptCount.maximum,1);
+assert.ok(result.properties.execution.properties.dispatched.type.includes('null'));
 assert.equal(observation.properties.contractVersion.const,'1.0');
 assert.ok(observation.properties.content.required.includes('page'));
 assert.ok(observation.properties.control.required.includes('activeTarget'));
@@ -33,12 +42,16 @@ assert.deepEqual(socket.brain.physicalActions,['BODY_STEP']);
 assert.ok(socket.brain.queries.includes('BODY_OBSERVE'));
 assert.ok(socket.extension.requests.includes('BODY_OBSERVE_SNAPSHOT'));
 assert.match(socket.brain.physicalActionRequirement,/explicitly RUNNING taskId/);
+assert.match(socket.bodyContract.deliverySemantics,/at-most-once/);
+assert.deepEqual([...socket.bodyContract.browserUiActions].sort(),expectedBrowserActions);
 for(const legacy of ['INTENT_EXECUTE','STRATEGY_EXECUTE','TAB_SWITCH','BROWSER_COMMAND'])assert.equal(socket.brain.physicalActions.includes(legacy),false);
 
 const docUpper=bodyDoc.toUpperCase();
-for(const term of ['BRAIN DECIDES WHAT','BODY LEARNS HOW','ONE BODY_STEP COMMAND','BODY RETURNS FACTS'])assert.ok(docUpper.includes(term),term);
+for(const term of ['BRAIN DECIDES WHAT','BODY LEARNS HOW','ONE BODY_STEP COMMAND','BODY RETURNS FACTS','AT-MOST-ONCE PHYSICAL EXECUTION','BODY_STEP NEVER IMPLICITLY STARTS A TASK'])assert.ok(docUpper.includes(term),term);
 assert.match(server,/BODY_STEP/);
 assert.match(server,/BODY_OBSERVE/);
+assert.match(server,/new BodyStepGateway\(runtime,\{baseDir:__dirname\}\)/);
+assert.match(server,/bodyGateway\.flushSync/);
 assert.equal(/msg\.type==='STRATEGY_EXECUTE'/.test(server),false,'production Brain router must not expose multi-action strategy execution');
 assert.equal(/msg\.type==='INTENT_EXECUTE'/.test(server),false,'production Brain router must not expose raw intent execution');
 assert.equal(/msg\.type==='TAB_SWITCH'/.test(server),false,'production Brain router must not expose raw tab switching');
