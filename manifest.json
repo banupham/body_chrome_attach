@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Body Chrome Attach",
   "version": "0.8.0",
-  "description": "Learnable BODY adapter implementing Body Contract v1: factual Eyes/Proprioception, Human-derived Motor learning, and one-step Brain execution through the local Company Runtime.",
+  "description": "BODY adapter for factual browser observation, Human-derived motor learning, Guardian-gated local execution, and BodyBrain desktop connectivity.",
   "minimum_chrome_version": "125",
   "permissions": ["debugger", "tabs", "activeTab", "storage", "proxy", "scripting", "privacy", "system.cpu", "system.memory", "system.display"],
   "host_permissions": ["*://*/*"],

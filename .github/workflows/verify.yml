@@ -27,7 +27,7 @@ jobs:
           desktop/worker_supervisor.py desktop/lifecycle.py desktop/autostart.py desktop/body_status_client.py desktop/supervisor.py desktop/main.py
           tools/build_bodybrain_release.py
           tests/desktop_host_contract.py tests/desktop_host_foundation_contract.py tests/bodybrain_no_brain_contract.py
-          tests/desktop_runtime_smoke.py tests/bodybrain_exe_smoke.py tests/bodybrain_release_manifest_contract.py
+          tests/desktop_runtime_smoke.py tests/bodybrain_exe_smoke.py tests/bodybrain_release_manifest_contract.py tests/body_chrome_real_e2e.py
       - name: Smoke Desktop runtime without Chrome
         run: python3 tests/desktop_runtime_smoke.py
       - name: Upload Chrome BODY extension package
@@ -81,6 +81,8 @@ jobs:
         run: python tools/build_bodybrain_release.py
       - name: Smoke actual BodyBrain.exe twice
         run: python tests/bodybrain_exe_smoke.py artifacts/BodyBrain.exe
+      - name: Real Chrome BODY Extension to EXE E2E
+        run: python tests/body_chrome_real_e2e.py artifacts/BodyBrain.exe dist
       - name: Verify release hashes and boundary
         run: python tests/bodybrain_release_manifest_contract.py
       - name: Upload BodyBrain Windows release

@@ -25,6 +25,9 @@ def main() -> int:
     if '"brain": {"state": "NOT_CONFIGURED"' not in health:
         raise AssertionError("health must report Brain NOT_CONFIGURED")
 
+    manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
+    if "brain execution" in str(manifest.get("description", "")).lower():
+        raise AssertionError("production Extension description must not advertise Brain execution")
     package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
     if "Brain R&D is excluded" not in str(package.get("description", "")):
         raise AssertionError("package description must state Brain exclusion")
