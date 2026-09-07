@@ -2,8 +2,15 @@
   "controlProtocolVersion": 7,
   "bodyContractVersion": "1.0",
   "extensionProtocolCompatibility": [5, 6],
-  "url": "ws://127.0.0.1:8765",
+  "url": "ws://127.0.0.1:53147",
   "transportRole": "internal Company Runtime transport; not the product's primary command port",
+  "desktopHost": {
+    "runtimeConfig": "config/bodybrain-runtime.json",
+    "entrypoint": "desktop/main.py (bodybrain.cmd on Windows development builds)",
+    "bootstrap": "BodyBrain starts the Guardian+BODY worker on the same deterministic localhost bootstrap port embedded in the production Chrome BODY Extension",
+    "brainBoundary": "desktop/body_client.py exposes contract/task APIs only",
+    "guardianGate": "desktop reports READY only after environment eligibility and Protection Supervisor initial checks pass; Task assignment remains fail-closed inside Company Runtime"
+  },
   "roles": ["extension", "brain", "debug_client"],
   "identity": {
     "local": ["companyId", "deviceId"],
