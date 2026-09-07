@@ -99,32 +99,58 @@ function remoteValue(arg) {
   return arg?.value ?? arg?.unserializableValue ?? arg?.description ?? arg?.type ?? 'unknown';
 }
 
+function pushBounded(target, value, limit = 80) {
+  target.push(value);
+  if (target.length > limit) target.shift();
+}
+
 async function startWorkerDiagnostics(extension) {
-  const diagnostics = { samples: [], console: [], exceptions: [] };
+  const diagnostics = { samples: [], console: [], exceptions: [], webSockets: [], logEntries: [], setupErrors: [] };
   const attached = new Set();
   let stopped = false;
+
+  async function attachWorker(worker) {
+    const url = worker.url();
+    if (attached.has(url)) return;
+    attached.add(url);
+    worker.client.on('Runtime.consoleAPICalled', event => {
+      pushBounded(diagnostics.console, { at: Date.now(), type: event.type, args: (event.args || []).map(remoteValue) });
+    });
+    worker.client.on('Runtime.exceptionThrown', event => {
+      pushBounded(diagnostics.exceptions, { at: Date.now(), exception: event.exceptionDetails?.exception?.description || event.exceptionDetails?.text || 'unknown' }, 40);
+    });
+    worker.client.on('Network.webSocketCreated', event => {
+      pushBounded(diagnostics.webSockets, { at: Date.now(), event: 'created', requestId: event.requestId, url: event.url });
+    });
+    worker.client.on('Network.webSocketHandshakeResponseReceived', event => {
+      pushBounded(diagnostics.webSockets, { at: Date.now(), event: 'handshake-response', requestId: event.requestId, status: event.response?.status, statusText: event.response?.statusText });
+    });
+    worker.client.on('Network.webSocketFrameError', event => {
+      pushBounded(diagnostics.webSockets, { at: Date.now(), event: 'frame-error', requestId: event.requestId, errorMessage: event.errorMessage });
+    });
+    worker.client.on('Network.webSocketClosed', event => {
+      pushBounded(diagnostics.webSockets, { at: Date.now(), event: 'closed', requestId: event.requestId });
+    });
+    worker.client.on('Log.entryAdded', event => {
+      const entry = event.entry || {};
+      pushBounded(diagnostics.logEntries, { at: Date.now(), source: entry.source, level: entry.level, text: entry.text });
+    });
+    try {
+      await worker.client.send('Network.enable');
+      await worker.client.send('Log.enable');
+    } catch (error) {
+      pushBounded(diagnostics.setupErrors, { at: Date.now(), url, error: String(error?.message || error) }, 20);
+    }
+  }
 
   async function sample() {
     if (stopped) return;
     try {
       const workers = await extension.workers();
-      diagnostics.samples.push({ at: Date.now(), count: workers.length, urls: workers.map(worker => worker.url()) });
-      if (diagnostics.samples.length > 80) diagnostics.samples.shift();
-      for (const worker of workers) {
-        const url = worker.url();
-        if (attached.has(url)) continue;
-        attached.add(url);
-        worker.client.on('Runtime.consoleAPICalled', event => {
-          diagnostics.console.push({ at: Date.now(), type: event.type, args: (event.args || []).map(remoteValue) });
-          if (diagnostics.console.length > 80) diagnostics.console.shift();
-        });
-        worker.client.on('Runtime.exceptionThrown', event => {
-          diagnostics.exceptions.push({ at: Date.now(), exception: event.exceptionDetails?.exception?.description || event.exceptionDetails?.text || 'unknown' });
-          if (diagnostics.exceptions.length > 40) diagnostics.exceptions.shift();
-        });
-      }
+      pushBounded(diagnostics.samples, { at: Date.now(), count: workers.length, urls: workers.map(worker => worker.url()) });
+      for (const worker of workers) await attachWorker(worker);
     } catch (error) {
-      diagnostics.samples.push({ at: Date.now(), error: String(error?.message || error) });
+      pushBounded(diagnostics.samples, { at: Date.now(), error: String(error?.message || error) });
     }
   }
 
@@ -171,9 +197,6 @@ async function main() {
     const firstPairing = readPairing(localAppData);
     const tokenHash = firstTokenHash(firstPairing);
 
-    // The first --check exits cleanly and stops the hosted BODY runtime. Keep Chrome
-    // open, then restart the real EXE and require the already-paired Extension to
-    // reconnect automatically without reinstalling/reloading it.
     await delay(1500);
     const second = await runBodyBrain(executable, localAppData);
     assertConnectedRun(second, 'desktop-restart', workerDiagnostics.diagnostics, localAppData);
