@@ -23,12 +23,12 @@
     "execution": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["accepted", "attempted", "attemptedOnce", "dispatched", "completed", "commandId", "error"],
+      "required": ["accepted", "attemptCount", "replayed", "dispatched", "completed", "commandId", "error"],
       "properties": {
         "accepted": {"type": "boolean"},
-        "attempted": {"type": "boolean"},
-        "attemptedOnce": {"const": true},
-        "dispatched": {"type": "boolean"},
+        "attemptCount": {"type": "integer", "minimum": 0, "maximum": 1},
+        "replayed": {"type": "boolean"},
+        "dispatched": {"type": ["boolean", "null"]},
         "completed": {"type": "boolean"},
         "commandId": {"type": ["string", "null"]},
         "plannedLowLevelSteps": {"type": ["integer", "null"], "minimum": 0},
