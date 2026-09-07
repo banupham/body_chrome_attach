@@ -7,7 +7,9 @@ const FORBIDDEN_JUDGMENT_KEYS=new Set(['success','tasksuccess','verified','verif
 
 function clone(value){if(value===undefined)return undefined;return JSON.parse(JSON.stringify(value));}
 function nonEmpty(value){return typeof value==='string'&&value.trim().length>0;}
-function finiteInteger(value){return Number.isInteger(Number(value));}
+function finiteNumber(value){return value!==null&&value!==undefined&&!(typeof value==='string'&&value.trim()==='')&&Number.isFinite(Number(value));}
+function finiteInteger(value){return finiteNumber(value)&&Number.isInteger(Number(value))&&Number(value)>=0;}
+function optionalInteger(value){return finiteInteger(value)?Number(value):null;}
 function errorWithCode(code,message=code){const error=new Error(message);error.code=code;return error;}
 function keyName(value){return String(value||'').replace(/[_-]/g,'').toLowerCase();}
 function stripJudgment(value){
@@ -31,7 +33,7 @@ function judgmentPaths(value,prefix=''){
   }
   return found;
 }
-function ageMs(now,row){if(!row||!Number.isFinite(Number(row.observedAt)))return null;return Math.max(0,Math.trunc(now-Number(row.observedAt)));}
+function ageMs(now,row){if(!row||!finiteNumber(row.observedAt))return null;return Math.max(0,Math.trunc(now-Number(row.observedAt)));}
 function technicalError(error){const message=String(error?.message||error||'body_step_error');const code=String(error?.code||message.split(':')[0]||'body_step_error');return {code,message};}
 function actionName(step){if(step?.kind==='motor')return String(step.intent?.type||'unknown');if(step?.kind==='browser_ui')return String(step.action||'unknown');if(step?.kind==='tab_switch')return 'switchTab';return null;}
 
@@ -73,7 +75,7 @@ class BodyStepGateway{
   identityForExtension(extensionId){return this.runtime.identityForExtension(extensionId);}
   _put(map,browserInstanceId,tabId,value,observedAt=null){
     if(!browserInstanceId||!finiteInteger(tabId)||value===undefined)return null;
-    const row={value:clone(value),observedAt:Number.isFinite(Number(observedAt))?Number(observedAt):this.now()};
+    const row={value:clone(value),observedAt:finiteNumber(observedAt)?Number(observedAt):this.now()};
     map.set(this.key(browserInstanceId,tabId),row);return row;
   }
   observeSemantic(extensionId,msg={}){
@@ -101,12 +103,16 @@ class BodyStepGateway{
   scopeForObservation(request={}){
     if(nonEmpty(request.taskId)){
       const task=this.runtime.tasks.get(request.taskId),workspace=task.workspace||{},browserInstanceId=String(workspace.browserInstanceId||'');
-      let tabId=request.tabId===undefined||request.tabId===null||request.tabId==='primary'?Number(workspace.primaryTabId):Number(request.tabId);
-      if(!Number.isInteger(tabId)||!Array.isArray(workspace.tabIds)||!workspace.tabIds.includes(tabId))throw errorWithCode('body_observe_tab_not_in_task');
+      const primary=request.tabId===undefined||request.tabId===null||request.tabId==='primary';
+      if(!primary&&!finiteInteger(request.tabId))throw errorWithCode('body_observe_tab_not_in_task');
+      const tabId=primary?Number(workspace.primaryTabId):Number(request.tabId);
+      if(!Number.isInteger(tabId)||!Array.isArray(workspace.tabIds)||!workspace.tabIds.map(Number).includes(tabId))throw errorWithCode('body_observe_tab_not_in_task');
       return {browserInstanceId,tabId};
     }
     const browserInstanceId=String(request.browserInstanceId||'').trim();if(!browserInstanceId)throw errorWithCode('body_observe_browser_required');
-    const browser=this.runtime.browsers.require(browserInstanceId);const tabId=request.tabId===undefined||request.tabId===null?Number(browser.activeTabId):Number(request.tabId);if(!Number.isInteger(tabId))throw errorWithCode('body_observe_tab_required');
+    const browser=this.runtime.browsers.require(browserInstanceId),active=request.tabId===undefined||request.tabId===null||request.tabId==='active';
+    if(!active&&!finiteInteger(request.tabId))throw errorWithCode('body_observe_tab_required');
+    const tabId=active?Number(browser.activeTabId):Number(request.tabId);if(!Number.isInteger(tabId))throw errorWithCode('body_observe_tab_required');
     return {browserInstanceId,tabId};
   }
 
@@ -127,12 +133,12 @@ class BodyStepGateway{
         tabId:Number(tabId),
         siteKey:context?.siteKey??tab.siteKey??null,
         title:context?.title??tab.title??null,
-        windowId:Number.isInteger(Number(context?.windowId??tab.windowId))?Number(context?.windowId??tab.windowId):null,
+        windowId:optionalInteger(context?.windowId??tab.windowId),
         navigationToken:context?.navigationToken??tab.navigationToken??null,
-        navigationEpoch:Number.isInteger(Number(context?.navigationEpoch??tab.navigationEpoch))?Number(context?.navigationEpoch??tab.navigationEpoch):null,
+        navigationEpoch:optionalInteger(context?.navigationEpoch??tab.navigationEpoch),
         status:context?.status??tab.status??null
       },
-      bodyState:{pointer:clone(pointer),browserState:String(browser.state||'UNKNOWN'),activeTabId:Number.isInteger(Number(browser.activeTabId))?Number(browser.activeTabId):null},
+      bodyState:{pointer:clone(pointer),browserState:String(browser.state||'UNKNOWN'),activeTabId:optionalInteger(browser.activeTabId)},
       control:{lastObservedTarget:controlRow?clone(controlRow.value):null,semanticControls:semantic?.controls?clone(semantic.controls):null},
       content:{tabContext:context?clone(context):null,semantic:semantic?clone(semantic):null},
       environment:{online:browser.online===true,browserState:String(browser.state||'UNKNOWN'),eligible:browser.environment?.eligible===true,status:String(browser.environment?.status||'UNKNOWN'),reasons:Array.isArray(browser.environment?.reasons)?browser.environment.reasons.map(String):[]},
@@ -145,11 +151,11 @@ class BodyStepGateway{
     const nested=raw?.execution&&typeof raw.execution==='object'?raw.execution:null;
     const commandId=raw?.commandId??nested?.commandId??null;
     if(kind==='motor'){
-      const planned=Number.isInteger(Number(nested?.plannedStepCount))?Number(nested.plannedStepCount):null,completed=Number.isInteger(Number(nested?.completedStepCount))?Number(nested.completedStepCount):null,issued=Number.isInteger(Number(nested?.issuedStepCount))?Number(nested.issuedStepCount):0;
+      const planned=optionalInteger(nested?.plannedStepCount),completed=optionalInteger(nested?.completedStepCount),issued=optionalInteger(nested?.issuedStepCount)??0;
       return {commandId,dispatched:nested?.delivered===true||issued>0,completed:nested?.delivered===true&&(planned===null||completed===planned),plannedLowLevelSteps:planned,completedLowLevelSteps:completed,changes:stripJudgment(nested?.observedEffect??null)};
     }
     if(kind==='browser_ui'){
-      const count=Number.isInteger(Number(raw?.executionAudit?.stepCount))?Number(raw.executionAudit.stepCount):null;
+      const count=optionalInteger(raw?.executionAudit?.stepCount);
       return {commandId,dispatched:raw?.delivered===true||raw?.focus?.fastExecuted===true||Boolean(count&&count>0),completed:raw?.delivered===true,plannedLowLevelSteps:count,completedLowLevelSteps:raw?.delivered===true?count:null,changes:stripJudgment(raw?.observedEffect??null)};
     }
     return {commandId,dispatched:raw?.switched===true,completed:raw?.switched===true,plannedLowLevelSteps:null,completedLowLevelSteps:null,changes:null};
