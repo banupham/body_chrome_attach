@@ -20,7 +20,7 @@ def main() -> int:
             raise AssertionError(f"production status client exposes non-status capability: {forbidden}")
     if '"BODY_STATUS"' not in status:
         raise AssertionError("production status client must expose BODY_STATUS")
-    if 'ROOT / "brain"' in build or "--hidden-import\",\n        \"brain" in build:
+    if 'ROOT / "brain"' in build or 'add_data(ROOT / "brain"' in build:
         raise AssertionError("release builder must not bundle Brain")
     if '"brain": {"state": "NOT_CONFIGURED"' not in health:
         raise AssertionError("health must report Brain NOT_CONFIGURED")
@@ -32,4 +32,5 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__": raise SystemExit(main())
+if __name__ == "__main__":
+    raise SystemExit(main())
