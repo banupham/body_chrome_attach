@@ -13,7 +13,7 @@
     "taskId": {"type": "string", "minLength": 1},
     "tabId": {
       "oneOf": [
-        {"type": "integer"},
+        {"type": "integer", "minimum": 0},
         {"const": "primary"}
       ]
     },
@@ -44,7 +44,9 @@
           "required": ["kind", "action"],
           "properties": {
             "kind": {"const": "browser_ui"},
-            "action": {"type": "string", "minLength": 1},
+            "action": {
+              "enum": ["back", "forward", "reload", "hardreload", "stop", "newtab", "closetab", "reopentab", "nexttab", "prevtab", "newwindow", "addressbar", "find", "downloads", "history", "devtools", "fullscreen", "bookmark", "zoomin", "zoomout", "zoomreset", "address", "findtext"]
+            },
             "value": {}
           }
         },
@@ -54,7 +56,7 @@
           "required": ["kind", "targetTabId"],
           "properties": {
             "kind": {"const": "tab_switch"},
-            "targetTabId": {"type": "integer"}
+            "targetTabId": {"type": "integer", "minimum": 0}
           }
         }
       ]
