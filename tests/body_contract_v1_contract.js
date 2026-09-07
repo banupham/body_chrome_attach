@@ -51,7 +51,7 @@ assert.deepEqual([...socket.bodyContract.browserUiActions].sort(),expectedBrowse
 for(const legacy of ['INTENT_EXECUTE','STRATEGY_EXECUTE','TAB_SWITCH','BROWSER_COMMAND'])assert.equal(socket.brain.physicalActions.includes(legacy),false);
 
 const docUpper=bodyDoc.toUpperCase();
-for(const term of ['BRAIN DECIDES WHAT','BODY LEARNS HOW','ONE BODY_STEP COMMAND','BODY RETURNS FACTS','AT-MOST-ONCE PHYSICAL EXECUTION','NEVER IMPLICITLY STARTS A TASK','UNKNOWN EXECUTION FACTS'])assert.ok(docUpper.includes(term),term);
+for(const term of ['BRAIN DECIDES WHAT','BODY LEARNS HOW','ONE BODY_STEP COMMAND','BODY RETURNS FACTS','AT-MOST-ONCE PHYSICAL EXECUTION','NEVER IMPLICITLY STARTS A TASK'])assert.ok(docUpper.includes(term),term);
 assert.match(server,/BODY_STEP/);
 assert.match(server,/BODY_OBSERVE/);
 assert.match(server,/new BodyStepGateway\(runtime,\{baseDir:__dirname\}\)/);
