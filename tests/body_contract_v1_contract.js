@@ -28,8 +28,12 @@ assert.equal(result.properties.contractVersion.const,'1.0');
 assert.equal(result.properties.type.const,'BODY_STEP_RESULT');
 assert.ok(result.properties.execution.required.includes('attemptCount'));
 assert.ok(result.properties.execution.required.includes('replayed'));
-assert.equal(result.properties.execution.properties.attemptCount.maximum,1);
+const attemptCountSchema=result.properties.execution.properties.attemptCount;
+assert.ok(attemptCountSchema.oneOf.some(row=>row.type==='integer'&&row.maximum===1));
+assert.ok(attemptCountSchema.oneOf.some(row=>row.type==='null'));
+assert.ok(result.properties.execution.properties.accepted.type.includes('null'));
 assert.ok(result.properties.execution.properties.dispatched.type.includes('null'));
+assert.ok(result.properties.execution.properties.completed.type.includes('null'));
 assert.equal(observation.properties.contractVersion.const,'1.0');
 assert.ok(observation.properties.content.required.includes('page'));
 assert.ok(observation.properties.control.required.includes('activeTarget'));
@@ -47,7 +51,7 @@ assert.deepEqual([...socket.bodyContract.browserUiActions].sort(),expectedBrowse
 for(const legacy of ['INTENT_EXECUTE','STRATEGY_EXECUTE','TAB_SWITCH','BROWSER_COMMAND'])assert.equal(socket.brain.physicalActions.includes(legacy),false);
 
 const docUpper=bodyDoc.toUpperCase();
-for(const term of ['BRAIN DECIDES WHAT','BODY LEARNS HOW','ONE BODY_STEP COMMAND','BODY RETURNS FACTS','AT-MOST-ONCE PHYSICAL EXECUTION','NEVER IMPLICITLY STARTS A TASK'])assert.ok(docUpper.includes(term),term);
+for(const term of ['BRAIN DECIDES WHAT','BODY LEARNS HOW','ONE BODY_STEP COMMAND','BODY RETURNS FACTS','AT-MOST-ONCE PHYSICAL EXECUTION','NEVER IMPLICITLY STARTS A TASK','UNKNOWN EXECUTION FACTS'])assert.ok(docUpper.includes(term),term);
 assert.match(server,/BODY_STEP/);
 assert.match(server,/BODY_OBSERVE/);
 assert.match(server,/new BodyStepGateway\(runtime,\{baseDir:__dirname\}\)/);
