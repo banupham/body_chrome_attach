@@ -77,15 +77,40 @@ class DaemonBridge{
     if(session?.remove){const pending=session.remove(this.pointerStorageKey(id));pending?.catch?.(()=>{});}return removed;
   }
   async start(){if(this.started)return this.status();this.started=true;await this.identity();this.installTabListeners();await this.connect();return this.status();}
-  scheduleReconnect(){clearTimeout(this.reconnectTimer);if(this.started)this.reconnectTimer=setTimeout(()=>{this.connect().catch(()=>{});},1200);}
+  socketActive(socket=this.socket){return Boolean(socket&&(socket.readyState===0||socket.readyState===1));}
+  scheduleReconnect(){
+    clearTimeout(this.reconnectTimer);
+    if(!this.started)return;
+    this.reconnectTimer=setTimeout(()=>{
+      if(this.socketActive())return;
+      this.connect().catch(()=>{});
+    },1200);
+  }
   async endpointUrl(){if(this.urlOverride&&this.url)return this.url;const endpoint=await this.resolveEndpoint(this.chrome,{fetchImpl:this.fetchImpl});this.url=endpoint.wsUrl;return this.url;}
   async connect(){
-    clearTimeout(this.reconnectTimer);if(this.connecting)return this.connecting;
+    clearTimeout(this.reconnectTimer);
+    if(this.socketActive())return this.status();
+    if(this.connecting)return this.connecting;
     this.connecting=(async()=>{
-      let url;try{url=await this.endpointUrl();}catch{this.scheduleReconnect();return;}
-      let socket;try{socket=new this.WebSocketImpl(url);}catch{this.scheduleReconnect();return;}this.socket=socket;
-      socket.onopen=async()=>{const tabs=await this.tabSnapshot();this.send({type:'HELLO',role:'extension',protocolVersion:PROTOCOL_VERSION,token:this.authToken||null,extensionVersion:this.chrome.runtime.getManifest().version,runtimeExtensionId:this.chrome.runtime.id,tabs});clearInterval(this.keepaliveTimer);this.keepaliveTimer=setInterval(()=>this.send({type:'KEEPALIVE',ts:Date.now()}),20000);};
-      socket.onmessage=event=>this.onMessage(event.data);socket.onerror=()=>{try{socket.close();}catch{}};socket.onclose=()=>{clearInterval(this.keepaliveTimer);this.readinessStatus=null;if(this.socket===socket)this.socket=null;this.scheduleReconnect();};
+      if(this.socketActive())return this.status();
+      let url;try{url=await this.endpointUrl();}catch{this.scheduleReconnect();return this.status();}
+      if(this.socketActive())return this.status();
+      let socket;try{socket=new this.WebSocketImpl(url);}catch{this.scheduleReconnect();return this.status();}
+      this.socket=socket;
+      socket.onopen=async()=>{
+        if(this.socket!==socket){try{socket.close();}catch{}return;}
+        const tabs=await this.tabSnapshot();
+        if(this.socket!==socket||socket.readyState!==1)return;
+        this.send({type:'HELLO',role:'extension',protocolVersion:PROTOCOL_VERSION,token:this.authToken||null,extensionVersion:this.chrome.runtime.getManifest().version,runtimeExtensionId:this.chrome.runtime.id,tabs});
+        clearInterval(this.keepaliveTimer);this.keepaliveTimer=setInterval(()=>{if(this.socket===socket)this.send({type:'KEEPALIVE',ts:Date.now()});},20000);
+      };
+      socket.onmessage=event=>{if(this.socket===socket)this.onMessage(event.data);};
+      socket.onerror=()=>{if(this.socket!==socket)return;try{socket.close();}catch{}};
+      socket.onclose=()=>{
+        if(this.socket!==socket)return;
+        clearInterval(this.keepaliveTimer);this.readinessStatus=null;this.socket=null;this.scheduleReconnect();
+      };
+      return this.status();
     })();
     try{return await this.connecting;}finally{this.connecting=null;}
   }
