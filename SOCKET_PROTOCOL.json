@@ -1,5 +1,6 @@
 {
   "controlProtocolVersion": 7,
+  "bodyContractVersion": "1.0",
   "extensionProtocolCompatibility": [5, 6],
   "url": "ws://127.0.0.1:8765",
   "transportRole": "internal Company Runtime transport; not the product's primary command port",
@@ -23,12 +24,29 @@
   },
   "brain": {
     "hello": {"type": "HELLO", "role": "brain", "protocolVersion": 7, "controllerId": "brain-instance", "token": "required"},
-    "queries": ["BODY_STATUS", "EXTENSIONS_LIST", "BROWSERS_LIST", "TABS_LIST", "TASKS_LIST", "TASK_GET", "ENVIRONMENT_STATUS"],
+    "queries": ["BODY_STATUS", "BODY_OBSERVE", "EXTENSIONS_LIST", "BROWSERS_LIST", "TABS_LIST", "TASKS_LIST", "TASK_GET", "ENVIRONMENT_STATUS"],
     "managerActions": ["TASK_CREATE", "TASK_APPROVE", "TASK_START", "TASK_COMPLETE", "TASK_FAIL", "TASK_CANCEL", "ENVIRONMENT_PROBE", "ENVIRONMENT_PROBE_ALL"],
-    "physicalActions": ["INTENT_EXECUTE", "STRATEGY_EXECUTE", "TAB_SWITCH", "BROWSER_COMMAND"],
-    "physicalActionRequirement": "taskId is required; TaskManager resolves browserInstanceId/extension/tab ownership and Browser must be Environment-eligible before BODY execution",
+    "physicalActions": ["BODY_STEP"],
+    "physicalActionRequirement": "BODY_STEP requires contractVersion=1.0, taskId, stepId and exactly one Body step; TaskManager resolves Browser/Tab ownership and Browser eligibility before the one physical attempt",
+    "legacyPhysicalActionsRejected": ["INTENT_EXECUTE", "STRATEGY_EXECUTE", "TAB_SWITCH", "BROWSER_COMMAND"],
     "events": ["BODY_EVENT"],
     "freeformCommandStrings": false
+  },
+  "bodyContract": {
+    "version": "1.0",
+    "observeCommand": "BODY_OBSERVE",
+    "observeResult": "BODY_OBSERVE_RESULT",
+    "stepCommand": "BODY_STEP",
+    "stepResult": "BODY_STEP_RESULT",
+    "invariants": [
+      "one BODY_STEP command requests one Body step and produces one result",
+      "BODY returns facts and technical execution state, never task judgment",
+      "Brain alone decides semantic success/failure and next step",
+      "BODY learning changes HOW, never WHAT goal to pursue",
+      "Human and Agent provenance remain separate",
+      "Brain never accesses CDP/native-input/MotorLearning internals directly"
+    ],
+    "forbiddenJudgmentFields": ["success", "taskSuccess", "verified", "verification", "goalAchieved", "correct", "wrong", "shouldRetry", "nextAction", "recommendedAction"]
   },
   "environmentGuardian": {
     "scope": "Browser Instance, never individual Tabs",
@@ -59,13 +77,13 @@
     "command": {"type": "COMMAND", "requestId": "id", "command": "status"},
     "purpose": "manual smoke testing and diagnostics only"
   },
-  "pageMotor": {"capability": "HUMAN_MOTOR", "planner": "src/canonical_motor_planner.js", "allowedCdpMethods": ["Input.dispatchMouseEvent", "Input.dispatchKeyEvent"]},
-  "browserUi": {"capability": "BROWSER_UI", "executionBackend": "persistent Windows SendInput worker", "resultTruth": "delivered, observed effect, verified and taskSuccess are separate concepts"},
+  "pageMotor": {"capability": "HUMAN_MOTOR", "planner": "src/canonical_motor_planner.js", "allowedCdpMethods": ["Input.dispatchMouseEvent", "Input.dispatchKeyEvent"], "brainVisibility": "internal only; Brain uses BODY_STEP"},
+  "browserUi": {"capability": "BROWSER_UI", "executionBackend": "persistent Windows SendInput worker plus bounded browser API fast path", "brainVisibility": "internal only; Brain uses BODY_STEP"},
   "extension": {
     "hello": {"type": "HELLO", "role": "extension", "protocolVersion": "5 or 6", "browserInstanceId": "persistent logical Chrome identity", "extensionId": "persistent extensionInstanceId", "token": "paired token or null on first pairing"},
     "authEvents": ["AUTH_PAIRED", "AUTH_ERROR"],
-    "requests": ["PING", "LIST_TABS", "ACTIVE_TAB", "ENVIRONMENT_PROBE", "BODY_EXECUTE", "BODY_DETACH", "TAB_SWITCH", "FOCUS_WINDOW", "BROWSER_UI_END", "RECORD_SET", "CURSOR_SET"],
-    "events": ["RECORDER_EVENT", "TAB_EVENT", "TAB_CONTEXT", "TAB_REMOVED", "KEEPALIVE"]
+    "requests": ["PING", "LIST_TABS", "ACTIVE_TAB", "POINTER_STATUS", "ENVIRONMENT_PROBE", "BODY_EXECUTE", "BODY_DETACH", "TAB_SWITCH", "FOCUS_WINDOW", "BROWSER_UI_END", "RECORD_SET", "CURSOR_SET"],
+    "events": ["RECORDER_EVENT", "SEMANTIC_OBSERVATION", "TAB_EVENT", "TAB_CONTEXT", "TAB_REMOVED", "KEEPALIVE"]
   },
   "trainingGroundTruth": "human-only",
   "executionCapabilities": ["HUMAN_MOTOR", "BROWSER_UI"]

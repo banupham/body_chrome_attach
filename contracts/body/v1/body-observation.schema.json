@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "body-observation.schema.json",
+  "title": "BodyObservation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "observedAt", "scope", "bodyState", "control", "content", "environment", "freshness"],
+  "properties": {
+    "contractVersion": {"const": "1.0"},
+    "observedAt": {"type": "integer", "minimum": 0},
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["browserInstanceId", "tabId"],
+      "properties": {
+        "browserInstanceId": {"type": "string", "minLength": 1},
+        "extensionInstanceId": {"type": ["string", "null"]},
+        "tabId": {"type": "integer"},
+        "siteKey": {"type": ["string", "null"]},
+        "title": {"type": ["string", "null"]},
+        "windowId": {"type": ["integer", "null"]},
+        "navigationToken": {"type": ["string", "null"]},
+        "navigationEpoch": {"type": ["integer", "null"]},
+        "status": {"type": ["string", "null"]}
+      }
+    },
+    "bodyState": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["pointer", "browserState", "activeTabId"],
+      "properties": {
+        "pointer": {"type": "object"},
+        "browserState": {"type": "string"},
+        "activeTabId": {"type": ["integer", "null"]}
+      }
+    },
+    "control": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["lastObservedTarget", "semanticControls"],
+      "properties": {
+        "lastObservedTarget": {"type": ["object", "null"]},
+        "semanticControls": {"type": ["object", "null"]}
+      }
+    },
+    "content": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["tabContext", "semantic"],
+      "properties": {
+        "tabContext": {"type": ["object", "null"]},
+        "semantic": {"type": ["object", "null"]}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["online", "browserState", "eligible", "status", "reasons"],
+      "properties": {
+        "online": {"type": "boolean"},
+        "browserState": {"type": "string"},
+        "eligible": {"type": "boolean"},
+        "status": {"type": "string"},
+        "reasons": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tabContextAgeMs", "semanticAgeMs", "controlAgeMs"],
+      "properties": {
+        "tabContextAgeMs": {"type": ["integer", "null"], "minimum": 0},
+        "semanticAgeMs": {"type": ["integer", "null"], "minimum": 0},
+        "controlAgeMs": {"type": ["integer", "null"], "minimum": 0}
+      }
+    }
+  }
+}
