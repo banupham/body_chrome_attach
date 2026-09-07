@@ -38,7 +38,7 @@ function technicalError(error){const message=String(error?.message||error||'body
 function actionName(step){if(step?.kind==='motor')return String(step.intent?.type||'unknown');if(step?.kind==='browser_ui')return String(step.action||'unknown');if(step?.kind==='tab_switch')return 'switchTab';return null;}
 
 function validateBodyStepCommand(message){
-  if(!message||typeof message!=='object'||Array.isArray(message))throw errorWithCode('body_step_command_required');
+  if(!message||typeof message!!=='object'||Array.isArray(message))throw errorWithCode('body_step_command_required');
   if(String(message.contractVersion||'')!==BODY_CONTRACT_VERSION)throw errorWithCode('body_contract_version_mismatch');
   if(message.type!=='BODY_STEP')throw errorWithCode('body_step_type_required');
   if(!nonEmpty(message.stepId))throw errorWithCode('body_step_id_required');
@@ -54,22 +54,14 @@ function validateBodyStepCommand(message){
   if(step.kind==='tab_switch'&&!finiteInteger(step.targetTabId))throw errorWithCode('body_target_tab_required');
   const tabId=message.tabId===undefined||message.tabId===null?'primary':message.tabId;
   if(tabId!=='primary'&&!finiteInteger(tabId))throw errorWithCode('body_tab_ref_invalid');
-  return {
-    contractVersion:BODY_CONTRACT_VERSION,
-    type:'BODY_STEP',
-    requestId:message.requestId??null,
-    stepId:String(message.stepId),
-    taskId:String(message.taskId),
-    tabId:tabId==='primary'?'primary':Number(tabId),
-    step:clone(step)
-  };
+  return {contractVersion:BODY_CONTRACT_VERSION,type:'BODY_STEP',requestId:message.requestId??null,stepId:String(message.stepId),taskId:String(message.taskId),tabId:tabId==='primary'?'primary':Number(tabId),step:clone(step)};
 }
 
 class BodyStepGateway{
   constructor(runtime,{now=()=>Date.now()}={}){
     if(!runtime)throw new Error('body_step_gateway_runtime_required');
     this.runtime=runtime;this.now=now;
-    this.semantic=new Map();this.tabContext=new Map();this.controls=new Map();
+    this.semantic=new Map();this.page=new Map();this.tabContext=new Map();this.controls=new Map();
   }
   key(browserInstanceId,tabId){return `${String(browserInstanceId||'')}/${Number(tabId)}`;}
   identityForExtension(extensionId){return this.runtime.identityForExtension(extensionId);}
@@ -96,9 +88,25 @@ class BodyStepGateway{
     const control={tag:target.tag??null,role:target.role??null,inputType:target.inputType??null,editable:target.editable===true,sensitive:target.sensitive===true,rect:target.rect?clone(target.rect):null,source:String(msg.event?.source||'unknown')};
     return this._put(this.controls,identity.browserInstanceId,tabId,control,msg.event?.ts);
   }
-  clearTab(browserInstanceId,tabId){const key=this.key(browserInstanceId,tabId);return {semantic:this.semantic.delete(key),tabContext:this.tabContext.delete(key),control:this.controls.delete(key)};}
-  clearBrowser(browserInstanceId){const prefix=`${String(browserInstanceId||'')}/`;let cleared=0;for(const map of [this.semantic,this.tabContext,this.controls])for(const key of [...map.keys()])if(key.startsWith(prefix)){map.delete(key);cleared++;}return cleared;}
-  status(){return {contractVersion:BODY_CONTRACT_VERSION,cachedSemantic:this.semantic.size,cachedTabContext:this.tabContext.size,cachedControls:this.controls.size};}
+  ingestLiveSnapshot(extensionId,tabId,snapshot={}){
+    const identity=this.identityForExtension(extensionId),browserInstanceId=identity?.browserInstanceId;if(!browserInstanceId||!finiteInteger(tabId)||!snapshot||typeof snapshot!=='object')return null;
+    const at=finiteNumber(snapshot.observedAt)?Number(snapshot.observedAt):this.now();
+    if(snapshot.tab)this._put(this.tabContext,browserInstanceId,tabId,{...snapshot.tab,contextSource:'live_eyes_snapshot'},at);
+    if(snapshot.page)this._put(this.page,browserInstanceId,tabId,snapshot.page,at);
+    if(snapshot.semantic)this._put(this.semantic,browserInstanceId,tabId,snapshot.semantic,finiteNumber(snapshot.semantic?.observedAt)?snapshot.semantic.observedAt:at);
+    return {browserInstanceId,tabId:Number(tabId),pointer:snapshot.pointer?clone(snapshot.pointer):null,observedAt:at};
+  }
+  async refreshEyes(browserInstanceId,extensionInstanceId,tabId){
+    if(!extensionInstanceId||typeof this.runtime.requestExtension!=='function')return {attempted:false,succeeded:false,pointer:null};
+    try{
+      const snapshot=await this.runtime.requestExtension(extensionInstanceId,'BODY_OBSERVE_SNAPSHOT',{tabId:Number(tabId)},5000),ingested=this.ingestLiveSnapshot(extensionInstanceId,tabId,snapshot);
+      if(!ingested||ingested.browserInstanceId!==browserInstanceId)throw errorWithCode('body_eyes_scope_mismatch');
+      return {attempted:true,succeeded:true,pointer:ingested.pointer};
+    }catch(error){return {attempted:true,succeeded:false,pointer:null,error:technicalError(error)};}
+  }
+  clearTab(browserInstanceId,tabId){const key=this.key(browserInstanceId,tabId);return {semantic:this.semantic.delete(key),page:this.page.delete(key),tabContext:this.tabContext.delete(key),control:this.controls.delete(key)};}
+  clearBrowser(browserInstanceId){const prefix=`${String(browserInstanceId||'')}/`;let cleared=0;for(const map of [this.semantic,this.page,this.tabContext,this.controls])for(const key of [...map.keys()])if(key.startsWith(prefix)){map.delete(key);cleared++;}return cleared;}
+  status(){return {contractVersion:BODY_CONTRACT_VERSION,cachedSemantic:this.semantic.size,cachedPage:this.page.size,cachedTabContext:this.tabContext.size,cachedControls:this.controls.size};}
 
   scopeForObservation(request={}){
     if(nonEmpty(request.taskId)){
@@ -119,30 +127,20 @@ class BodyStepGateway{
   async observe(request={}){
     const {browserInstanceId,tabId}=this.scopeForObservation(request),browser=this.runtime.browsers.require(browserInstanceId),tab=browser.tabs.get(Number(tabId));
     if(!tab)throw errorWithCode('body_observe_tab_not_found');
-    const extensionInstanceId=browser.extensionInstanceId||null,identity=this.runtime.identity.identityChain(browserInstanceId)||{browserInstanceId,extensionInstanceId};
-    let pointer=this.runtime.pointerState.snapshot(identity,tabId);
-    if(browser.online&&extensionInstanceId){try{pointer=await this.runtime.pointerStatus(extensionInstanceId,tabId);}catch{}}
-    const key=this.key(browserInstanceId,tabId),semanticRow=this.semantic.get(key)||null,contextRow=this.tabContext.get(key)||null,controlRow=this.controls.get(key)||null,now=this.now();
-    const context=contextRow?.value||null,semantic=semanticRow?.value||null;
+    const extensionInstanceId=browser.extensionInstanceId||null,identity=this.runtime.identity.identityChain(browserInstanceId)||{browserInstanceId,extensionInstanceId},refresh=browser.online?await this.refreshEyes(browserInstanceId,extensionInstanceId,tabId):{attempted:false,succeeded:false,pointer:null};
+    let pointer=refresh.pointer||this.runtime.pointerState.snapshot(identity,tabId);
+    if(!refresh.pointer&&browser.online&&extensionInstanceId){try{pointer=await this.runtime.pointerStatus(extensionInstanceId,tabId);}catch{}}
+    const key=this.key(browserInstanceId,tabId),semanticRow=this.semantic.get(key)||null,pageRow=this.page.get(key)||null,contextRow=this.tabContext.get(key)||null,controlRow=this.controls.get(key)||null,now=this.now();
+    const context=contextRow?.value||null,page=pageRow?.value||null,semantic=semanticRow?.value||null;
     const observation={
       contractVersion:BODY_CONTRACT_VERSION,
       observedAt:now,
-      scope:{
-        browserInstanceId,
-        extensionInstanceId,
-        tabId:Number(tabId),
-        siteKey:context?.siteKey??tab.siteKey??null,
-        title:context?.title??tab.title??null,
-        windowId:optionalInteger(context?.windowId??tab.windowId),
-        navigationToken:context?.navigationToken??tab.navigationToken??null,
-        navigationEpoch:optionalInteger(context?.navigationEpoch??tab.navigationEpoch),
-        status:context?.status??tab.status??null
-      },
+      scope:{browserInstanceId,extensionInstanceId,tabId:Number(tabId),siteKey:context?.siteKey??tab.siteKey??null,title:context?.title??tab.title??null,windowId:optionalInteger(context?.windowId??tab.windowId),navigationToken:context?.navigationToken??tab.navigationToken??null,navigationEpoch:optionalInteger(context?.navigationEpoch??tab.navigationEpoch),status:context?.status??tab.status??null},
       bodyState:{pointer:clone(pointer),browserState:String(browser.state||'UNKNOWN'),activeTabId:optionalInteger(browser.activeTabId)},
-      control:{lastObservedTarget:controlRow?clone(controlRow.value):null,semanticControls:semantic?.controls?clone(semantic.controls):null},
-      content:{tabContext:context?clone(context):null,semantic:semantic?clone(semantic):null},
+      control:{activeTarget:page?.activeTarget?clone(page.activeTarget):null,lastObservedTarget:controlRow?clone(controlRow.value):null,semanticControls:semantic?.controls?clone(semantic.controls):null},
+      content:{tabContext:context?clone(context):null,page:page?clone(page):null,semantic:semantic?clone(semantic):null},
       environment:{online:browser.online===true,browserState:String(browser.state||'UNKNOWN'),eligible:browser.environment?.eligible===true,status:String(browser.environment?.status||'UNKNOWN'),reasons:Array.isArray(browser.environment?.reasons)?browser.environment.reasons.map(String):[]},
-      freshness:{tabContextAgeMs:ageMs(now,contextRow),semanticAgeMs:ageMs(now,semanticRow),controlAgeMs:ageMs(now,controlRow)}
+      freshness:{liveRefreshAttempted:refresh.attempted===true,liveRefreshSucceeded:refresh.succeeded===true,tabContextAgeMs:ageMs(now,contextRow),pageAgeMs:ageMs(now,pageRow),semanticAgeMs:ageMs(now,semanticRow),controlAgeMs:ageMs(now,controlRow)}
     };
     return stripJudgment(observation);
   }
@@ -171,7 +169,7 @@ class BodyStepGateway{
     const tabRef=command.step.kind==='tab_switch'?Number(command.step.targetTabId):command.tabId;
     let context=null,before=null,after=null,raw=null,accepted=false,attempted=false;
     try{
-      context=this.runtime.tasks.executionContext(command.taskId,tabRef);accepted=true;
+      context=this.runtime.tasks.executionContext(command.taskId,tabRef,{autoStart:false});accepted=true;
       before=await this.observe({browserInstanceId:context.browserInstanceId,tabId:context.tabId});
       attempted=true;
       if(command.step.kind==='motor')raw=await this.runtime.executeIntent(command.step.intent,{extensionId:context.extensionInstanceId,tabId:context.tabId});
