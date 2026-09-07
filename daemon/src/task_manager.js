@@ -64,8 +64,10 @@ class TaskManager{
   recover(taskId,{retry=false}={}){return this._mutate(()=>{const task=this.get(taskId);if(task.state!=='RECOVERY_REQUIRED')throw new Error(`task_not_recovery_required:${task.taskId}`);if(retry){for(const tabId of task.workspace.tabIds)this.browserManager.assertTab(task.workspace.browserInstanceId,tabId);task.state='READY';task.error=null;}else{this._release(task);task.state='FAILED';task.error='recovery_rejected';}task.updatedAt=this._ts();return clone(task);});}
   finish(taskId,state,payload=null){return this._mutate(()=>{const task=this.get(taskId),next=String(state||'').toUpperCase();if(!['COMPLETED','FAILED','CANCELLED'].includes(next))throw new Error(`invalid_task_terminal_state:${next}`);this._release(task);task.state=next;task.updatedAt=this._ts();if(next==='COMPLETED')task.result=clone(payload);else task.error=payload==null?null:String(payload);return clone(task);});}
 
-  executionContext(taskId,tabRef='primary'){
-    let task=this.get(taskId);if(task.state==='READY'){this.start(task.taskId);task=this.get(taskId);}else if(task.state!=='RUNNING')throw new Error(`task_not_executable:${task.taskId}:${task.state}`);
+  executionContext(taskId,tabRef='primary',{autoStart=true}={}){
+    let task=this.get(taskId);
+    if(task.state==='READY'&&autoStart){this.start(task.taskId);task=this.get(taskId);}
+    else if(task.state!=='RUNNING')throw new Error(`task_not_executable:${task.taskId}:${task.state}`);
     const tabId=tabRef==='primary'||tabRef==null?task.workspace.primaryTabId:Number(tabRef);if(!task.workspace.tabIds.includes(Number(tabId)))throw new Error(`tab_not_owned_by_task:${task.taskId}:${tabId}`);
     const browser=this.browserManager.require(task.workspace.browserInstanceId);if(!browser.online)throw new Error(`browser_offline:${browser.browserInstanceId}`);this.browserManager.assertTab(browser.browserInstanceId,tabId);
     return {taskId:task.taskId,browserInstanceId:browser.browserInstanceId,extensionInstanceId:browser.extensionInstanceId,tabId:Number(tabId),policy:clone(task.policy)};
