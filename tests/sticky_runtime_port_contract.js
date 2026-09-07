@@ -20,6 +20,12 @@ assert.equal(runtimeServer.options.marker, true);
 assert.equal(runtimeServer.bodyRuntimePortMode, 'remembered_auto_port');
 assert.equal(runtimeServer.bodyRuntimeRequestedPort, 54321);
 
+const productWs = { WebSocketServer: FakeWebSocketServer, Server: FakeWebSocketServer };
+assert.equal(installStickyRuntimePort(productWs, 53147, 'bodybrain_product_port'), true);
+const productServer = new productWs.WebSocketServer({ host: '127.0.0.1', port: 0 });
+assert.equal(productServer.options.port, 53147);
+assert.equal(productServer.bodyRuntimePortMode, 'bodybrain_product_port');
+
 const unrelatedServer = new fakeWs.WebSocketServer({ host: '0.0.0.0', port: 0 });
 assert.equal(unrelatedServer.options.port, 0);
 
