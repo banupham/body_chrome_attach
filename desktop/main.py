@@ -54,13 +54,35 @@ def _handle_autostart(args: argparse.Namespace) -> int | None:
     return None
 
 
+def _readiness_reason(readiness: dict) -> str | None:
+    reason = str(readiness.get("reason") or "").strip()
+    if reason:
+        return reason
+    for row in list(readiness.get("browsers") or []):
+        row_reason = str(row.get("reason") or "").strip()
+        if row_reason:
+            return row_reason
+    return None
+
+
 def _apply_readiness(health: HealthModel, readiness: dict) -> None:
     rows = list(readiness.get("browsers") or [])
-    health.set_subsystem("extensionConnectivity", "READY" if rows else "WAITING", None if rows else "extension_not_connected")
+    connected_rows = [row for row in rows if str(row.get("reason") or "") != "browser_offline"]
+    if connected_rows:
+        health.set_subsystem("extensionConnectivity", "READY")
+    elif rows:
+        health.set_subsystem("extensionConnectivity", "WAITING", "browser_offline")
+    else:
+        health.set_subsystem("extensionConnectivity", "WAITING", "extension_not_connected")
+
     state = str(readiness.get("state") or "CHECKING")
-    if state == "READY": health.set_subsystem("guardian", "READY")
-    elif state == "BLOCKED": health.set_subsystem("guardian", "BLOCKED", str(readiness.get("reason") or "browser_blocked"))
-    else: health.set_subsystem("guardian", "WAITING", str(readiness.get("reason") or "guardian_check_pending"))
+    reason = _readiness_reason(readiness)
+    if state == "READY":
+        health.set_subsystem("guardian", "READY")
+    elif state == "BLOCKED":
+        health.set_subsystem("guardian", "BLOCKED", reason or "browser_blocked")
+    else:
+        health.set_subsystem("guardian", "WAITING", reason or "guardian_check_pending")
     health.set_subsystem("brain", "NOT_CONFIGURED", "separate_research_track")
 
 
