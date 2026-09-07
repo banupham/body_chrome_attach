@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { runtimeDataDir } = require('./runtime_data_dir');
 
 const RUNTIME_ENDPOINT_VERSION = 2;
 const RUNTIME_PORT_VERSION = 1;
@@ -17,11 +18,15 @@ function validPort(value) {
   return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null;
 }
 
-function endpointPaths(baseDir) {
+function endpointPaths(baseDir, env = process.env) {
+  const dataRoot = runtimeDataDir(baseDir, env);
   return {
-    state: path.join(baseDir, 'state', RUNTIME_ENDPOINT_FILENAME),
-    port: path.join(baseDir, 'state', RUNTIME_PORT_FILENAME),
-    lock: path.join(baseDir, 'state', RUNTIME_LOCK_FILENAME),
+    state: path.join(dataRoot, 'state', RUNTIME_ENDPOINT_FILENAME),
+    port: path.join(dataRoot, 'state', RUNTIME_PORT_FILENAME),
+    lock: path.join(dataRoot, 'state', RUNTIME_LOCK_FILENAME),
+    // Development builds may still mirror the live endpoint into dist. For a
+    // packed Extension this path normally does not exist, so no package file is
+    // mutated at runtime.
     extension: path.join(baseDir, '..', 'dist', RUNTIME_ENDPOINT_FILENAME)
   };
 }
