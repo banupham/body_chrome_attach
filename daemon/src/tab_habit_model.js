@@ -1,7 +1,9 @@
 'use strict';
 
 const fs=require('node:fs');
+const path=require('node:path');
 const {SafeJsonPersistence}=require('./safe_json_persistence');
+const {configuredRuntimeDataDir}=require('./runtime_data_dir');
 
 function normalizeIdentity(value,fallbackRef=null){
   if(value&&typeof value==='object'){
@@ -15,8 +17,9 @@ function normalizeIdentity(value,fallbackRef=null){
 }
 
 class TabHabitModel {
-  constructor(file,{persistenceOptions={},resolveIdentity=null}={}) {
-    this.file=file;
+  constructor(file,{persistenceOptions={},resolveIdentity=null,env=process.env}={}) {
+    const dataRoot=configuredRuntimeDataDir(env);
+    this.file=dataRoot?path.join(dataRoot,'profiles',path.basename(file)):file;
     this.resolveIdentity=typeof resolveIdentity==='function'?resolveIdentity:null;
     this.state={
       version:2,
