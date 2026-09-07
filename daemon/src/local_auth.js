@@ -3,14 +3,16 @@
 const crypto=require('node:crypto');
 const fs=require('node:fs');
 const path=require('node:path');
+const {runtimeDataDir}=require('./runtime_data_dir');
 
 function token(){return crypto.randomBytes(32).toString('hex');}
 function digest(value){return crypto.createHash('sha256').update(String(value||'')).digest('hex');}
 function secureEqualHex(a,b){const aa=Buffer.from(String(a||''),'hex'),bb=Buffer.from(String(b||''),'hex');return aa.length===bb.length&&aa.length>0&&crypto.timingSafeEqual(aa,bb);}
 
 class LocalAuth{
-  constructor(baseDir){
-    this.dir=path.join(baseDir,'profiles','.auth');
+  constructor(baseDir,{env=process.env}={}){
+    const resolvedBaseDir=runtimeDataDir(baseDir,env);
+    this.dir=path.join(resolvedBaseDir,'profiles','.auth');
     this.debugClientPath=path.join(this.dir,'client.token');
     this.brainPath=path.join(this.dir,'brain.token');
     this.extensionsPath=path.join(this.dir,'extensions.json');
