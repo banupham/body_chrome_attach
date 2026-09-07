@@ -2,7 +2,7 @@
   "controlProtocolVersion": 7,
   "bodyContractVersion": "1.0",
   "extensionProtocolCompatibility": [5, 6],
-  "url": "ws://127.0.0.1:53147",
+  "url": "ws://127.0.0.1:43147",
   "transportRole": "internal Company Runtime transport; not the product's primary command port",
   "desktopHost": {
     "runtimeConfig": "config/bodybrain-runtime.json",
