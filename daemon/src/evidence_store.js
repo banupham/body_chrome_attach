@@ -3,6 +3,7 @@
 const crypto=require('node:crypto');
 const fs=require('node:fs');
 const path=require('node:path');
+const {configuredRuntimeDataDir}=require('./runtime_data_dir');
 
 function safeSegment(raw,fallback='unknown'){
   const value=String(raw||fallback).toLowerCase().replace(/[^a-z0-9._-]+/g,'_').replace(/^_+|_+$/g,'');
@@ -18,12 +19,13 @@ function hashRecord(record){
 function clone(value){return JSON.parse(JSON.stringify(value));}
 
 class EvidenceStore{
-  constructor(baseDir,{now=()=>Date.now(),randomBytes=size=>crypto.randomBytes(size)}={}){
-    this.baseDir=baseDir;
+  constructor(baseDir,{now=()=>Date.now(),randomBytes=size=>crypto.randomBytes(size),env=process.env}={}){
+    const dataRoot=configuredRuntimeDataDir(env);
+    this.baseDir=dataRoot?path.join(dataRoot,'evidence'):baseDir;
     this.now=now;
     this.randomBytes=randomBytes;
     this.lastHashByFile=new Map();
-    fs.mkdirSync(baseDir,{recursive:true});
+    fs.mkdirSync(this.baseDir,{recursive:true});
   }
 
   _file(identity,siteKey){
