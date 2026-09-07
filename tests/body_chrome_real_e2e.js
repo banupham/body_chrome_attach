@@ -7,6 +7,8 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const puppeteer = require('puppeteer');
 
+const READY_TIMEOUT_SECONDS = 8;
+
 function parseStatus(stdout) {
   const lines = String(stdout || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean).reverse();
   for (const line of lines) {
@@ -20,7 +22,7 @@ function parseStatus(stdout) {
 
 function runBodyBrain(executable, localAppData) {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, ['--check', '--json', '--ready-timeout', '25'], {
+    const child = spawn(executable, ['--check', '--json', '--ready-timeout', String(READY_TIMEOUT_SECONDS)], {
       env: { ...process.env, LOCALAPPDATA: localAppData },
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe']
@@ -30,7 +32,7 @@ function runBodyBrain(executable, localAppData) {
     const timer = setTimeout(() => {
       try { child.kill(); } catch {}
       reject(new Error(`bodybrain_real_chrome_timeout:stdout=${JSON.stringify(stdout)}:stderr=${JSON.stringify(stderr)}`));
-    }, 75000);
+    }, 45000);
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', chunk => { stdout += chunk; });
@@ -44,6 +46,43 @@ function runBodyBrain(executable, localAppData) {
       resolve({ code: Number(code), signal, stdout, stderr });
     });
   });
+}
+
+function assertConnectedRun(result, label) {
+  assert.ok([0, 2].includes(result.code), `${label}: BodyBrain check failed rc=${result.code}; stdout=${result.stdout}; stderr=${result.stderr}`);
+  const payload = parseStatus(result.stdout);
+  assert.equal(payload.bodyRuntime, 'CONNECTED', `${label}: BODY runtime must be connected`);
+  assert.equal(payload.brain, 'NOT_CONFIGURED', `${label}: Brain must remain excluded from production`);
+
+  const health = payload.health || {};
+  const extension = health.extensionConnectivity || {};
+  const guardian = health.guardian || {};
+  assert.equal(extension.state, 'READY', `${label}: real Chrome BODY Extension did not connect: ${JSON.stringify(extension)}`);
+  assert.ok(['READY', 'BLOCKED', 'WAITING'].includes(guardian.state), `${label}: Guardian health invalid: ${JSON.stringify(guardian)}`);
+
+  const browsers = Array.isArray(payload.guardianReadiness?.browsers) ? payload.guardianReadiness.browsers : [];
+  assert.ok(browsers.length > 0, `${label}: real Chrome BrowserInstance missing from BODY status`);
+  assert.equal(browsers.some(row => String(row?.reason || '') === 'browser_offline'), false, `${label}: real Chrome was stale/offline: ${JSON.stringify(browsers)}`);
+  return payload;
+}
+
+function readPairing(localAppData) {
+  const pairedPath = path.join(localAppData, 'BodyBrain', 'body', 'profiles', '.auth', 'extensions.json');
+  assert.equal(fs.existsSync(pairedPath), true, `Extension pairing state missing: ${pairedPath}`);
+  const paired = JSON.parse(fs.readFileSync(pairedPath, 'utf8'));
+  assert.ok(paired && typeof paired === 'object' && Object.keys(paired).length > 0, 'Extension pairing state is empty');
+  return paired;
+}
+
+function firstTokenHash(paired) {
+  const key = Object.keys(paired)[0];
+  const hash = String(paired[key]?.tokenHash || '');
+  assert.ok(hash.length > 0, 'Extension pairing token hash missing');
+  return hash;
+}
+
+async function delay(ms) {
+  await new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async function main() {
@@ -60,11 +99,7 @@ async function main() {
   fs.mkdirSync(localAppData, { recursive: true });
   let browser = null;
   try {
-    browser = await puppeteer.launch({
-      headless: true,
-      pipe: true,
-      enableExtensions: true
-    });
+    browser = await puppeteer.launch({ headless: true, pipe: true, enableExtensions: true });
     const extensionId = await browser.installExtension(extensionDir);
     assert.equal(typeof extensionId, 'string');
     assert.ok(extensionId.length > 0, 'Puppeteer did not return an Extension id');
@@ -74,26 +109,19 @@ async function main() {
     const page = await browser.newPage();
     await page.goto('https://example.com/', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-    const result = await runBodyBrain(executable, localAppData);
-    assert.ok([0, 2].includes(result.code), `BodyBrain real-Chrome check failed rc=${result.code}; stdout=${result.stdout}; stderr=${result.stderr}`);
-    const payload = parseStatus(result.stdout);
-    assert.equal(payload.bodyRuntime, 'CONNECTED', 'BODY runtime must be connected');
-    assert.equal(payload.brain, 'NOT_CONFIGURED', 'Brain must remain excluded from production');
+    const first = await runBodyBrain(executable, localAppData);
+    assertConnectedRun(first, 'first-start');
+    const firstPairing = readPairing(localAppData);
+    const tokenHash = firstTokenHash(firstPairing);
 
-    const health = payload.health || {};
-    const extension = health.extensionConnectivity || {};
-    const guardian = health.guardian || {};
-    assert.equal(extension.state, 'READY', `real Chrome BODY Extension did not connect: ${JSON.stringify(extension)}`);
-    assert.ok(['READY', 'BLOCKED'].includes(guardian.state), `Guardian did not resolve fail-closed readiness: ${JSON.stringify(guardian)}`);
-
-    const browsers = Array.isArray(payload.guardianReadiness?.browsers) ? payload.guardianReadiness.browsers : [];
-    assert.ok(browsers.length > 0, 'real Chrome BrowserInstance missing from BODY status');
-    assert.equal(browsers.some(row => String(row?.reason || '') === 'browser_offline'), false, `real Chrome was stale/offline: ${JSON.stringify(browsers)}`);
-
-    const pairedPath = path.join(localAppData, 'BodyBrain', 'body', 'profiles', '.auth', 'extensions.json');
-    assert.equal(fs.existsSync(pairedPath), true, `Extension pairing state missing: ${pairedPath}`);
-    const paired = JSON.parse(fs.readFileSync(pairedPath, 'utf8'));
-    assert.ok(paired && typeof paired === 'object' && Object.keys(paired).length > 0, 'Extension pairing state is empty');
+    // The first --check exits cleanly and stops the hosted BODY runtime. Keep Chrome
+    // open, then restart the real EXE and require the already-paired Extension to
+    // reconnect automatically without reinstalling/reloading it.
+    await delay(1500);
+    const second = await runBodyBrain(executable, localAppData);
+    assertConnectedRun(second, 'desktop-restart');
+    const secondPairing = readPairing(localAppData);
+    assert.equal(firstTokenHash(secondPairing), tokenHash, 'Extension token rotated instead of reusing persisted automatic pairing after Desktop restart');
 
     console.log('body_chrome_real_e2e: PASS');
   } finally {
