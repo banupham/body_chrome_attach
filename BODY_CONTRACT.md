@@ -119,11 +119,11 @@ MotorLearning may choose physical implementation details such as learned traject
 BODY may return factual execution/observation data such as:
 
 ```text
-command accepted/rejected
-physical attempt count (0 or 1)
+command accepted/rejected/unknown
+physical attempt count (0, 1, or unknown)
 whether this result was replayed
 physical dispatch true / false / unknown
-physical step completed or interrupted
+physical step completed / interrupted / unknown
 technical error code/message
 pointer before/after
 current tab/browser identity
@@ -135,6 +135,8 @@ observation freshness
 ```
 
 If a lower layer fails after an attempt begins and BODY cannot prove whether any physical input was already dispatched, `dispatched` is `null`. BODY must not turn unknown into false.
+
+For `body_step_outcome_unknown` after a durable `RESERVED` state survives a crash/restart, BODY cannot prove the prior execution facts; `accepted`, `attemptCount`, `dispatched`, and `completed` are therefore `null` and the step is not physically executed again.
 
 Technical completion is not semantic task success.
 
