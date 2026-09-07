@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from desktop.autostart import autostart_command
 from desktop.body_client import BodyClient, _encode_client_frame
 from desktop.config import load_runtime_config
 
@@ -85,7 +86,16 @@ class DesktopHostContractTest(unittest.TestCase):
         supervisor = (ROOT / "desktop" / "supervisor.py").read_text(encoding="utf-8")
         self.assertIn("bodybrain-runtime.json", build)
         self.assertIn('env["BODY_RUNTIME_PORT"]', supervisor)
+        self.assertIn('env["BODY_RUNTIME_DATA_DIR"]', supervisor)
+        self.assertIn('env["BODY_WINDOWS_INPUT_HELPER_EXE"]', supervisor)
+        self.assertIn('runtime" / "node" / "node.exe"', supervisor)
         self.assertEqual(runtime["port"], 43147)
+
+    def test_packaged_runtime_uses_persistent_auth_and_evidence_roots(self):
+        supervisor = (ROOT / "desktop" / "supervisor.py").read_text(encoding="utf-8")
+        main = (ROOT / "desktop" / "main.py").read_text(encoding="utf-8")
+        self.assertIn('self.body_data_dir / "profiles" / ".auth" / "brain.token"', supervisor)
+        self.assertIn('evidence_root=paths["body"] / "evidence"', main)
 
     def test_windows_launcher_preserves_python_exit_code(self):
         launcher = (ROOT / "bodybrain.cmd").read_text(encoding="utf-8").lower()
@@ -93,6 +103,20 @@ class DesktopHostContractTest(unittest.TestCase):
         self.assertIn("goto use_py", launcher)
         self.assertIn("goto use_python", launcher)
         self.assertGreaterEqual(launcher.count("exit /b %errorlevel%"), 2)
+
+    def test_packaged_autostart_runs_same_executable_in_background(self):
+        command = autostart_command(Path("C:/Program Files/BodyBrain/BodyBrain.exe"))
+        self.assertTrue(command.startswith('"'))
+        self.assertTrue(command.endswith('" --background'))
+        main = (ROOT / "desktop" / "main.py").read_text(encoding="utf-8")
+        self.assertIn("hide_console_window()", main)
+        self.assertIn("--install-autostart", main)
+        self.assertIn("--remove-autostart", main)
+
+    def test_windows_input_prefers_bundled_helper_when_supplied(self):
+        source = (ROOT / "daemon" / "src" / "windows_native_input.js").read_text(encoding="utf-8")
+        self.assertIn("BODY_WINDOWS_INPUT_HELPER_EXE", source)
+        self.assertIn("[[bundled,['worker']]]", source)
 
 
 if __name__ == "__main__":
