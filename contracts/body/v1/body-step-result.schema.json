@@ -25,11 +25,16 @@
       "additionalProperties": false,
       "required": ["accepted", "attemptCount", "replayed", "dispatched", "completed", "commandId", "error"],
       "properties": {
-        "accepted": {"type": "boolean"},
-        "attemptCount": {"type": "integer", "minimum": 0, "maximum": 1},
+        "accepted": {"type": ["boolean", "null"]},
+        "attemptCount": {
+          "oneOf": [
+            {"type": "integer", "minimum": 0, "maximum": 1},
+            {"type": "null"}
+          ]
+        },
         "replayed": {"type": "boolean"},
         "dispatched": {"type": ["boolean", "null"]},
-        "completed": {"type": "boolean"},
+        "completed": {"type": ["boolean", "null"]},
         "commandId": {"type": ["string", "null"]},
         "plannedLowLevelSteps": {"type": ["integer", "null"], "minimum": 0},
         "completedLowLevelSteps": {"type": ["integer", "null"], "minimum": 0},
