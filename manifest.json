@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Body Chrome Attach",
-  "version": "0.7.0",
-  "description": "Authenticated Chrome adapter for the single Company Runtime with Browser identity, TaskWorkspace-scoped BODY execution, and read-only environment validation.",
+  "version": "0.8.0",
+  "description": "Learnable BODY adapter implementing Body Contract v1: factual Eyes/Proprioception, Human-derived Motor learning, and one-step Brain execution through the local Company Runtime.",
   "minimum_chrome_version": "125",
   "permissions": ["debugger", "tabs", "activeTab", "storage", "proxy", "scripting", "privacy", "system.cpu", "system.memory", "system.display"],
   "host_permissions": ["*://*/*"],
