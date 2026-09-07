@@ -17,8 +17,8 @@ class DesktopHostContractTest(unittest.TestCase):
     def test_shared_runtime_contract_is_local_and_versioned(self):
         config = load_runtime_config(ROOT / "config" / "bodybrain-runtime.json")
         self.assertEqual(config.host, "127.0.0.1")
-        self.assertGreaterEqual(config.port, 49152)
-        self.assertLessEqual(config.port, 65535)
+        self.assertGreaterEqual(config.port, 1024)
+        self.assertLess(config.port, 49152, "fixed product listener should stay below the default Windows dynamic port range")
         self.assertEqual(config.control_protocol_version, 7)
         self.assertEqual(config.body_contract_version, "1.0")
 
@@ -85,7 +85,14 @@ class DesktopHostContractTest(unittest.TestCase):
         supervisor = (ROOT / "desktop" / "supervisor.py").read_text(encoding="utf-8")
         self.assertIn("bodybrain-runtime.json", build)
         self.assertIn('env["BODY_RUNTIME_PORT"]', supervisor)
-        self.assertEqual(runtime["port"], 53147)
+        self.assertEqual(runtime["port"], 43147)
+
+    def test_windows_launcher_preserves_python_exit_code(self):
+        launcher = (ROOT / "bodybrain.cmd").read_text(encoding="utf-8").lower()
+        self.assertNotIn("if %errorlevel%", launcher)
+        self.assertIn("goto use_py", launcher)
+        self.assertIn("goto use_python", launcher)
+        self.assertGreaterEqual(launcher.count("exit /b %errorlevel%"), 2)
 
 
 if __name__ == "__main__":
