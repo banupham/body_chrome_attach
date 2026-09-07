@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+import argparse
+import json
+import signal
+import sys
+import time
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from desktop.body_client import BodyClient, BodyClientError
+from desktop.config import load_runtime_config
+from desktop.supervisor import BodyRuntimeSupervisor, SupervisorError
+
+
+class StopRequested:
+    value = False
+
+
+def _install_signal_handlers() -> None:
+    def stop(_signum, _frame):
+        StopRequested.value = True
+
+    signal.signal(signal.SIGINT, stop)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, stop)
+
+
+def _print(payload, as_json: bool = False) -> None:
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        return
+    if isinstance(payload, str):
+        print(payload)
+    else:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def parser() -> argparse.ArgumentParser:
+    value = argparse.ArgumentParser(description="BodyBrain desktop host: Guardian + Brain shell + BODY Core")
+    value.add_argument("--check", action="store_true", help="start runtime, report one readiness snapshot, then exit")
+    value.add_argument("--json", action="store_true", help="emit machine-readable status lines")
+    value.add_argument("--ready-timeout", type=float, default=None, help="seconds to wait for a READY Browser before entering monitor mode")
+    return value
+
+
+def run(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(argv)
+    config = load_runtime_config()
+    _install_signal_handlers()
+    supervisor = BodyRuntimeSupervisor(config)
+    client: BodyClient | None = None
+    try:
+        supervisor.start()
+        client = BodyClient(config, supervisor.read_brain_token())
+        hello = client.connect()
+        wait_timeout = config.startup_timeout_seconds if args.ready_timeout is None else max(0.1, args.ready_timeout)
+        readiness = client.wait_for_ready(wait_timeout)
+        status = {
+            "product": "BodyBrain",
+            "desktop": "RUNNING",
+            "bodyRuntime": "CONNECTED",
+            "bodyContractVersion": hello.get("bodyContractVersion"),
+            "controlProtocolVersion": hello.get("protocolVersion"),
+            "guardianReadiness": readiness,
+        }
+        _print(status, args.json)
+        if args.check:
+            return 0 if readiness.get("state") == "READY" else 2
+
+        last = json.dumps(readiness, sort_keys=True)
+        while not StopRequested.value:
+            time.sleep(config.readiness_poll_seconds)
+            try:
+                current = client.readiness()
+            except (BodyClientError, OSError) as exc:
+                _print({"product": "BodyBrain", "state": "ERROR", "error": str(exc)}, args.json)
+                return 1
+            serialized = json.dumps(current, sort_keys=True)
+            if serialized != last:
+                _print({"product": "BodyBrain", "guardianReadiness": current}, args.json)
+                last = serialized
+        return 0
+    except (SupervisorError, BodyClientError, OSError, ValueError) as exc:
+        _print({"product": "BodyBrain", "state": "ERROR", "error": str(exc)}, args.json)
+        return 1
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+        supervisor.stop()
+
+
+if __name__ == "__main__":
+    raise SystemExit(run())

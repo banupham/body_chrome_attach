@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const pkg = require('../package.json');
+const runtimeConfig = require('../config/bodybrain-runtime.json');
 const { EXPECTED_ENTRIES, listZipEntries } = require('../tools/package_extension');
 
 const root = path.join(__dirname, '..');
@@ -24,8 +25,9 @@ assert.equal(listZipEntries(zip).some(name => name.endsWith('.pem')), false, 're
 
 const endpoint = JSON.parse(fs.readFileSync(path.join(dist, 'runtime-endpoint.json'), 'utf8'));
 assert.equal(endpoint.active, false, 'release endpoint must start inactive');
-assert.equal(endpoint.port, null, 'release endpoint must not embed a build-machine runtime port');
-assert.equal(endpoint.wsUrl, null, 'release endpoint must not embed a build-machine websocket URL');
+assert.equal(endpoint.host, runtimeConfig.host, 'release endpoint host must match BodyBrain runtime contract');
+assert.equal(endpoint.port, runtimeConfig.port, 'release endpoint must use the product bootstrap port, never a developer-machine port');
+assert.equal(endpoint.wsUrl, `ws://${runtimeConfig.host}:${runtimeConfig.port}`, 'release websocket URL must be deterministic');
 
 for (const name of EXPECTED_ENTRIES.filter(name => name.endsWith('.js'))) {
   const text = fs.readFileSync(path.join(dist, name), 'utf8');

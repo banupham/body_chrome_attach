@@ -19,8 +19,12 @@ jobs:
         run: npm install
       - name: Verify
         run: npm run verify
-      - name: Check Windows native helper syntax
-        run: python3 -m py_compile daemon/native/windows_input.py
+      - name: Check Python runtime syntax
+        run: python3 -m py_compile daemon/native/windows_input.py desktop/__init__.py desktop/config.py desktop/body_client.py desktop/supervisor.py desktop/main.py tests/desktop_host_contract.py tests/desktop_runtime_smoke.py
+      - name: Verify BodyBrain desktop contract
+        run: python3 tests/desktop_host_contract.py
+      - name: Smoke BodyBrain desktop runtime
+        run: python3 tests/desktop_runtime_smoke.py
       - name: Upload Chrome BODY extension package
         uses: actions/upload-artifact@v4
         with:
@@ -40,3 +44,5 @@ jobs:
           python-version: '3.12'
       - name: Validate Win32 INPUT ABI
         run: python daemon/native/windows_input.py selftest
+      - name: Verify BodyBrain desktop contract on Windows
+        run: python tests/desktop_host_contract.py
