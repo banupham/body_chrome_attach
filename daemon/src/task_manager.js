@@ -4,6 +4,7 @@ const crypto=require('node:crypto');
 const path=require('node:path');
 const fs=require('node:fs');
 const {SafeJsonPersistence}=require('./safe_json_persistence');
+const {runtimeDataDir}=require('./runtime_data_dir');
 
 const TASK_STATES=new Set(['READY','WAITING_APPROVAL','RUNNING','RECOVERY_REQUIRED','COMPLETED','FAILED','CANCELLED','REJECTED']);
 const POLICY_CLASSES=new Set(['SAFE_AUTO','HUMAN_APPROVED','RESTRICTED']);
@@ -31,9 +32,10 @@ class TaskPolicyGate{
 }
 
 class TaskManager{
-  constructor(baseDir,browserManager,{uuid=()=>crypto.randomUUID(),now=()=>Date.now()}={}){
+  constructor(baseDir,browserManager,{uuid=()=>crypto.randomUUID(),now=()=>Date.now(),env=process.env}={}){
     if(!browserManager)throw new Error('task_manager_browser_manager_required');
-    this.browserManager=browserManager;this.uuid=uuid;this.now=now;this.policy=new TaskPolicyGate();this.dir=path.join(baseDir,'state');this.file=path.join(this.dir,'tasks.json');fs.mkdirSync(this.dir,{recursive:true});
+    const resolvedBaseDir=runtimeDataDir(baseDir,env);
+    this.browserManager=browserManager;this.uuid=uuid;this.now=now;this.policy=new TaskPolicyGate();this.dir=path.join(resolvedBaseDir,'state');this.file=path.join(this.dir,'tasks.json');fs.mkdirSync(this.dir,{recursive:true});
     this.state=this._load();this.tabOwners=new Map();this._rebuildOwners();
     this.persistence=new SafeJsonPersistence(this.file,{getValue:()=>this.state,debounceMs:0,retryAfterMs:1000,log:null});
     let recovered=false;for(const task of Object.values(this.state.tasks)){if(task.state==='RUNNING'){task.state='RECOVERY_REQUIRED';task.error='daemon_restart_during_running_task';task.updatedAt=this._ts();recovered=true;}}
