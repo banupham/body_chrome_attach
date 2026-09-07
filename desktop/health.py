@@ -19,8 +19,8 @@ class HealthModel:
         self._subsystems = {
             "guardian": {"state": "NOT_STARTED", "reason": None},
             "bodyRuntime": {"state": "NOT_STARTED", "reason": None},
-            "extensionConnectivity": {"state": "UNKNOWN", "reason": "not_integrated_in_phase_2"},
-            "brain": {"state": "NOT_STARTED", "reason": None},
+            "extensionConnectivity": {"state": "WAITING", "reason": "extension_not_connected"},
+            "brain": {"state": "NOT_CONFIGURED", "reason": "separate_research_track"},
         }
         self._workers: dict[str, dict[str, Any]] = {}
 
