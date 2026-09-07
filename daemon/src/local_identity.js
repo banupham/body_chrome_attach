@@ -4,6 +4,7 @@ const crypto=require('node:crypto');
 const fs=require('node:fs');
 const path=require('node:path');
 const {SafeJsonPersistence}=require('./safe_json_persistence');
+const {runtimeDataDir}=require('./runtime_data_dir');
 
 const ID_PATTERN=/^[A-Za-z0-9._:-]+$/;
 
@@ -18,8 +19,9 @@ function clone(value){return JSON.parse(JSON.stringify(value));}
 
 class LocalIdentityStore{
   constructor(baseDir,{env=process.env,uuid=()=>crypto.randomUUID(),now=()=>Date.now()}={}){
-    this.baseDir=baseDir;
-    this.dir=path.join(baseDir,'identity');
+    const resolvedBaseDir=runtimeDataDir(baseDir,env);
+    this.baseDir=resolvedBaseDir;
+    this.dir=path.join(resolvedBaseDir,'identity');
     this.companyPath=path.join(this.dir,'company.json');
     this.devicePath=path.join(this.dir,'device.json');
     this.browsersPath=path.join(this.dir,'browsers.json');
