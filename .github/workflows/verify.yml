@@ -35,7 +35,7 @@ jobs:
           brain/__init__.py brain/contracts.py brain/store.py brain/data_factory.py brain/context_builder.py brain/director.py brain/feedback.py brain/runtime.py
           tools/build_bodybrain_release.py
           tests/desktop_host_contract.py tests/desktop_runtime_smoke.py tests/brain_v1_runtime_contract.py
-          tests/brain_evidence_integrity_contract.py tests/brain_evidence_cross_runtime_contract.py tests/bodybrain_exe_smoke.py
+          tests/brain_evidence_integrity_contract.py tests/brain_evidence_cross_runtime_contract.py tests/bodybrain_exe_smoke.py tests/bodybrain_release_manifest_contract.py
       - name: Verify BodyBrain desktop contract
         run: python3 tests/desktop_host_contract.py
       - name: Verify Brain v1 data and Director contract
@@ -71,3 +71,40 @@ jobs:
         run: python tests/brain_v1_runtime_contract.py
       - name: Verify Brain evidence integrity on Windows
         run: python tests/brain_evidence_integrity_contract.py
+
+  release-windows:
+    needs: [verify, windows-native-input]
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Node dependencies
+        run: npm install
+      - name: Build Chrome BODY Extension package
+        run: npm run extension:package
+      - name: Install release builder
+        run: python -m pip install -r requirements-release.txt
+      - name: Build one-file BodyBrain.exe
+        run: python tools/build_bodybrain_release.py
+      - name: Smoke actual BodyBrain.exe twice
+        run: python tests/bodybrain_exe_smoke.py artifacts/BodyBrain.exe
+      - name: Verify release hashes and boundary
+        run: python tests/bodybrain_release_manifest_contract.py
+      - name: Upload BodyBrain Windows release
+        uses: actions/upload-artifact@v4
+        with:
+          name: bodybrain-windows-release-${{ github.sha }}
+          path: |
+            artifacts/BodyBrain.exe
+            artifacts/bodybrain-release-v*.json
+            artifacts/body-chrome-attach-v*.zip
+          if-no-files-found: error
+          retention-days: 14
