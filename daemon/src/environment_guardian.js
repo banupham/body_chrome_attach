@@ -5,6 +5,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const {SafeJsonPersistence}=require('./safe_json_persistence');
 const {DeviceNetworkProbe}=require('./device_network_probe');
+const {runtimeDataDir}=require('./runtime_data_dir');
 
 function envBool(value,fallback){const raw=String(value??'').trim().toLowerCase();if(!raw)return fallback;if(['1','true','yes','on'].includes(raw))return true;if(['0','false','no','off'].includes(raw))return false;return fallback;}
 function envInt(value,fallback,min,max){const n=Number(value);return Number.isFinite(n)?Math.max(min,Math.min(max,Math.round(n))):fallback;}
@@ -17,8 +18,9 @@ function transientHttpProbe(probe={}){const pageAvailable=probe?.pageEnvironment
 class EnvironmentGuardian{
   constructor(baseDir,browserManager,{requestExtension,env=process.env,deviceProbe=new DeviceNetworkProbe({env}),now=()=>Date.now()}={}){
     if(!browserManager||typeof requestExtension!=='function')throw new Error('environment_guardian_dependencies_required');this.browserManager=browserManager;this.requestExtension=requestExtension;this.env=env||{};this.deviceProbe=deviceProbe;this.now=now;
+    const resolvedBaseDir=runtimeDataDir(baseDir,this.env);
     this.policy={directOnly:envBool(this.env.BODY_ENV_DIRECT_ONLY,true),requireUniquePublicIp:envBool(this.env.BODY_ENV_REQUIRE_UNIQUE_PUBLIC_IP,true),requireUniqueEnvironmentSignature:envBool(this.env.BODY_ENV_REQUIRE_UNIQUE_SIGNATURE,true),strictEnvironmentConsistency:envBool(this.env.BODY_ENV_STRICT_CONSISTENCY,false),deepFingerprintEnabled:envBool(this.env.BODY_ENV_DEEP_FINGERPRINT_ENABLED,true),deepBlockHighSuspicion:envBool(this.env.BODY_ENV_DEEP_BLOCK_HIGH_SUSPICION,true),deepMinCoveragePercent:envInt(this.env.BODY_ENV_DEEP_MIN_COVERAGE_PERCENT,50,0,100),observationTtlMs:Math.max(10000,Number(this.env.BODY_ENV_OBSERVATION_TTL_MS)||300000),publicIpEndpoint:String(this.env.BODY_PUBLIC_IP_ENDPOINT||'https://api.ipify.org?format=json'),probeTimeoutMs:Math.max(1000,Math.min(15000,Number(this.env.BODY_ENV_PROBE_TIMEOUT_MS)||6000))};
-    this.file=path.join(baseDir,'state','environment.json');fs.mkdirSync(path.dirname(this.file),{recursive:true});this.state=this._load();this.persistence=new SafeJsonPersistence(this.file,{getValue:()=>this.state,debounceMs:0,retryAfterMs:1000,log:null});this.inflight=new Map();
+    this.file=path.join(resolvedBaseDir,'state','environment.json');fs.mkdirSync(path.dirname(this.file),{recursive:true});this.state=this._load();this.persistence=new SafeJsonPersistence(this.file,{getValue:()=>this.state,debounceMs:0,retryAfterMs:1000,log:null});this.inflight=new Map();
   }
   _load(){if(!fs.existsSync(this.file))return {schemaVersion:1,baselines:{},observations:{}};let data;try{data=JSON.parse(fs.readFileSync(this.file,'utf8'));}catch{throw new Error('environment_state_invalid_json');}if(Number(data.schemaVersion)!==1||!data.baselines||!data.observations)throw new Error('environment_state_invalid');return data;}
   _persist(){this.persistence.schedule();const result=this.persistence.flushSync();if(!result.ok)throw new Error(`environment_state_persistence_failed:${result.lastError?.code||'UNKNOWN'}`);return result;}
