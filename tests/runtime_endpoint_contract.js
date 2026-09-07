@@ -143,7 +143,7 @@ function tmp(name) {
 
   let fetchedUrl = null;
   let fetchedOptions = null;
-  const storageState = {};
+  const storageState = { [RUNTIME_ENDPOINT_PORT_STORAGE_KEY]: 62001 };
   const chromeApi = {
     runtime: { getURL: name => `chrome-extension://runtime-id/${name}` },
     storage: {
@@ -165,11 +165,11 @@ function tmp(name) {
   assert.equal(endpoint.source, 'resource');
   assert.match(fetchedUrl, /runtime-endpoint\.json\?v=123$/);
   assert.equal(fetchedOptions.cache, 'no-store');
-  assert.equal(storageState[RUNTIME_ENDPOINT_PORT_STORAGE_KEY], 61234);
+  assert.equal(storageState[RUNTIME_ENDPOINT_PORT_STORAGE_KEY], 61234, 'packaged resource must replace a stale stored port');
 
   fetchedUrl = null;
   const persisted = await resolveRuntimeEndpoint(chromeApi, {
-    fetchImpl: async () => { throw new Error('resource_should_not_be_needed'); }
+    fetchImpl: async () => { throw new Error('resource_unavailable'); }
   });
   assert.equal(persisted.port, 61234);
   assert.equal(persisted.source, 'storage');
@@ -189,8 +189,10 @@ function tmp(name) {
   assert.match(launcher, /sticky_runtime_port_preload\.js/);
   assert.match(preload, /preferredRuntimePort/);
   assert.match(preload, /installStickyRuntimePort/);
+  assert.match(preload, /BODY_RUNTIME_PORT/);
   assert.match(build, /ensureRememberedRuntimePort/);
-  assert.match(build, /inactiveRecord\(rememberedPort\)/);
+  assert.match(build, /bodybrain-runtime\.json/);
+  assert.match(build, /inactiveRecord\(endpointPort\)/);
 
   console.log('runtime_endpoint_contract: PASS');
 })().catch(error => {
