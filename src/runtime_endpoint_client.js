@@ -41,20 +41,31 @@ async function rememberRuntimeEndpoint(chromeApi, endpoint) {
   return true;
 }
 
-async function resolveRuntimeEndpoint(chromeApi, { fetchImpl = globalThis.fetch, cacheBust = () => Date.now(), ignoreStored = false } = {}) {
-  if (!ignoreStored) {
-    const stored = await readPersistedRuntimeEndpoint(chromeApi);
-    if (stored) return stored;
-  }
+async function readPackagedRuntimeEndpoint(chromeApi, { fetchImpl = globalThis.fetch, cacheBust = () => Date.now() } = {}) {
   if (!chromeApi?.runtime?.getURL) throw new Error('runtime_endpoint_chrome_url_unavailable');
   if (typeof fetchImpl !== 'function') throw new Error('runtime_endpoint_fetch_unavailable');
   const base = chromeApi.runtime.getURL(RUNTIME_ENDPOINT_RESOURCE);
   const separator = base.includes('?') ? '&' : '?';
   const response = await fetchImpl(`${base}${separator}v=${encodeURIComponent(String(cacheBust()))}`, { cache: 'no-store' });
   if (!response?.ok) throw new Error(`runtime_endpoint_fetch_failed:${response?.status ?? 'unknown'}`);
-  const endpoint = normalizeRuntimeEndpoint(await response.json(), { allowInactiveKnownPort: true });
-  await rememberRuntimeEndpoint(chromeApi, endpoint).catch(() => {});
-  return { ...endpoint, source: 'resource' };
+  return normalizeRuntimeEndpoint(await response.json(), { allowInactiveKnownPort: true });
+}
+
+async function resolveRuntimeEndpoint(chromeApi, { fetchImpl = globalThis.fetch, cacheBust = () => Date.now(), ignoreStored = false } = {}) {
+  let resourceError = null;
+  try {
+    const endpoint = await readPackagedRuntimeEndpoint(chromeApi, { fetchImpl, cacheBust });
+    await rememberRuntimeEndpoint(chromeApi, endpoint).catch(() => {});
+    return { ...endpoint, source: 'resource' };
+  } catch (error) {
+    resourceError = error;
+  }
+
+  if (!ignoreStored) {
+    const stored = await readPersistedRuntimeEndpoint(chromeApi);
+    if (stored) return stored;
+  }
+  throw resourceError || new Error('runtime_endpoint_unavailable');
 }
 
 module.exports = {
@@ -65,5 +76,6 @@ module.exports = {
   normalizeRuntimeEndpoint,
   readPersistedRuntimeEndpoint,
   rememberRuntimeEndpoint,
+  readPackagedRuntimeEndpoint,
   resolveRuntimeEndpoint
 };
