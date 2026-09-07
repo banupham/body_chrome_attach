@@ -1,6 +1,11 @@
 'use strict';
 
 function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+function requirePointerStart(context={}){
+  const x=Number(context?.pointerStart?.x),y=Number(context?.pointerStart?.y);
+  if(!Number.isFinite(x)||!Number.isFinite(y)){const error=new Error('pointer_state_required');error.code='pointer_state_required';throw error;}
+  return {x,y};
+}
 
 function mapTemplatePath(template,start,end) {
   const dx=end.x-start.x;
@@ -149,7 +154,7 @@ class MotorPlanner {
   _pointer(intent,context) {
     const rect=this._targetRect(intent);
     const center={x:rect.x+rect.width/2,y:rect.y+rect.height/2};
-    const start=context.pointerStart || {x:400,y:300};
+    const start=requirePointerStart(context);
     const distance=Math.hypot(center.x-start.x,center.y-start.y);
     const learned=this.model.sampleMouse({action:intent.type==='doubleClick'?'click':intent.type==='focus'?'click':intent.type,role:intent.role||'unknown',distance,targetWidth:rect.width,targetHeight:rect.height});
 
@@ -179,7 +184,7 @@ class MotorPlanner {
     const start={x:Number(intent.x1),y:Number(intent.y1)};
     const end={x:Number(intent.x2),y:Number(intent.y2)};
     if (![start.x,start.y,end.x,end.y].every(Number.isFinite)) throw new Error('drag_coordinates_required');
-    const approach=bootstrapMove(context.pointerStart||{x:400,y:300},start);
+    const approach=bootstrapMove(requirePointerStart(context),start);
     const distance=Math.hypot(end.x-start.x,end.y-start.y);
     const learned=this.model.sampleMouse({action:'drag',role:intent.role||'unknown',distance,targetWidth:12,targetHeight:12});
     let dragPath,source='bootstrap';
@@ -198,7 +203,7 @@ class MotorPlanner {
     const delta=Number(intent.delta??intent.amount);
     if(!Number.isFinite(delta)) throw new Error('scroll_delta_required');
     const learned=this.model.sampleScroll(action,delta);
-    const p=context.pointerStart || {x:500,y:400};
+    const p=requirePointerStart(context);
     const steps=[];
     if(learned) {
       const t=learned.template;
@@ -244,4 +249,4 @@ class MotorPlanner {
   }
 }
 
-module.exports={MotorPlanner,mapTemplatePath,bootstrapMove,comboSteps};
+module.exports={MotorPlanner,mapTemplatePath,bootstrapMove,comboSteps,requirePointerStart};
