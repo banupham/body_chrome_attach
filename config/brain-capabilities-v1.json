@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "capabilities": {
+    "youtube.search": {
+      "autonomy": 2,
+      "policyClass": "SAFE_AUTO",
+      "allowedActions": ["search"],
+      "blockedActions": [],
+      "minimumEvidenceRecords": 1,
+      "strategies": {
+        "SEARCH_ENTER": {
+          "semanticSteps": ["focus_search", "type_query", "press_enter"],
+          "expectedEffect": {
+            "effectType": "page_state",
+            "expected": {
+              "pageType": "search"
+            }
+          }
+        }
+      }
+    }
+  }
+}
