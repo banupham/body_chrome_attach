@@ -11,7 +11,7 @@ const root=path.join(__dirname,'..');
 test('manifest exposes status popup and only approved runtime/Guardian permissions',()=>{
   const manifest=JSON.parse(fs.readFileSync(path.join(root,'manifest.json'),'utf8'));
   assert.equal(manifest.action.default_popup,'pairing.html');
-  assert.deepEqual(manifest.permissions,['debugger','tabs','activeTab','storage','proxy','scripting','privacy','system.cpu','system.memory','system.display']);
+  assert.deepEqual(manifest.permissions,['debugger','tabs','activeTab','storage','alarms','proxy','scripting','privacy','system.cpu','system.memory','system.display']);
   for(const forbidden of ['cookies','history','webRequest','webRequestBlocking','nativeMessaging','management'])assert.equal(manifest.permissions.includes(forbidden),false,`unexpected privileged permission: ${forbidden}`);
 });
 
@@ -37,6 +37,17 @@ test('popup shows only compact readiness state and contains no manual pairing in
   assert.match(worker,/storage\.local\.remove\('bodyDaemonAuthToken'\)/);
   assert.doesNotMatch(worker,/body\.pair['"]/);
   assert.match(worker,/automatic_local/);
+});
+
+test('service worker has a Chrome-alarm reconnect backstop for Desktop restarts and MV3 suspension',()=>{
+  const worker=fs.readFileSync(path.join(root,'src','service_worker_entry.js'),'utf8');
+  assert.match(worker,/DAEMON_WAKE_ALARM\s*=\s*'body-daemon-wake'/);
+  assert.match(worker,/DAEMON_WAKE_PERIOD_MINUTES\s*=\s*0\.5/);
+  assert.match(worker,/chrome\.alarms\.onAlarm\.addListener/);
+  assert.match(worker,/periodInMinutes:\s*DAEMON_WAKE_PERIOD_MINUTES/);
+  assert.match(worker,/type:\s*'KEEPALIVE'/);
+  assert.match(worker,/daemon\.connect\(\)\.catch/);
+  assert.match(worker,/chrome\.runtime\.onStartup\.addListener/);
 });
 
 test('Guardian page overlay is passive, periodic, and maps readiness to three compact states',()=>{

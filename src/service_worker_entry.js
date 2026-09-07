@@ -11,6 +11,8 @@ const pendingPageContextByTab = new Map();
 const MAX_OBSERVED_EVENTS_PER_TAB = 1500;
 const PAGE_CONTEXT_RETRY_MS = 250;
 const PAGE_CONTEXT_RETRY_WINDOW_MS = 15000;
+const DAEMON_WAKE_ALARM = 'body-daemon-wake';
+const DAEMON_WAKE_PERIOD_MINUTES = 0.5;
 let pageContextRetryTimer = null;
 let pageContextRetryStartedAt = 0;
 
@@ -128,6 +130,22 @@ async function resetLocalPairing() {
   return { reset: true, paired: false, automaticReconnect: true };
 }
 
+async function ensureDaemonWakeAlarm() {
+  if (!chrome.alarms?.get || !chrome.alarms?.create) return false;
+  const current = await chrome.alarms.get(DAEMON_WAKE_ALARM);
+  if (!current) await chrome.alarms.create(DAEMON_WAKE_ALARM, { periodInMinutes: DAEMON_WAKE_PERIOD_MINUTES });
+  return true;
+}
+
+function wakeDaemonConnection() {
+  if (daemon.socket?.readyState === 1) {
+    daemon.send({ type: 'KEEPALIVE', ts: Date.now(), source: 'alarm' });
+    return true;
+  }
+  daemon.connect().catch(() => {});
+  return false;
+}
+
 function result(sendResponse, work) {
   Promise.resolve().then(work)
     .then(value => sendResponse({ ok: true, result: value }))
@@ -188,10 +206,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
+if (chrome.alarms?.onAlarm) {
+  chrome.alarms.onAlarm.addListener(alarm => {
+    if (alarm?.name !== DAEMON_WAKE_ALARM) return;
+    wakeDaemonConnection();
+  });
+}
+
+chrome.runtime.onStartup.addListener(() => {
+  ensureDaemonWakeAlarm().then(() => wakeDaemonConnection()).catch(() => {});
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  ensureDaemonWakeAlarm().then(() => wakeDaemonConnection()).catch(() => {});
+});
+
 chrome.debugger.onDetach.addListener(debuggee => {
   const tabId = Number(debuggee?.tabId);
   if (Number.isInteger(tabId)) gateway.attachedTabs.delete(tabId);
 });
+
+ensureDaemonWakeAlarm().catch(() => {});
 
 daemon.start()
   .then(status => {
