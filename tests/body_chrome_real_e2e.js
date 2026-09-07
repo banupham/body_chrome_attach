@@ -95,13 +95,36 @@ async function delay(ms) {
   await new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function remoteValue(arg) {
-  return arg?.value ?? arg?.unserializableValue ?? arg?.description ?? arg?.type ?? 'unknown';
-}
-
 function pushBounded(target, value, limit = 80) {
   target.push(value);
   if (target.length > limit) target.shift();
+}
+
+async function remoteValue(client, arg) {
+  if (Object.prototype.hasOwnProperty.call(arg || {}, 'value')) return arg.value;
+  if (arg?.unserializableValue !== undefined) return arg.unserializableValue;
+  if (arg?.objectId) {
+    try {
+      const response = await client.send('Runtime.getProperties', {
+        objectId: arg.objectId,
+        ownProperties: true,
+        accessorPropertiesOnly: false,
+        generatePreview: false
+      });
+      const object = {};
+      for (const property of response?.result || []) {
+        if (!property?.name || !property?.value) continue;
+        const value = property.value;
+        object[property.name] = Object.prototype.hasOwnProperty.call(value, 'value')
+          ? value.value
+          : (value.unserializableValue ?? value.description ?? value.type ?? null);
+      }
+      return object;
+    } catch (error) {
+      return { description: arg.description || arg.type || 'object', propertyError: String(error?.message || error) };
+    }
+  }
+  return arg?.description ?? arg?.type ?? 'unknown';
 }
 
 async function startWorkerDiagnostics(extension) {
@@ -114,7 +137,9 @@ async function startWorkerDiagnostics(extension) {
     if (attached.has(url)) return;
     attached.add(url);
     worker.client.on('Runtime.consoleAPICalled', event => {
-      pushBounded(diagnostics.console, { at: Date.now(), type: event.type, args: (event.args || []).map(remoteValue) });
+      Promise.all((event.args || []).map(arg => remoteValue(worker.client, arg)))
+        .then(args => pushBounded(diagnostics.console, { at: Date.now(), type: event.type, args }))
+        .catch(error => pushBounded(diagnostics.setupErrors, { at: Date.now(), url, error: `console_decode:${String(error?.message || error)}` }, 20));
     });
     worker.client.on('Runtime.exceptionThrown', event => {
       pushBounded(diagnostics.exceptions, { at: Date.now(), exception: event.exceptionDetails?.exception?.description || event.exceptionDetails?.text || 'unknown' }, 40);
