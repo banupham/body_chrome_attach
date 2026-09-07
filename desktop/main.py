@@ -12,6 +12,13 @@ if __package__ in {None, ""}:
 
 from brain.runtime import BrainRuntimeError, GoalRunner
 from brain.store import BrainStore
+from desktop.autostart import (
+    AutostartError,
+    autostart_status,
+    hide_console_window,
+    install_autostart,
+    remove_autostart,
+)
 from desktop.body_client import BodyClient, BodyClientError
 from desktop.config import ensure_runtime_dirs, load_runtime_config
 from desktop.supervisor import BodyRuntimeSupervisor, SupervisorError
@@ -45,6 +52,10 @@ def parser() -> argparse.ArgumentParser:
     mode = value.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true", help="start runtime, report one readiness snapshot, then exit")
     mode.add_argument("--youtube-search", metavar="QUERY", help="run the first proven Brain capability through BODY Contract v1")
+    mode.add_argument("--install-autostart", action="store_true", help="start BodyBrain in the background at Windows sign-in")
+    mode.add_argument("--remove-autostart", action="store_true", help="remove the per-user Windows autostart entry")
+    mode.add_argument("--autostart-status", action="store_true", help="report the per-user Windows autostart state")
+    value.add_argument("--background", action="store_true", help="hide the console and run the normal readiness monitor")
     value.add_argument("--json", action="store_true", help="emit machine-readable status lines")
     value.add_argument("--ready-timeout", type=float, default=None, help="seconds to wait for a READY Browser")
     return value
@@ -63,8 +74,38 @@ def _run_goal(client: BodyClient, query: str, as_json: bool) -> int:
         return 0 if result.get("status") == "COMPLETED" else 3
 
 
+def _handle_autostart(args: argparse.Namespace) -> int | None:
+    try:
+        if args.install_autostart:
+            _print({"product": "BodyBrain", "autostart": install_autostart()}, args.json)
+            return 0
+        if args.remove_autostart:
+            _print({"product": "BodyBrain", "autostart": remove_autostart()}, args.json)
+            return 0
+        if args.autostart_status:
+            _print({"product": "BodyBrain", "autostart": autostart_status()}, args.json)
+            return 0
+    except AutostartError as exc:
+        _print({"product": "BodyBrain", "state": "ERROR", "error": str(exc)}, args.json)
+        return 1
+    return None
+
+
 def run(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
+    autostart_result = _handle_autostart(args)
+    if autostart_result is not None:
+        return autostart_result
+
+    # The shipped product is a console build so diagnostics remain capturable.
+    # Normal packaged/background mode hides that console immediately.
+    if args.background or (
+        getattr(sys, "frozen", False)
+        and not args.check
+        and args.youtube_search is None
+    ):
+        hide_console_window()
+
     config = load_runtime_config()
     _install_signal_handlers()
     supervisor = BodyRuntimeSupervisor(config)
