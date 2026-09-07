@@ -5,6 +5,7 @@ const path=require('node:path');
 const {DatasetStore}=require('./dataset_store');
 const {OnlineBehaviorModel}=require('./online_model');
 const {HabitModel}=require('./habit_model');
+const {configuredRuntimeDataDir}=require('./runtime_data_dir');
 
 function safeSegment(raw,fallback='unknown') {
   const s=String(raw||fallback)
@@ -78,9 +79,10 @@ class CascadingHabitModel {
 }
 
 class ScopedLearningManager {
-  constructor(baseDir,{resolveIdentity=null}={}) {
-    this.baseDir=baseDir;
-    this.browserRoot=path.join(baseDir,'by-browser');
+  constructor(baseDir,{resolveIdentity=null,env=process.env}={}) {
+    const dataRoot=configuredRuntimeDataDir(env);
+    this.baseDir=dataRoot?path.join(dataRoot,'profiles'):baseDir;
+    this.browserRoot=path.join(this.baseDir,'by-browser');
     this.resolveIdentity=typeof resolveIdentity==='function'?resolveIdentity:null;
     this.cache=new Map();
     this.migrations=new Map();
