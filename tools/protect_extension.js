@@ -5,23 +5,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const JavaScriptObfuscator = require('javascript-obfuscator');
-const { createZip, listZipEntries } = require('./package_extension');
+const { EXPECTED_ENTRIES, assertReleaseDist, createZip, listZipEntries } = require('./package_extension');
 
 const root = path.join(__dirname, '..');
 const sourceDir = path.join(root, 'dist');
-const protectedDir = path.join(root, 'dist_protected');
 const artifactsDir = path.join(root, 'artifacts');
 const packageJson = require('../package.json');
 
-const RUNTIME_FILES = Object.freeze([
-  'manifest.json',
-  'pairing.html',
-  'runtime-endpoint.json',
-  'service_worker.js',
-  'virtual_cursor_content.js',
-  'pairing_popup.js'
-].sort());
+const RUNTIME_FILES = EXPECTED_ENTRIES;
 const JS_FILES = Object.freeze(RUNTIME_FILES.filter(name => name.endsWith('.js')));
+const OUTPUT_NAME = `BodyChromeAttach-v${packageJson.version}.zip`;
 
 function sha256(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex');
@@ -33,17 +26,6 @@ function deterministicSeed() {
     .update(`${packageJson.name}@${packageJson.version}:offline-protected-v1`)
     .digest();
   return digest.readUInt32LE(0);
-}
-
-function assertSourceDist() {
-  if (!fs.existsSync(sourceDir)) throw new Error('protected_extension_source_missing:run_npm_run_build');
-  const actual = fs.readdirSync(sourceDir, { withFileTypes: true });
-  const files = actual.filter(item => item.isFile()).map(item => item.name).sort();
-  const dirs = actual.filter(item => item.isDirectory()).map(item => item.name);
-  if (dirs.length) throw new Error(`protected_extension_source_nested_directories:${dirs.join(',')}`);
-  if (JSON.stringify(files) !== JSON.stringify(RUNTIME_FILES)) {
-    throw new Error(`protected_extension_source_contents_invalid:${files.join(',')}`);
-  }
 }
 
 function obfuscatorOptions(fileName) {
@@ -93,39 +75,71 @@ function protectJavaScript(name) {
   if (/(?:^|[^\w$])eval\s*\(/.test(protectedSource)) throw new Error(`protected_extension_eval_forbidden:${name}`);
   if (/new\s+Function\s*\(/.test(protectedSource)) throw new Error(`protected_extension_function_constructor_forbidden:${name}`);
   new vm.Script(protectedSource, { filename: name });
-  fs.writeFileSync(path.join(protectedDir, name), protectedSource, 'utf8');
+  return {
+    entry: { name, data: Buffer.from(protectedSource, 'utf8') },
+    metadata: {
+      file: name,
+      sourceSha256: sha256(Buffer.from(source)),
+      protectedSha256: sha256(Buffer.from(protectedSource)),
+      sourceBytes: Buffer.byteLength(source),
+      protectedBytes: Buffer.byteLength(protectedSource)
+    }
+  };
+}
+
+function removeLegacyExtensionArtifacts() {
+  fs.mkdirSync(artifactsDir, { recursive: true });
+  const legacy = [
+    /^body-chrome-attach-v.*\.zip$/i,
+    /^BodyChromeAttach-v.*-PROTECTED\.(zip|json)$/i,
+    /^BodyChromeAttach-v.*\.crx$/i,
+    /^BodyChromeAttach-v.*\.zip$/i
+  ];
+  for (const name of fs.readdirSync(artifactsDir)) {
+    if (legacy.some(pattern => pattern.test(name))) fs.rmSync(path.join(artifactsDir, name), { force: true });
+  }
 }
 
 function buildProtectedExtension() {
-  assertSourceDist();
-  fs.rmSync(protectedDir, { recursive: true, force: true });
-  fs.mkdirSync(protectedDir, { recursive: true });
+  assertReleaseDist();
+  removeLegacyExtensionArtifacts();
 
-  for (const name of RUNTIME_FILES.filter(name => !name.endsWith('.js'))) {
-    fs.copyFileSync(path.join(sourceDir, name), path.join(protectedDir, name));
-  }
-  for (const name of JS_FILES) protectJavaScript(name);
-
-  const protectedFiles = fs.readdirSync(protectedDir).sort();
-  if (JSON.stringify(protectedFiles) !== JSON.stringify(RUNTIME_FILES)) {
-    throw new Error(`protected_extension_contents_invalid:${protectedFiles.join(',')}`);
+  const protectedByName = new Map();
+  const javascript = [];
+  for (const name of JS_FILES) {
+    const { entry, metadata } = protectJavaScript(name);
+    protectedByName.set(name, entry.data);
+    javascript.push(metadata);
   }
 
-  const entries = RUNTIME_FILES.map(name => ({ name, data: fs.readFileSync(path.join(protectedDir, name)) }));
+  const entries = RUNTIME_FILES.map(name => ({
+    name,
+    data: protectedByName.get(name) || fs.readFileSync(path.join(sourceDir, name))
+  }));
   const zip = createZip(entries);
   if (JSON.stringify(listZipEntries(zip).sort()) !== JSON.stringify(RUNTIME_FILES)) {
     throw new Error('protected_extension_zip_contents_invalid');
   }
 
-  fs.mkdirSync(artifactsDir, { recursive: true });
-  const zipPath = path.join(artifactsDir, `BodyChromeAttach-v${packageJson.version}-PROTECTED.zip`);
-  fs.writeFileSync(zipPath, zip);
+  const output = path.join(artifactsDir, OUTPUT_NAME);
+  fs.writeFileSync(output, zip);
   const zipSha256 = sha256(zip);
+  const manifest = {
+    product: 'Body Chrome Attach',
+    version: String(packageJson.version),
+    protectionProfile: 'offline-obfuscated-v1',
+    target: 'browser-no-eval',
+    deterministicSeed: deterministicSeed(),
+    sha256: zipSha256,
+    javascript
+  };
 
-  console.log(`Protected Extension directory: ${protectedDir}`);
-  console.log(`Protected Extension package:   ${zipPath}`);
-  console.log(`Protected ZIP SHA256:          ${zipSha256}`);
-  return { protectedDir, zipPath, zipSha256 };
+  // dist is only an intermediate; leave only the distributable ZIP behind.
+  fs.rmSync(sourceDir, { recursive: true, force: true });
+
+  console.log(`Protected Extension package: ${output}`);
+  console.log(`Protected ZIP SHA256:        ${zipSha256}`);
+  return { output, zipSha256, manifest };
 }
 
 if (require.main === module) {
@@ -137,4 +151,11 @@ if (require.main === module) {
   }
 }
 
-module.exports = { RUNTIME_FILES, JS_FILES, deterministicSeed, obfuscatorOptions, buildProtectedExtension };
+module.exports = {
+  RUNTIME_FILES,
+  JS_FILES,
+  OUTPUT_NAME,
+  deterministicSeed,
+  obfuscatorOptions,
+  buildProtectedExtension
+};
