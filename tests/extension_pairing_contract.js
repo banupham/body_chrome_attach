@@ -51,21 +51,20 @@ test('service worker has a Chrome-alarm reconnect backstop for Desktop restarts 
   assert.match(worker,/Body daemon WebSocket closed/);
 });
 
-test('real Chrome release gate uses startup switches without Puppeteer runtime install and preserves strict readiness checks',()=>{
-  const e2e=fs.readFileSync(path.join(root,'tests','body_chrome_real_e2e.js'),'utf8');
-  assert.match(e2e,/READY_TIMEOUT_SECONDS\s*=\s*8/);
-  assert.match(e2e,/headless:\s*false/);
-  assert.match(e2e,/enableExtensions:\s*true/);
-  assert.match(e2e,/--disable-extensions-except=\$\{extensionDir\}/);
-  assert.match(e2e,/--load-extension=\$\{extensionDir\}/);
-  assert.doesNotMatch(e2e,/enableExtensions:\s*\[\s*extensionDir\s*\]/);
-  assert.doesNotMatch(e2e,/\.installExtension\s*\(/);
-  assert.doesNotMatch(e2e,/browser\.extensions\s*\(/);
-  assert.match(e2e,/assert\.equal\(extension\.state,\s*'READY'/);
-  assert.match(e2e,/browser_offline/);
-  assert.match(e2e,/assertConnectedRun\(first,\s*'first-start'/);
-  assert.match(e2e,/assertConnectedRun\(second,\s*'desktop-restart'/);
-  assert.match(e2e,/firstTokenHash\(secondPairing\),\s*tokenHash/);
+test('real Chrome release acceptance is manual and launcher only startup-loads the Extension',()=>{
+  const launcher=fs.readFileSync(path.join(root,'tools','start_manual_chrome_test.cmd'),'utf8');
+  const workflow=fs.readFileSync(path.join(root,'.github','workflows','verify.yml'),'utf8');
+  const guide=fs.readFileSync(path.join(root,'MANUAL_RELEASE_TEST.md'),'utf8');
+  assert.match(launcher,/--disable-extensions-except=%EXT%/);
+  assert.match(launcher,/--load-extension=%EXT%/);
+  assert.doesNotMatch(launcher,/BodyBrain\.exe/i);
+  assert.doesNotMatch(launcher,/installExtension/i);
+  assert.doesNotMatch(workflow,/body_chrome_real_e2e\.js/);
+  assert.match(guide,/First-start BODY check/);
+  assert.match(guide,/Desktop restart check/);
+  assert.match(guide,/tokenHash/);
+  assert.match(guide,/brain.*NOT_CONFIGURED/is);
+  assert.match(guide,/browser_offline/);
 });
 
 test('Guardian page overlay is passive, periodic, and maps readiness to three compact states',()=>{
