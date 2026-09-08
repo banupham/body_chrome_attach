@@ -85,30 +85,15 @@ function obfuscatorOptions(fileName) {
 }
 
 function protectJavaScript(name) {
-  const inputPath = path.join(sourceDir, name);
-  const outputPath = path.join(protectedDir, name);
-  const source = fs.readFileSync(inputPath, 'utf8');
-  const result = JavaScriptObfuscator.obfuscate(source, obfuscatorOptions(name));
-  const protectedSource = result.getObfuscatedCode();
-
+  const source = fs.readFileSync(path.join(sourceDir, name), 'utf8');
+  const protectedSource = JavaScriptObfuscator.obfuscate(source, obfuscatorOptions(name)).getObfuscatedCode();
   if (!protectedSource.trim()) throw new Error(`protected_extension_empty_output:${name}`);
   if (protectedSource === source) throw new Error(`protected_extension_unchanged_output:${name}`);
   if (/sourceMappingURL\s*=/.test(protectedSource)) throw new Error(`protected_extension_sourcemap_forbidden:${name}`);
   if (/(?:^|[^\w$])eval\s*\(/.test(protectedSource)) throw new Error(`protected_extension_eval_forbidden:${name}`);
   if (/new\s+Function\s*\(/.test(protectedSource)) throw new Error(`protected_extension_function_constructor_forbidden:${name}`);
-
-  // Parse the final obfuscated bundle before shipping it. This does not execute
-  // Chrome APIs; it only proves that the generated JavaScript is syntactically valid.
   new vm.Script(protectedSource, { filename: name });
-  fs.writeFileSync(outputPath, protectedSource, 'utf8');
-
-  return {
-    file: name,
-    sourceSha256: sha256(Buffer.from(source)),
-    protectedSha256: sha256(Buffer.from(protectedSource)),
-    sourceBytes: Buffer.byteLength(source),
-    protectedBytes: Buffer.byteLength(protectedSource)
-  };
+  fs.writeFileSync(path.join(protectedDir, name), protectedSource, 'utf8');
 }
 
 function buildProtectedExtension() {
@@ -119,38 +104,20 @@ function buildProtectedExtension() {
   for (const name of RUNTIME_FILES.filter(name => !name.endsWith('.js'))) {
     fs.copyFileSync(path.join(sourceDir, name), path.join(protectedDir, name));
   }
+  for (const name of JS_FILES) protectJavaScript(name);
 
-  const javascript = JS_FILES.map(protectJavaScript);
   const protectedFiles = fs.readdirSync(protectedDir).sort();
   if (JSON.stringify(protectedFiles) !== JSON.stringify(RUNTIME_FILES)) {
     throw new Error(`protected_extension_contents_invalid:${protectedFiles.join(',')}`);
   }
 
-  const manifest = {
-    product: 'Body Chrome Attach',
-    version: String(packageJson.version),
-    protectionProfile: 'offline-obfuscated-v1',
-    target: 'browser-no-eval',
-    deterministicSeed: deterministicSeed(),
-    javascript
-  };
-  fs.mkdirSync(artifactsDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(artifactsDir, `BodyChromeAttach-v${packageJson.version}-PROTECTED.json`),
-    `${JSON.stringify(manifest, null, 2)}\n`,
-    'utf8'
-  );
-
-  const entries = RUNTIME_FILES.map(name => ({
-    name,
-    data: fs.readFileSync(path.join(protectedDir, name))
-  }));
+  const entries = RUNTIME_FILES.map(name => ({ name, data: fs.readFileSync(path.join(protectedDir, name)) }));
   const zip = createZip(entries);
-  const listed = listZipEntries(zip).sort();
-  if (JSON.stringify(listed) !== JSON.stringify(RUNTIME_FILES)) {
+  if (JSON.stringify(listZipEntries(zip).sort()) !== JSON.stringify(RUNTIME_FILES)) {
     throw new Error('protected_extension_zip_contents_invalid');
   }
 
+  fs.mkdirSync(artifactsDir, { recursive: true });
   const zipPath = path.join(artifactsDir, `BodyChromeAttach-v${packageJson.version}-PROTECTED.zip`);
   fs.writeFileSync(zipPath, zip);
   const zipSha256 = sha256(zip);
@@ -158,7 +125,7 @@ function buildProtectedExtension() {
   console.log(`Protected Extension directory: ${protectedDir}`);
   console.log(`Protected Extension package:   ${zipPath}`);
   console.log(`Protected ZIP SHA256:          ${zipSha256}`);
-  return { protectedDir, zipPath, zipSha256, manifest };
+  return { protectedDir, zipPath, zipSha256 };
 }
 
 if (require.main === module) {
@@ -170,10 +137,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = {
-  RUNTIME_FILES,
-  JS_FILES,
-  deterministicSeed,
-  obfuscatorOptions,
-  buildProtectedExtension
-};
+module.exports = { RUNTIME_FILES, JS_FILES, deterministicSeed, obfuscatorOptions, buildProtectedExtension };
