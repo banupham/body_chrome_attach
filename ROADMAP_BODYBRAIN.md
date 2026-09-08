@@ -47,17 +47,27 @@ Brain
 | Stage | Scope | Acceptance gate | Status |
 |---|---|---|---|
 | A | BODY Contract + provenance + at-most-once execution | Contract/regression tests green | DONE |
-| B | Chrome BODY Extension release package | Bundled/minified ZIP, no source maps/dev source, deterministic package | DONE |
+| B | Chrome BODY Extension release package | Bundled/minified ZIP + signed CRX, no source maps/dev source | DONE |
 | C | Desktop Host foundation | Deterministic paths, redacted logs, health, worker supervision, clean shutdown/orphan cleanup | IMPLEMENTED |
 | D | Guardian + BODY hosted runtime | EXE starts BODY internally; waits for Extension; Guardian remains fail-closed | IMPLEMENTED |
 | E | One-file Windows release | Bundle Node + native input helper; build/smoke actual `BodyBrain.exe`; release hashes | DONE |
 | F | Release acceptance | CI build/contracts green + manual real-Chrome first-start/restart/token-reuse + final diff/security review | MANUAL GATE |
 
+## Extension release artifact
+
+Primary signed packaged Extension:
+
+```text
+artifacts\BodyChromeAttach-v0.8.0.crx
+Extension ID: lgjlhlfiihfbehgjghpbkmngfpdnclhc
+SHA-256: 80aad0d0e86f6676481cdf82cf7173e624c74784384d63ae4763178c4bb06fd2
+```
+
+`npm run extension:package` builds the release ZIP and materializes the exact signed CRX from the versioned release payload stored in the repository. The private signing key is never stored in the repository.
+
 ## Manual real-Chrome acceptance
 
-Real-Chrome release acceptance is intentionally human-operated. CI does not launch or control Chrome. The tester opens `chrome://extensions/`, enables Developer mode, chooses **Load unpacked**, and selects the built `dist` directory. `MANUAL_RELEASE_TEST.md` then covers first-start readiness, Desktop restart reconnect, pairing token reuse, Brain `NOT_CONFIGURED`, and Guardian fail-closed behavior.
-
-The distributable packaged Extension is `artifacts\body-chrome-attach-v0.8.0.zip`; the ZIP is not passed directly to Chrome's **Load unpacked** action.
+Real-Chrome release acceptance is intentionally human-operated. CI does not launch or control Chrome. Follow `MANUAL_RELEASE_TEST.md` to verify first-start readiness, Desktop restart reconnect, pairing token reuse, Brain `NOT_CONFIGURED`, and Guardian fail-closed behavior.
 
 ## Brain R&D track
 
@@ -65,4 +75,4 @@ Brain development is intentionally not scheduled as a production stage here. It 
 
 ## Release result expected
 
-A user installs the Chrome BODY Extension and runs one `BodyBrain.exe`. The executable starts and owns BODY runtime workers, persists BODY data outside the one-file extraction directory, waits for Chrome, reports Guardian/Extension health, shuts down cleanly, and contains no production Brain logic.
+A user installs the signed Chrome BODY Extension and runs one `BodyBrain.exe`. The executable starts and owns BODY runtime workers, persists BODY data outside the one-file extraction directory, waits for Chrome, reports Guardian/Extension health, shuts down cleanly, and contains no production Brain logic.
