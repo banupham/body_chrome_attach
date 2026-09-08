@@ -108,18 +108,25 @@ async function main() {
   const localAppData = path.join(tempRoot, 'local-app-data');
   fs.mkdirSync(localAppData, { recursive: true });
   let browser = null;
-  const diagnostics = { mode: 'real-chrome-no-service-worker-cdp-attachment' };
+  const diagnostics = { mode: 'real-chrome-startup-loaded-extension' };
   try {
-    browser = await puppeteer.launch({ headless: true, pipe: true, enableExtensions: true });
-    const extensionId = await browser.installExtension(extensionDir);
-    assert.equal(typeof extensionId, 'string');
-    assert.ok(extensionId.length > 0, 'Puppeteer did not return an Extension id');
+    // Production-equivalent lifecycle: BODY Extension exists when Chrome starts.
+    // Starting the EXE afterwards still exercises ECONNREFUSED -> reconnect -> ONLINE.
+    browser = await puppeteer.launch({
+      headless: true,
+      pipe: true,
+      enableExtensions: [extensionDir]
+    });
     const extensions = await browser.extensions();
-    const extension = extensions.get(extensionId);
-    assert.ok(extension, `BODY Extension not installed in Chrome for Testing: ${extensionId}`);
+    const extensionEntries = [...extensions.entries()];
+    const bodyEntry = extensionEntries.find(([, extension]) => extension?.name === 'Body Chrome Attach') ||
+      (extensionEntries.length === 1 ? extensionEntries[0] : null);
+    assert.ok(bodyEntry, `BODY Extension not loaded at Chrome startup; found=${extensionEntries.map(([id, extension]) => `${id}:${extension?.name || 'unknown'}`).join(',')}`);
+    const [extensionId, extension] = bodyEntry;
+    assert.equal(typeof extensionId, 'string');
+    assert.ok(extensionId.length > 0, 'Chrome startup Extension id missing');
+    assert.ok(extension, 'Chrome startup BODY Extension handle missing');
 
-    // Do not attach DevTools/Network/Runtime sessions to the MV3 service worker here.
-    // The release gate must observe the same lifecycle as a normal installed Extension.
     const page = await browser.newPage();
     await page.goto('https://example.com/', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
