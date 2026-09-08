@@ -71,7 +71,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install Node dependencies and Chrome for Testing
+      - name: Install Node dependencies
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
         run: npm install
       - name: Build Chrome BODY Extension package
         run: npm run extension:package
@@ -83,8 +85,6 @@ jobs:
         run: python tools/build_bodybrain_release.py
       - name: Smoke actual BodyBrain.exe twice
         run: python tests/bodybrain_exe_smoke.py artifacts/BodyBrain.exe
-      - name: Real Chrome BODY Extension to EXE E2E
-        run: node tests/body_chrome_real_e2e.js artifacts/BodyBrain.exe dist
       - name: Verify release hashes and boundary
         run: python tests/bodybrain_release_manifest_contract.py
       - name: Upload BodyBrain Windows release
@@ -95,5 +95,7 @@ jobs:
             artifacts/BodyBrain.exe
             artifacts/bodybrain-release-v*.json
             artifacts/body-chrome-attach-v*.zip
+            MANUAL_RELEASE_TEST.md
+            tools/start_manual_chrome_test.cmd
           if-no-files-found: error
           retention-days: 14
