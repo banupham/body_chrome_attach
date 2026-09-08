@@ -38,6 +38,8 @@ jobs:
           name: body-chrome-extension-${{ github.sha }}
           path: |
             artifacts/body-chrome-attach-v*.zip
+            artifacts/BodyChromeAttach-v*-PROTECTED.zip
+            artifacts/BodyChromeAttach-v*-PROTECTED.json
             artifacts/BodyChromeAttach-v*.crx
           if-no-files-found: error
           retention-days: 14
@@ -78,7 +80,11 @@ jobs:
           PUPPETEER_SKIP_DOWNLOAD: 'true'
         run: npm install
       - name: Build Chrome BODY Extension packages
-        run: npm run extension:package
+        run: |
+          npm run extension:package
+          npm run extension:protected
+      - name: Verify protected offline Extension
+        run: node tests/protected_extension_contract.js
       - name: Verify production excludes Brain
         run: python tests/bodybrain_no_brain_contract.py
       - name: Install release builder
@@ -97,6 +103,8 @@ jobs:
             artifacts/BodyBrain.exe
             artifacts/bodybrain-release-v*.json
             artifacts/body-chrome-attach-v*.zip
+            artifacts/BodyChromeAttach-v*-PROTECTED.zip
+            artifacts/BodyChromeAttach-v*-PROTECTED.json
             artifacts/BodyChromeAttach-v*.crx
             MANUAL_RELEASE_TEST.md
           if-no-files-found: error
