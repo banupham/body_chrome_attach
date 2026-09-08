@@ -51,12 +51,16 @@ test('service worker has a Chrome-alarm reconnect backstop for Desktop restarts 
   assert.match(worker,/Body daemon WebSocket closed/);
 });
 
-test('real Chrome release gate uses a startup-loaded headful Extension and preserves strict readiness checks',()=>{
+test('real Chrome release gate uses startup switches without Puppeteer runtime install and preserves strict readiness checks',()=>{
   const e2e=fs.readFileSync(path.join(root,'tests','body_chrome_real_e2e.js'),'utf8');
   assert.match(e2e,/READY_TIMEOUT_SECONDS\s*=\s*8/);
   assert.match(e2e,/headless:\s*false/);
-  assert.match(e2e,/enableExtensions:\s*\[extensionDir\]/);
+  assert.match(e2e,/enableExtensions:\s*true/);
+  assert.match(e2e,/--disable-extensions-except=\$\{extensionDir\}/);
+  assert.match(e2e,/--load-extension=\$\{extensionDir\}/);
+  assert.doesNotMatch(e2e,/enableExtensions:\s*\[\s*extensionDir\s*\]/);
   assert.doesNotMatch(e2e,/\.installExtension\s*\(/);
+  assert.doesNotMatch(e2e,/browser\.extensions\s*\(/);
   assert.match(e2e,/assert\.equal\(extension\.state,\s*'READY'/);
   assert.match(e2e,/browser_offline/);
   assert.match(e2e,/assertConnectedRun\(first,\s*'first-start'/);
