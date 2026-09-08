@@ -149,6 +149,25 @@ class DesktopHostContractTest(unittest.TestCase):
         self.assertIn("--install-autostart", main)
         self.assertIn("--remove-autostart", main)
 
+    def test_windows_tray_owns_normal_user_shutdown_and_daemon_log_is_read_only(self):
+        tray = (ROOT / "desktop" / "tray_ui.py").read_text(encoding="utf-8")
+        main = (ROOT / "desktop" / "main.py").read_text(encoding="utf-8")
+        self.assertIn("Shell_NotifyIconW(NIM_ADD", tray)
+        self.assertIn("WM_RBUTTONUP", tray)
+        self.assertIn('"Quit BodyBrain"', tray)
+        self.assertIn("ES_READONLY", tray)
+        self.assertIn("SPI_GETWORKAREA", tray)
+        self.assertIn("WS_EX_TOPMOST", tray)
+        self.assertIn('supervisor.paths["logs"] / "body-runtime.log"', main)
+        self.assertIn('on_quit=lambda: _request_stop("tray_quit")', main)
+        self.assertIn("tray.stop()", main)
+        close_start = tray.index("elif message == WM_CLOSE:")
+        close_end = tray.index("elif message == WM_UI_SHOW:", close_start)
+        close_block = tray[close_start:close_end]
+        self.assertIn("self._hide_logs()", close_block)
+        self.assertNotIn("_request_quit", close_block)
+        self.assertEqual(tray.count("self._request_quit()"), 1)
+
     def test_windows_input_prefers_bundled_helper_when_supplied(self):
         source = (ROOT / "daemon" / "src" / "windows_native_input.js").read_text(encoding="utf-8")
         self.assertIn("BODY_WINDOWS_INPUT_HELPER_EXE", source)
