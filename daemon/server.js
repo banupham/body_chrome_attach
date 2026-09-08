@@ -9,13 +9,13 @@ const {LocalAuth}=require('./src/local_auth');
 const {pairingConsoleCommand}=require('./src/local_pairing_console');
 const {ControllerLease}=require('./src/controller_lease');
 const {BodyStepGateway,BODY_CONTRACT_VERSION}=require('./src/body_step_gateway');
-const {acquireRuntimeLock,startRuntimeLockHeartbeat,releaseRuntimeLock,publishRuntimeEndpoint,clearRuntimeEndpoint}=require('./src/runtime_endpoint');
+const {acquireRuntimeLock,releaseRuntimeLock,publishRuntimeEndpoint,clearRuntimeEndpoint}=require('./src/runtime_endpoint');
 
 const LISTEN_HOST='127.0.0.1',CONTROL_PROTOCOL_VERSION=7,EXTENSION_PROTOCOL_VERSIONS=new Set([5,6]);let rl=null,runtimeEndpoint=null;
-const runtimeLock=acquireRuntimeLock(__dirname),stopRuntimeLockHeartbeat=startRuntimeLockHeartbeat(__dirname,runtimeLock);
+const runtimeLock=acquireRuntimeLock(__dirname);
 const prompt=()=>runtime.registry.selectedId?`BODY[${runtime.registry.selectedId.slice(0,8)}]> `:'BODY> ',printAsync=text=>{if(rl)process.stdout.write(`\n${text}\n${prompt()}`);},updatePrompt=()=>rl?.setPrompt(prompt());
 const runtime=createDaemonRuntime({baseDir:__dirname,printAsync}),bodyGateway=new BodyStepGateway(runtime,{baseDir:__dirname}),router=createCommandRouter(runtime,{updatePrompt}),debugAdapter=new DebugCommandAdapter(runtime,router,{updatePrompt}),localAccumulator=createCommandAccumulator(),auth=new LocalAuth(__dirname),controller=new ControllerLease(),debugClients=new Set();
-let wss;try{wss=new WebSocketServer({host:LISTEN_HOST,port:0,verifyClient:({origin},done)=>!origin||origin.startsWith('chrome-extension://')?done(true):done(false,403,'Forbidden Origin')});}catch(error){stopRuntimeLockHeartbeat();releaseRuntimeLock(__dirname,{pid:process.pid,ownerToken:runtimeLock.ownerToken});throw error;}
+let wss;try{wss=new WebSocketServer({host:LISTEN_HOST,port:0,verifyClient:({origin},done)=>!origin||origin.startsWith('chrome-extension://')?done(true):done(false,403,'Forbidden Origin')});}catch(error){releaseRuntimeLock(__dirname,{pid:process.pid});throw error;}
 function rejectAuth(ws,error){runtime.send(ws,{type:'AUTH_ERROR',ok:false,error});try{ws.close(1008,'Authentication required');}catch{}}
 function brainSend(type,payload={}){if(!controller.brainSocket)return false;return runtime.send(controller.brainSocket,{type,...payload});}
 function protocolAllowed(role,version){const v=Number(version);return role==='extension'?EXTENSION_PROTOCOL_VERSIONS.has(v):v===CONTROL_PROTOCOL_VERSION;}
@@ -34,7 +34,7 @@ function sendReadiness(ws,browserInstanceId){
 wss.once('listening',()=>{
   try{
     const address=wss.address(),port=Number(address&&typeof address==='object'?address.port:0);
-    runtimeEndpoint=publishRuntimeEndpoint(__dirname,port,{ownerToken:runtimeLock.ownerToken});
+    runtimeEndpoint=publishRuntimeEndpoint(__dirname,port);
     console.log(`Body runtime transport: ${runtimeEndpoint.wsUrl} (auto-assigned)`);
   }catch(error){
     console.error('[FATAL]',String(error?.message||error));
@@ -117,7 +117,7 @@ wss.on('connection',(ws,request)=>{
 
 function disconnectExtensionForRevocation(extensionId){const item=runtime.registry.get(extensionId);if(!item?.online||!item.ws)return false;try{if(typeof item.ws.terminate==='function')item.ws.terminate();else item.ws.close(1008,'Pairing revoked');return true;}catch{return false;}}
 function flushStores(){try{return {runtime:runtime.flushSync(),body:bodyGateway.flushSync()};}catch{return null;}}
-function clearEndpoint(){stopRuntimeLockHeartbeat();let endpoint=false,lock=false;try{endpoint=clearRuntimeEndpoint(__dirname,{pid:process.pid,ownerToken:runtimeLock.ownerToken});}catch{}try{lock=releaseRuntimeLock(__dirname,{pid:process.pid,ownerToken:runtimeLock.ownerToken});}catch{}return {endpoint,lock};}
+function clearEndpoint(){let endpoint=false,lock=false;try{endpoint=clearRuntimeEndpoint(__dirname,{pid:process.pid});}catch{}try{lock=releaseRuntimeLock(__dirname,{pid:process.pid});}catch{}return {endpoint,lock};}
 function shutdown(){flushStores();clearEndpoint();process.exit(0);}
 process.once('SIGINT',shutdown);process.once('SIGTERM',shutdown);process.once('exit',()=>{flushStores();clearEndpoint();});
 const localIdentity=runtime.identity.snapshot();console.log(`Company runtime identity: company=${localIdentity.companyId} device=${localIdentity.deviceId}`);console.log('Body runtime transport: requesting an available localhost port from Windows...');console.log(`BODY Contract: v${BODY_CONTRACT_VERSION} — Brain physical boundary is BODY_STEP only.`);console.log(`Environment policy: ${JSON.stringify(runtime.guardian.status().policy)}`);console.log(`Brain auth token: ${auth.status().brainTokenPath}`);console.log(`Debug client token: ${auth.status().debugClientTokenPath}`);console.log('Extension authentication is automatic and bound to Extension/Browser/Runtime/Origin. Local console: pair status | pair list | pair forget <extensionId>');console.log('Company Runtime validates Browser eligibility before Task assignment. Guardian is read-only: observe/report/quarantine only.');

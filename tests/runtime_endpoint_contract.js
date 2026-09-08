@@ -7,7 +7,6 @@ const path = require('node:path');
 const {
   endpointPaths,
   acquireRuntimeLock,
-  refreshRuntimeLock,
   releaseRuntimeLock,
   assertRuntimeOwnershipAvailable,
   publishRuntimeEndpoint,
@@ -17,8 +16,7 @@ const {
   rememberRuntimePort,
   preferredRuntimePort,
   currentBootEpochMs,
-  timestampPredatesCurrentBoot,
-  RUNTIME_LOCK_STALE_MS
+  timestampPredatesCurrentBoot
 } = require('../daemon/src/runtime_endpoint');
 const { ensureRememberedRuntimePort } = require('../daemon/src/runtime_port_migration');
 const {
@@ -38,11 +36,10 @@ function tmp(name) {
 
   const lock = acquireRuntimeLock(daemonDir, { pid: 111, now: () => 0 });
   assert.equal(lock.acquired, true);
-  assert.ok(lock.ownerToken);
   assert.throws(() => acquireRuntimeLock(daemonDir, { pid: 222, now: () => 1, killImpl: () => true }), /company_runtime_already_running:111/);
   assert.equal(releaseRuntimeLock(daemonDir, { pid: 222 }), false);
   assert.equal(fs.existsSync(endpointPaths(daemonDir).lock), true);
-  assert.equal(releaseRuntimeLock(daemonDir, { pid: 111, ownerToken: lock.ownerToken }), true);
+  assert.equal(releaseRuntimeLock(daemonDir, { pid: 111 }), true);
   assert.equal(fs.existsSync(endpointPaths(daemonDir).lock), false);
 
   assert.equal(currentBootEpochMs({ now: () => 200000, uptimeImpl: () => 100 }), 100000);
@@ -61,7 +58,7 @@ function tmp(name) {
   });
   assert.equal(recovered.acquired, true);
   assert.equal(JSON.parse(fs.readFileSync(endpointPaths(rebootDaemonDir).lock, 'utf8')).pid, 9000);
-  releaseRuntimeLock(rebootDaemonDir, { pid: 9000, ownerToken: recovered.ownerToken });
+  releaseRuntimeLock(rebootDaemonDir, { pid: 9000 });
 
   fs.writeFileSync(endpointPaths(rebootDaemonDir).lock, JSON.stringify({ pid: 8720, createdAt: new Date(150000).toISOString() }) + '\n');
   assert.throws(() => acquireRuntimeLock(rebootDaemonDir, {
@@ -71,51 +68,6 @@ function tmp(name) {
     killImpl: () => true
   }), /company_runtime_already_running:8720/);
   fs.rmSync(endpointPaths(rebootDaemonDir).lock, { force: true });
-
-  const staleProject = tmp('runtime-lock-stale-pid');
-  const staleDaemonDir = path.join(staleProject, 'daemon');
-  fs.mkdirSync(path.dirname(endpointPaths(staleDaemonDir).lock), { recursive: true });
-  const staleLockPath = endpointPaths(staleDaemonDir).lock;
-
-  // Legacy v1 lock: Windows may reuse a still-alive PID. An old lock must not block forever.
-  fs.writeFileSync(staleLockPath, JSON.stringify({ pid: 8712, createdAt: new Date(150000).toISOString() }) + '\n');
-  fs.utimesSync(staleLockPath, new Date(150000 - RUNTIME_LOCK_STALE_MS - 1), new Date(150000 - RUNTIME_LOCK_STALE_MS - 1));
-  const legacyRecovered = acquireRuntimeLock(staleDaemonDir, {
-    pid: 5336,
-    now: () => 200000,
-    uptimeImpl: () => 100,
-    killImpl: () => true
-  });
-  assert.equal(legacyRecovered.acquired, true);
-  assert.equal(JSON.parse(fs.readFileSync(staleLockPath, 'utf8')).pid, 5336);
-
-  // A v2 lock is a lease: stale heartbeat recovers even when the old PID now belongs to another process.
-  releaseRuntimeLock(staleDaemonDir, { pid: 5336, ownerToken: legacyRecovered.ownerToken });
-  fs.writeFileSync(staleLockPath, JSON.stringify({
-    schemaVersion: 2,
-    pid: 8712,
-    ownerToken: 'old-runtime-owner',
-    createdAt: new Date(150000).toISOString(),
-    heartbeatAt: new Date(150000).toISOString()
-  }) + '\n');
-  const leaseRecovered = acquireRuntimeLock(staleDaemonDir, {
-    pid: 5336,
-    now: () => 200000,
-    uptimeImpl: () => 100,
-    killImpl: () => true
-  });
-  assert.equal(leaseRecovered.acquired, true);
-  assert.equal(refreshRuntimeLock(staleDaemonDir, { pid: 5336, ownerToken: leaseRecovered.ownerToken, now: () => 205000 }), true);
-  assert.equal(JSON.parse(fs.readFileSync(staleLockPath, 'utf8')).heartbeatAt, new Date(205000).toISOString());
-
-  // A fresh lease remains fail-closed against a second runtime.
-  assert.throws(() => acquireRuntimeLock(staleDaemonDir, {
-    pid: 7000,
-    now: () => 206000,
-    uptimeImpl: () => 100,
-    killImpl: () => true
-  }), /company_runtime_already_running:5336/);
-  releaseRuntimeLock(staleDaemonDir, { pid: 5336, ownerToken: leaseRecovered.ownerToken });
 
   fs.writeFileSync(endpointPaths(rebootDaemonDir).state, JSON.stringify({
     schemaVersion: 2,
@@ -233,8 +185,6 @@ function tmp(name) {
   const build = fs.readFileSync(path.join(__dirname, '..', 'build.js'), 'utf8');
   assert.match(server, /port:0/);
   assert.match(server, /acquireRuntimeLock/);
-  assert.match(server, /startRuntimeLockHeartbeat/);
-  assert.match(server, /ownerToken:runtimeLock\.ownerToken/);
   assert.doesNotMatch(server, /ensureAutomaticPairingWindow/);
   assert.match(launcher, /sticky_runtime_port_preload\.js/);
   assert.match(preload, /preferredRuntimePort/);
