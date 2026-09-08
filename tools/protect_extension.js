@@ -62,6 +62,7 @@ function obfuscatorOptions(fileName) {
     renameGlobals: false,
     selfDefending: true,
     simplify: true,
+    sourceMap: false,
     splitStrings: true,
     splitStringsChunkLength: 6,
     stringArray: true,
@@ -76,6 +77,7 @@ function obfuscatorOptions(fileName) {
     stringArrayWrappersParametersMaxCount: 4,
     stringArrayWrappersType: 'function',
     stringArrayThreshold: 1,
+    target: 'browser-no-eval',
     transformObjectKeys: true,
     unicodeEscapeSequence: false,
     seed: deterministicSeed()
@@ -92,6 +94,8 @@ function protectJavaScript(name) {
   if (!protectedSource.trim()) throw new Error(`protected_extension_empty_output:${name}`);
   if (protectedSource === source) throw new Error(`protected_extension_unchanged_output:${name}`);
   if (/sourceMappingURL\s*=/.test(protectedSource)) throw new Error(`protected_extension_sourcemap_forbidden:${name}`);
+  if (/(?:^|[^\w$])eval\s*\(/.test(protectedSource)) throw new Error(`protected_extension_eval_forbidden:${name}`);
+  if (/new\s+Function\s*\(/.test(protectedSource)) throw new Error(`protected_extension_function_constructor_forbidden:${name}`);
 
   // Parse the final obfuscated bundle before shipping it. This does not execute
   // Chrome APIs; it only proves that the generated JavaScript is syntactically valid.
@@ -126,6 +130,7 @@ function buildProtectedExtension() {
     product: 'Body Chrome Attach',
     version: String(packageJson.version),
     protectionProfile: 'offline-obfuscated-v1',
+    target: 'browser-no-eval',
     deterministicSeed: deterministicSeed(),
     javascript
   };
