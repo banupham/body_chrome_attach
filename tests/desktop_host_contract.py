@@ -60,18 +60,27 @@ class DesktopHostContractTest(unittest.TestCase):
         self.assertEqual(blocked["state"], "BLOCKED")
         self.assertEqual(blocked["browsers"][0]["reason"], "EXTERNAL_CONTROLLER_CONFLICT")
 
-    def test_offline_extension_never_reports_connectivity_ready(self):
+    def test_historical_offline_browsers_do_not_pollute_current_chrome_readiness(self):
+        status = {
+            "browsers": [
+                {"browserInstanceId":"browser-old","online":False,"state":"OFFLINE","stateReason":"extension_offline","environment":{"eligible":False,"status":"PENDING_PHASE4"}},
+                {"browserInstanceId":"browser-live","online":True,"state":"ACTIVE","environment":{"eligible":True,"status":"ELIGIBLE"}},
+            ],
+            "environment": {"protection": {"browsers": {"browser-live": {"blocked":False,"reasons":[],"initialCheck":{"complete":True,"status":"PASSED"}}}}},
+        }
+        readiness = BodyStatusClient.readiness_from_status(status)
+        self.assertEqual(readiness["state"], "READY")
+        self.assertEqual(readiness["ignoredOfflineBrowserCount"], 1)
+        self.assertEqual([row["browserInstanceId"] for row in readiness["browsers"]], ["browser-live"])
+
+    def test_no_online_extension_reports_waiting_not_blocked(self):
         health = HealthModel()
-        _apply_readiness(health, {
-            "state": "BLOCKED",
-            "reason": None,
-            "browsers": [{"browserInstanceId":"browser-old","state":"BLOCKED","reason":"browser_offline"}],
-        })
+        _apply_readiness(health, {"state":"CHECKING","reason":"browser_waiting","browsers":[],"ignoredOfflineBrowserCount":2})
         snapshot = health.snapshot()
         self.assertEqual(snapshot["extensionConnectivity"]["state"], "WAITING")
-        self.assertEqual(snapshot["extensionConnectivity"]["reason"], "browser_offline")
-        self.assertEqual(snapshot["guardian"]["state"], "BLOCKED")
-        self.assertEqual(snapshot["guardian"]["reason"], "browser_offline")
+        self.assertEqual(snapshot["extensionConnectivity"]["reason"], "extension_not_connected")
+        self.assertEqual(snapshot["guardian"]["state"], "WAITING")
+        self.assertEqual(snapshot["guardian"]["reason"], "browser_waiting")
 
     def test_production_desktop_control_plane_is_read_only(self):
         status_client = (ROOT / "desktop" / "body_status_client.py").read_text(encoding="utf-8")
@@ -147,6 +156,17 @@ class DesktopHostContractTest(unittest.TestCase):
         self.assertIn("hide_console_window()", main)
         self.assertIn("--install-autostart", main)
         self.assertIn("--remove-autostart", main)
+
+    def test_bodybrain_release_is_windowed_but_diagnostic_output_is_restored(self):
+        builder = (ROOT / "tools" / "build_bodybrain_release.py").read_text(encoding="utf-8")
+        main = (ROOT / "desktop" / "main.py").read_text(encoding="utf-8")
+        helper_section = builder[builder.index("def build_native_helper"):builder.index("def build_bodybrain")]
+        body_section = builder[builder.index("def build_bodybrain"):builder.index("def write_release_manifest")]
+        self.assertIn('"--console"', helper_section)
+        self.assertIn('"--windowed"', body_section)
+        self.assertNotIn('"--console"', body_section)
+        self.assertIn("_restore_windows_cli_streams", main)
+        self.assertIn('"--check"', main)
 
     def test_windows_tray_owns_normal_user_shutdown_and_daemon_log_is_read_only(self):
         tray = (ROOT / "desktop" / "tray_ui.py").read_text(encoding="utf-8")
