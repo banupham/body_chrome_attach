@@ -6,9 +6,11 @@ const { VIRTUAL_CURSOR_SCOPE, MESSAGE_TYPES } = require('./virtual_cursor_protoc
 
 const gateway = new CdpInputGateway(chrome);
 const daemon = new DaemonBridge(chrome, { gateway, WebSocketImpl: WebSocket });
+const originalDaemonConnect = daemon.connect.bind(daemon);
 const observedUserMotorByTab = new Map();
 const pendingPageContextByTab = new Map();
 const observedDaemonSockets = new WeakSet();
+const daemonSocketIds = new WeakMap();
 const MAX_OBSERVED_EVENTS_PER_TAB = 1500;
 const PAGE_CONTEXT_RETRY_MS = 250;
 const PAGE_CONTEXT_RETRY_WINDOW_MS = 15000;
@@ -16,6 +18,7 @@ const DAEMON_WAKE_ALARM = 'body-daemon-wake';
 const DAEMON_WAKE_PERIOD_MINUTES = 0.5;
 let pageContextRetryTimer = null;
 let pageContextRetryStartedAt = 0;
+let daemonSocketSequence = 0;
 
 async function activeTabId() {
   const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -27,14 +30,32 @@ async function activeTabId() {
 function observeDaemonSocket(socket = daemon.socket) {
   if (!socket || observedDaemonSockets.has(socket) || typeof socket.addEventListener !== 'function') return false;
   observedDaemonSockets.add(socket);
+  const socketId = ++daemonSocketSequence;
+  daemonSocketIds.set(socket, socketId);
+  console.log('Body daemon WebSocket observed', {
+    socketId,
+    current: daemon.socket === socket,
+    readyState: Number(socket.readyState)
+  });
+  socket.addEventListener('open', () => {
+    console.log('Body daemon WebSocket opened', {
+      socketId,
+      current: daemon.socket === socket,
+      readyState: Number(socket.readyState)
+    });
+  });
   socket.addEventListener('error', event => {
     console.warn('Body daemon WebSocket error', {
+      socketId,
+      current: daemon.socket === socket,
       type: String(event?.type || 'error'),
       readyState: Number(socket.readyState)
     });
   });
   socket.addEventListener('close', event => {
     console.warn('Body daemon WebSocket closed', {
+      socketId,
+      current: daemon.socket === socket,
       code: Number(event?.code || 0),
       reason: String(event?.reason || ''),
       wasClean: event?.wasClean === true
@@ -42,6 +63,12 @@ function observeDaemonSocket(socket = daemon.socket) {
   });
   return true;
 }
+
+daemon.connect = async (...args) => {
+  const result = await originalDaemonConnect(...args);
+  observeDaemonSocket(daemon.socket);
+  return result;
+};
 
 function rememberUserMotor(tabId, payload) {
   const id = Number(tabId);
