@@ -29,6 +29,65 @@ def _request_stop(reason: str) -> None:
     StopRequested.reason = str(reason or "stop_requested")
 
 
+def _restore_windows_cli_streams() -> None:
+    """Restore stdout/stderr for a frozen GUI-subsystem diagnostic invocation.
+
+    PyInstaller windowed mode intentionally gives normal BodyBrain launches no
+    console. For --check and maintenance commands we reuse inherited pipe/console
+    handles when present, or attach to the parent CMD/PowerShell console.
+    """
+    if os.name != "nt" or not getattr(sys, "frozen", False):
+        return
+    try:
+        import ctypes
+        import io
+        import msvcrt
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetStdHandle.argtypes = [wintypes.DWORD]
+        kernel32.GetStdHandle.restype = wintypes.HANDLE
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.DuplicateHandle.argtypes = [wintypes.HANDLE,wintypes.HANDLE,wintypes.HANDLE,ctypes.POINTER(wintypes.HANDLE),wintypes.DWORD,wintypes.BOOL,wintypes.DWORD]
+        kernel32.DuplicateHandle.restype = wintypes.BOOL
+        kernel32.AttachConsole.argtypes = [wintypes.DWORD]
+        kernel32.AttachConsole.restype = wintypes.BOOL
+
+        invalid_handle = ctypes.c_void_p(-1).value
+        duplicate_same_access = 0x00000002
+        current_process = kernel32.GetCurrentProcess()
+
+        def stream_from_handle(std_id: int):
+            handle = kernel32.GetStdHandle(wintypes.DWORD(std_id & 0xFFFFFFFF))
+            if not handle or int(handle) == invalid_handle:
+                return None
+            duplicate = wintypes.HANDLE()
+            if not kernel32.DuplicateHandle(current_process, handle, current_process, ctypes.byref(duplicate), 0, True, duplicate_same_access):
+                return None
+            fd = msvcrt.open_osfhandle(int(duplicate.value), os.O_WRONLY)
+            raw = os.fdopen(fd, "wb", buffering=0)
+            return io.TextIOWrapper(raw, encoding="utf-8", errors="replace", write_through=True)
+
+        stdout = stream_from_handle(-11)
+        stderr = stream_from_handle(-12)
+        if stdout is None or stderr is None:
+            # ATTACH_PARENT_PROCESS = DWORD(-1). ERROR_ACCESS_DENIED simply means
+            # the process is already attached to a console, which is acceptable.
+            kernel32.AttachConsole(wintypes.DWORD(0xFFFFFFFF))
+            if stdout is None:
+                stdout = stream_from_handle(-11)
+            if stderr is None:
+                stderr = stream_from_handle(-12)
+        if stdout is not None:
+            sys.stdout = stdout
+        if stderr is not None:
+            sys.stderr = stderr
+    except Exception:
+        # Diagnostics must never make production startup fail merely because a
+        # parent process supplied no usable standard handles.
+        return
+
+
 def _install_signal_handlers(*, tray_mode: bool) -> None:
     def stop(_signum, _frame):
         _request_stop("process_signal")
@@ -45,7 +104,15 @@ def _install_signal_handlers(*, tray_mode: bool) -> None:
 
 
 def _print(payload, as_json: bool = False) -> None:
-    print(json.dumps(payload, ensure_ascii=False, separators=(",", ":") if as_json else None, indent=None if as_json else 2))
+    text = json.dumps(payload, ensure_ascii=False, separators=(",", ":") if as_json else None, indent=None if as_json else 2)
+    stream = sys.stdout
+    if stream is None:
+        return
+    try:
+        stream.write(text + "\n")
+        stream.flush()
+    except (OSError, ValueError):
+        pass
 
 
 def parser() -> argparse.ArgumentParser:
@@ -84,11 +151,8 @@ def _readiness_reason(readiness: dict) -> str | None:
 
 def _apply_readiness(health: HealthModel, readiness: dict) -> None:
     rows = list(readiness.get("browsers") or [])
-    connected_rows = [row for row in rows if str(row.get("reason") or "") != "browser_offline"]
-    if connected_rows:
+    if rows:
         health.set_subsystem("extensionConnectivity", "READY")
-    elif rows:
-        health.set_subsystem("extensionConnectivity", "WAITING", "browser_offline")
     else:
         health.set_subsystem("extensionConnectivity", "WAITING", "extension_not_connected")
 
@@ -115,7 +179,11 @@ def _hold_error_for_tray(tray: BodyBrainTray, message: str) -> None:
 
 
 def run(argv: list[str] | None = None) -> int:
-    args = parser().parse_args(argv)
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    cli_output_flags = {"--check","--install-autostart","--remove-autostart","--autostart-status","--help","-h"}
+    if any(flag in raw_args for flag in cli_output_flags):
+        _restore_windows_cli_streams()
+    args = parser().parse_args(raw_args)
     autostart_result = _handle_autostart(args)
     if autostart_result is not None:
         return autostart_result
