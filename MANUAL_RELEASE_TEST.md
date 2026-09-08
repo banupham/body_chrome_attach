@@ -61,7 +61,7 @@ Never distribute repository source, `dist\`, tests, signing keys, or build direc
 
 ## 3. Diagnostic READY check
 
-With Chrome and the Extension open, run once:
+With Chrome and the Extension open, run once before starting tray mode:
 
 ```cmd
 artifacts\BodyBrain.exe --check --json --ready-timeout 8
@@ -76,11 +76,35 @@ PASS requires:
 - `bodyRuntime = CONNECTED`
 - `brain = NOT_CONFIGURED`
 - `health.extensionConnectivity.state = READY`
-- at least one browser in `guardianReadiness.browsers`
-- no browser with `reason = browser_offline`
+- at least one online browser in `guardianReadiness.browsers`
+- historical/offline Browser registrations do not make the current online Browser fail readiness
 - Guardian remains authoritative and fail-closed
 
-## 4. Tray + read-only daemon log acceptance
+## 4. Multi-Chrome learning + focused-window acceptance
+
+This gate is required because multiple Chrome profiles/windows can be connected to one BODY runtime.
+
+Use at least two real Chrome sessions with the protected Extension loaded manually. For two separate Chrome profiles, each profile should have its own stable Browser identity. Multiple windows belonging to the same Chrome profile may legitimately share one Browser identity.
+
+1. Keep an HTTP/HTTPS page such as YouTube open in **Chrome A**.
+2. Open **Chrome B** with the same protected Extension package and an HTTP/HTTPS page.
+3. In each Chrome, open the Body Chrome Attach popup. It must show diagnostic text similar to:
+
+```text
+Browser browser-xxxx · Học: N sự kiện · Tab 123
+```
+
+4. If A and B are separate Chrome profiles, record their Browser IDs and confirm they differ. If they are two windows of one profile, the Browser ID may be the same, but the active Tab must follow the focused window.
+5. Move/click/type normally in Chrome A for a few seconds. Chrome A's **Học** count must increase and the daemon log must emit `[HỌC]` for Chrome A's Browser identity.
+6. Focus Chrome B without closing Chrome A. Move/click/type normally in Chrome B. Chrome B's **Học** count must increase and the daemon log must emit `[HỌC]` for Chrome B's Browser identity. Learning must not remain stuck on the first Chrome.
+7. Switch focus A → B → A again. The focused tab/window context must follow each switch and learning input must continue from whichever Chrome is being used.
+8. Reload the Extension from `chrome://extensions/` while a normal web tab is already open. Do **not** manually reload the web page. The Extension must repair its packaged content script on that existing tab, return to status checking/READY, and resume increasing the **Học** count.
+9. A normal existing web tab must not remain indefinitely at `HTTP_TAB_REQUIRED_FOR_ENVIRONMENT_PROBE`; receiving a web tab context must allow the Guardian probe to continue.
+10. Human learning remains isolated by stable `browserInstanceId`; data from separate Browser identities must not be silently merged merely because both Chrome sessions are online.
+
+While tray mode is running, use the Extension popup and the BodyBrain daemon log for this acceptance. Do not launch a second `BodyBrain.exe --check` concurrently with the tray-owned runtime because the production runtime port is single-owner.
+
+## 5. Tray + read-only daemon log acceptance
 
 Start the normal application:
 
@@ -116,7 +140,7 @@ netstat -ano | findstr :43147
 
 PASS requires no running `BodyBrain.exe` and no listener on `127.0.0.1:43147`. This proves the tray Quit path stopped the Desktop Host and complete BODY worker tree rather than merely hiding the UI.
 
-## 5. Restart + token reuse
+## 6. Restart + token reuse
 
 Start BodyBrain normally again:
 
@@ -132,9 +156,9 @@ type "%LOCALAPPDATA%\BodyBrain\body\profiles\.auth\extensions.json"
 
 Right-click the tray icon → **Quit BodyBrain**, verify the process/port are gone, then start the EXE again and read the same file again.
 
-The same Extension entry must preserve the same `tokenHash` and return to READY after restart.
+Every existing Extension entry must preserve its own `tokenHash` and return to READY after restart.
 
-## 6. Persistent failure logs
+## 7. Persistent failure logs
 
 The tray window is intentionally read-only. The underlying persistent logs remain:
 
@@ -145,4 +169,4 @@ powershell -NoProfile -Command "Get-Content (Join-Path $env:LOCALAPPDATA 'BodyBr
 
 ## Acceptance
 
-Release is accepted only when the protected offline Extension reaches READY, the tray icon is present, the read-only daemon log behaves correctly, window X hides without stopping BODY, tray **Quit BodyBrain** fully removes the process/runtime listener, restart reconnects with the same `tokenHash`, Brain remains `NOT_CONFIGURED`, Guardian remains fail-closed, and the user distribution still contains only `BodyBrain.exe` plus `BodyChromeAttach-v0.8.0.zip`.
+Release is accepted only when the protected offline Extension reaches READY, multi-Chrome learning follows the Chrome/profile actually being used, already-open web tabs self-repair after Extension reload, the tray icon is present, the read-only daemon log behaves correctly, window X hides without stopping BODY, tray **Quit BodyBrain** fully removes the process/runtime listener, restart reconnects with the same per-Extension `tokenHash`, Brain remains `NOT_CONFIGURED`, Guardian remains fail-closed, and the user distribution still contains only `BodyBrain.exe` plus `BodyChromeAttach-v0.8.0.zip`.
