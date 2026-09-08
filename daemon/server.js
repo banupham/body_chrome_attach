@@ -15,6 +15,7 @@ const LISTEN_HOST='127.0.0.1',CONTROL_PROTOCOL_VERSION=7,EXTENSION_PROTOCOL_VERS
 const runtimeLock=acquireRuntimeLock(__dirname);
 const prompt=()=>runtime.registry.selectedId?`BODY[${runtime.registry.selectedId.slice(0,8)}]> `:'BODY> ',printAsync=text=>{if(rl)process.stdout.write(`\n${text}\n${prompt()}`);},updatePrompt=()=>rl?.setPrompt(prompt());
 const runtime=createDaemonRuntime({baseDir:__dirname,printAsync}),bodyGateway=new BodyStepGateway(runtime,{baseDir:__dirname}),router=createCommandRouter(runtime,{updatePrompt}),debugAdapter=new DebugCommandAdapter(runtime,router,{updatePrompt}),localAccumulator=createCommandAccumulator(),auth=new LocalAuth(__dirname),controller=new ControllerLease(),debugClients=new Set();
+let connectionSequence=0;
 let wss;try{wss=new WebSocketServer({host:LISTEN_HOST,port:0,verifyClient:({origin},done)=>!origin||origin.startsWith('chrome-extension://')?done(true):done(false,403,'Forbidden Origin')});}catch(error){releaseRuntimeLock(__dirname,{pid:process.pid});throw error;}
 function rejectAuth(ws,error){runtime.send(ws,{type:'AUTH_ERROR',ok:false,error});try{ws.close(1008,'Authentication required');}catch{}}
 function brainSend(type,payload={}){if(!controller.brainSocket)return false;return runtime.send(controller.brainSocket,{type,...payload});}
@@ -77,14 +78,17 @@ async function handleBrainMessage(ws,msg){
 }
 
 wss.on('connection',(ws,request)=>{
+  const connectionId=++connectionSequence;
   let role='unknown';const origin=String(request?.headers?.origin||'');
+  console.log(`[WS-SERVER] connected conn=${connectionId} origin=${origin.startsWith('chrome-extension://')?'extension':origin?'other':'none'} at=${Date.now()}`);
   ws.on('message',async raw=>{
     let msg;try{msg=JSON.parse(String(raw));}catch{return;}
     if(msg.type==='HELLO'){
       const requestedRole=String(msg.role||'unknown');if(!protocolAllowed(requestedRole,msg.protocolVersion)){rejectAuth(ws,'protocol_version_mismatch');return;}
       if(requestedRole==='extension'){
         const extId=String(msg.extensionId||'').trim(),browserInstanceId=browserIdFromHello(msg);if(!browserInstanceId){rejectAuth(ws,'browser_instance_id_required');return;}
-        const authResult=auth.authenticateExtension({extensionId:extId,browserInstanceId,runtimeExtensionId:msg.runtimeExtensionId,token:msg.token,origin});if(!authResult.ok){rejectAuth(ws,authResult.error);return;}
+        const authResult=auth.authenticateExtension({extensionId:extId,browserInstanceId,runtimeExtensionId:msg.runtimeExtensionId,token:msg.token,origin});if(!authResult.ok){console.warn(`[WS-SERVER] auth-reject conn=${connectionId} ext=${extId.slice(0,8)} error=${String(authResult.error||'auth_error').slice(0,80)} at=${Date.now()}`);rejectAuth(ws,authResult.error);return;}
+        console.log(`[WS-SERVER] hello conn=${connectionId} ext=${extId.slice(0,8)} auth=${authResult.paired?(authResult.rotated?'rotated':'paired'):'reused'} at=${Date.now()}`);
         let identity;try{identity=runtime.registerExtensionIdentity({browserInstanceId,extensionInstanceId:extId,runtimeExtensionId:msg.runtimeExtensionId});}catch(error){if(authResult.paired)auth.forgetExtension(extId);rejectAuth(ws,String(error?.message||error));return;}
         role='extension';const item=runtime.registry.register(extId,ws,{...msg,...identity,browserInstanceId});let management;try{management=runtime.extensionOnline(item);}catch(error){runtime.registry.unregisterSocket(ws);if(authResult.paired)auth.forgetExtension(extId);rejectAuth(ws,String(error?.message||error));return;}
         if(authResult.paired)runtime.send(ws,{type:'AUTH_PAIRED',role:'extension',protocolVersion:Number(msg.protocolVersion),token:authResult.pairedToken,identity,rotated:authResult.rotated===true});for(const t of msg.tabs||[])runtime.tabSites.set(runtime.ctx(extId,t.id),String(t.siteKey||'').toLowerCase());
@@ -112,7 +116,8 @@ wss.on('connection',(ws,request)=>{
     if(role==='brain'){try{const handled=await handleBrainMessage(ws,msg);if(!handled)runtime.send(ws,{type:'BRAIN_ERROR',requestId:msg.requestId||null,ok:false,error:'unsupported_brain_message'});}catch(error){runtime.send(ws,{type:'BRAIN_ERROR',requestId:msg.requestId||null,ok:false,error:String(error?.message||error)});}return;}
     if(role==='debug_client'){if(msg.type!=='COMMAND')return;try{const result=await debugAdapter.run(msg.command,{assertControl:()=>controller.assertDebugControlAllowed()});runtime.send(ws,{type:'COMMAND_RESULT',requestId:msg.requestId||null,ok:true,result});}catch(error){runtime.send(ws,{type:'CLIENT_ERROR',requestId:msg.requestId||null,ok:false,error:String(error?.message||error)});}}
   });
-  ws.on('close',()=>{const extId=runtime.registry.unregisterSocket(ws);if(extId){const identity=runtime.identityForExtension(extId);bodyGateway.clearBrowser(identity.browserInstanceId);const cleanup=runtime.extensionOffline(extId);printAsync(`[OFFLINE] browser=${identity.browserInstanceId||'unknown'} extension=${extId} rejectedPending=${cleanup.rejectedPending}`);updatePrompt();brainSend('BODY_EVENT',{event:{eventType:'browserOffline',identity,browserInstanceId:identity.browserInstanceId,ts:Date.now()}});}if(controller.detachSocket(ws))printAsync('[BRAIN] controller detached; Body continues observing/learning.');debugClients.delete(ws);});
+  ws.on('error',error=>{console.warn(`[WS-SERVER] error conn=${connectionId} role=${role} message=${String(error?.message||error).slice(0,120)} at=${Date.now()}`);});
+  ws.on('close',(code,reason)=>{const reasonText=Buffer.isBuffer(reason)?reason.toString('utf8'):String(reason||'');const current=Boolean(runtime.registry.bySocket(ws));console.log(`[WS-SERVER] close conn=${connectionId} role=${role} code=${Number(code)||0} reason=${JSON.stringify(reasonText.slice(0,80))} current=${current} at=${Date.now()}`);const extId=runtime.registry.unregisterSocket(ws);if(extId){const identity=runtime.identityForExtension(extId);bodyGateway.clearBrowser(identity.browserInstanceId);const cleanup=runtime.extensionOffline(extId);printAsync(`[OFFLINE] browser=${identity.browserInstanceId||'unknown'} extension=${extId} rejectedPending=${cleanup.rejectedPending}`);updatePrompt();brainSend('BODY_EVENT',{event:{eventType:'browserOffline',identity,browserInstanceId:identity.browserInstanceId,ts:Date.now()}});}if(controller.detachSocket(ws))printAsync('[BRAIN] controller detached; Body continues observing/learning.');debugClients.delete(ws);});
 });
 
 function disconnectExtensionForRevocation(extensionId){const item=runtime.registry.get(extensionId);if(!item?.online||!item.ws)return false;try{if(typeof item.ws.terminate==='function')item.ws.terminate();else item.ws.close(1008,'Pairing revoked');return true;}catch{return false;}}
