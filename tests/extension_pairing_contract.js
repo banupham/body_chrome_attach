@@ -15,7 +15,7 @@ test('manifest exposes status popup and only approved runtime/Guardian permissio
   for(const forbidden of ['cookies','history','webRequest','webRequestBlocking','nativeMessaging','management'])assert.equal(manifest.permissions.includes(forbidden),false,`unexpected privileged permission: ${forbidden}`);
 });
 
-test('popup shows only compact readiness state and contains no manual pairing input',()=>{
+test('popup shows compact readiness plus per-Browser learning diagnostics and contains no manual pairing input',()=>{
   const html=fs.readFileSync(path.join(root,'pairing.html'),'utf8');
   const popup=fs.readFileSync(path.join(root,'src','pairing_popup.js'),'utf8');
   const worker=fs.readFileSync(path.join(root,'src','service_worker_entry.js'),'utf8');
@@ -28,26 +28,35 @@ test('popup shows only compact readiness state and contains no manual pairing in
   assert.match(popup,/SẴN SÀNG/);
   assert.match(popup,/BỊ CHẶN/);
   assert.match(popup,/ĐANG KIỂM TRA/);
+  assert.match(popup,/Học: \$\{events\} sự kiện/);
+  assert.match(popup,/browserInstanceId/);
+  assert.match(popup,/activeTabId/);
   assert.match(popup,/body\.pairingStatus/);
   assert.match(popup,/body\.pairReset/);
   assert.doesNotMatch(popup,/body\.pair['"]/);
   assert.match(worker,/READINESS_POLL/);
   assert.match(worker,/readiness:\s*daemon\.readinessStatus/);
+  assert.match(worker,/learningInput:\s*learningInputStatus\(\)/);
   assert.match(worker,/bodyDaemonAuthToken/);
   assert.match(worker,/storage\.local\.remove\('bodyDaemonAuthToken'\)/);
   assert.doesNotMatch(worker,/body\.pair['"]/);
   assert.match(worker,/automatic_local/);
 });
 
-test('service worker has a Chrome-alarm reconnect backstop for Desktop restarts and MV3 suspension',()=>{
+test('service worker has identity-first Chrome-alarm reconnect backstop for Desktop restarts and MV3 suspension',()=>{
   const worker=fs.readFileSync(path.join(root,'src','service_worker_entry.js'),'utf8');
   assert.match(worker,/DAEMON_WAKE_ALARM\s*=\s*'body-daemon-wake'/);
   assert.match(worker,/DAEMON_WAKE_PERIOD_MINUTES\s*=\s*0\.5/);
+  assert.match(worker,/daemonIdentityReady\s*=\s*daemon\.identity\(\)/);
+  assert.match(worker,/async function connectDaemon\(\)/);
+  assert.match(worker,/await daemonIdentityReady/);
+  assert.match(worker,/const status = await daemon\.connect\(\)/);
   assert.match(worker,/chrome\.alarms\.onAlarm\.addListener/);
   assert.match(worker,/periodInMinutes:\s*DAEMON_WAKE_PERIOD_MINUTES/);
   assert.match(worker,/type:\s*'KEEPALIVE'/);
-  assert.match(worker,/daemon\.connect\(\)\.then\(\(\)\s*=>\s*observeDaemonSocket\(\)\)\.catch/);
+  assert.match(worker,/connectDaemon\(\)\.catch/);
   assert.match(worker,/chrome\.runtime\.onStartup\.addListener/);
+  assert.match(worker,/daemonIdentityReady[\s\S]*repairOpenWebTabs/);
   assert.match(worker,/Body daemon WebSocket closed/);
 });
 
@@ -60,7 +69,7 @@ test('release path is protected offline ZIP only and contains no legacy CRX mate
   }
 });
 
-test('real Chrome release acceptance is fully manual and tray-owned',()=>{
+test('real Chrome release acceptance is fully manual, multi-Chrome aware, and tray-owned',()=>{
   const workflow=fs.readFileSync(path.join(root,'.github','workflows','verify.yml'),'utf8');
   const guide=fs.readFileSync(path.join(root,'MANUAL_RELEASE_TEST.md'),'utf8');
   assert.doesNotMatch(workflow,/body_chrome_real_e2e\.js|puppeteer/i);
@@ -68,12 +77,16 @@ test('real Chrome release acceptance is fully manual and tray-owned',()=>{
   assert.doesNotMatch(guide,/BodyChromeAttach-v0\.8\.0-PROTECTED|PROTECTED\.json|dist_protected|\.crx/);
   assert.match(guide,/Load unpacked/);
   assert.match(guide,/Diagnostic READY check/);
+  assert.match(guide,/Multi-Chrome learning \+ focused-window acceptance/);
+  assert.match(guide,/Học.*sự kiện/);
+  assert.match(guide,/browserInstanceId/);
+  assert.match(guide,/HTTP_TAB_REQUIRED_FOR_ENVIRONMENT_PROBE/);
+  assert.match(guide,/historical\/offline Browser/);
   assert.match(guide,/Tray \+ read-only daemon log acceptance/);
   assert.match(guide,/Quit BodyBrain/);
   assert.match(guide,/Restart \+ token reuse/);
   assert.match(guide,/tokenHash/);
   assert.match(guide,/brain.*NOT_CONFIGURED/is);
-  assert.match(guide,/browser_offline/);
 });
 
 test('Guardian page overlay is passive, periodic, and maps readiness to three compact states',()=>{
