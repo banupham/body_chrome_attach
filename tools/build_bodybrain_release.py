@@ -35,7 +35,7 @@ def sha256(pathname: Path) -> str:
 
 def extension_artifact() -> Path:
     package=json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
-    return ARTIFACTS / f"BodyChromeAttach-v{package['version']}-PROTECTED.zip"
+    return ARTIFACTS / f"BodyChromeAttach-v{package['version']}.zip"
 
 
 def clean_release_artifacts() -> Path:
