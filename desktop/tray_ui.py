@@ -16,6 +16,10 @@ if os.name == "nt":
 
     LRESULT = ctypes.c_ssize_t
     WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+    HICON = getattr(wintypes, "HICON", wintypes.HANDLE)
+    HCURSOR = getattr(wintypes, "HCURSOR", wintypes.HANDLE)
+    HBRUSH = getattr(wintypes, "HBRUSH", wintypes.HANDLE)
+    HFONT = getattr(wintypes, "HFONT", wintypes.HANDLE)
 
     WM_DESTROY = 0x0002
     WM_SIZE = 0x0005
@@ -94,12 +98,12 @@ if os.name == "nt":
             ("cbClsExtra", ctypes.c_int),
             ("cbWndExtra", ctypes.c_int),
             ("hInstance", wintypes.HINSTANCE),
-            ("hIcon", wintypes.HICON),
-            ("hCursor", wintypes.HCURSOR),
-            ("hbrBackground", wintypes.HBRUSH),
+            ("hIcon", HICON),
+            ("hCursor", HCURSOR),
+            ("hbrBackground", HBRUSH),
             ("lpszMenuName", wintypes.LPCWSTR),
             ("lpszClassName", wintypes.LPCWSTR),
-            ("hIconSm", wintypes.HICON),
+            ("hIconSm", HICON),
         ]
 
     class NOTIFYICONDATAW(ctypes.Structure):
@@ -109,7 +113,7 @@ if os.name == "nt":
             ("uID", wintypes.UINT),
             ("uFlags", wintypes.UINT),
             ("uCallbackMessage", wintypes.UINT),
-            ("hIcon", wintypes.HICON),
+            ("hIcon", HICON),
             ("szTip", wintypes.WCHAR * 128),
             ("dwState", wintypes.DWORD),
             ("dwStateMask", wintypes.DWORD),
@@ -118,7 +122,7 @@ if os.name == "nt":
             ("szInfoTitle", wintypes.WCHAR * 64),
             ("dwInfoFlags", wintypes.DWORD),
             ("guidItem", GUID),
-            ("hBalloonIcon", wintypes.HICON),
+            ("hBalloonIcon", HICON),
         ]
 
     user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -128,10 +132,11 @@ if os.name == "nt":
 
     user32.DefWindowProcW.restype = LRESULT
     user32.CreateWindowExW.restype = wintypes.HWND
-    user32.LoadIconW.restype = wintypes.HICON
-    user32.LoadCursorW.restype = wintypes.HCURSOR
+    user32.LoadIconW.restype = HICON
+    user32.LoadCursorW.restype = HCURSOR
+    user32.CreatePopupMenu.restype = wintypes.HANDLE
     kernel32.GetModuleHandleW.restype = wintypes.HMODULE
-    gdi32.CreateFontW.restype = wintypes.HFONT
+    gdi32.CreateFontW.restype = HFONT
 
     def _resource(identifier: int):
         return ctypes.cast(ctypes.c_void_p(identifier), wintypes.LPCWSTR)
