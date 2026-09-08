@@ -32,11 +32,13 @@ jobs:
           tests/desktop_runtime_smoke.py tests/bodybrain_exe_smoke.py tests/bodybrain_release_manifest_contract.py
       - name: Smoke Desktop runtime without Chrome
         run: python3 tests/desktop_runtime_smoke.py
-      - name: Upload Chrome BODY extension package
+      - name: Upload Chrome BODY Extension packages
         uses: actions/upload-artifact@v4
         with:
           name: body-chrome-extension-${{ github.sha }}
-          path: artifacts/body-chrome-attach-v*.zip
+          path: |
+            artifacts/body-chrome-attach-v*.zip
+            artifacts/BodyChromeAttach-v*.crx
           if-no-files-found: error
           retention-days: 14
 
@@ -75,7 +77,7 @@ jobs:
         env:
           PUPPETEER_SKIP_DOWNLOAD: 'true'
         run: npm install
-      - name: Build Chrome BODY Extension package
+      - name: Build Chrome BODY Extension packages
         run: npm run extension:package
       - name: Verify production excludes Brain
         run: python tests/bodybrain_no_brain_contract.py
@@ -95,7 +97,7 @@ jobs:
             artifacts/BodyBrain.exe
             artifacts/bodybrain-release-v*.json
             artifacts/body-chrome-attach-v*.zip
+            artifacts/BodyChromeAttach-v*.crx
             MANUAL_RELEASE_TEST.md
-            tools/start_manual_chrome_test.cmd
           if-no-files-found: error
           retention-days: 14
