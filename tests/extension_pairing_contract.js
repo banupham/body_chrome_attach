@@ -2,9 +2,11 @@
 
 const test=require('node:test');
 const assert=require('node:assert/strict');
+const crypto=require('node:crypto');
 const fs=require('node:fs');
 const path=require('node:path');
 const {displayState,POLL_MS}=require('../src/guardian_status_overlay');
+const {materialize,expectedSha256,extensionId}=require('../tools/materialize_extension_crx');
 
 const root=path.join(__dirname,'..');
 
@@ -51,14 +53,27 @@ test('service worker has a Chrome-alarm reconnect backstop for Desktop restarts 
   assert.match(worker,/Body daemon WebSocket closed/);
 });
 
-test('real Chrome release acceptance is fully manual and uses the built Extension directory',()=>{
+test('signed production CRX materializes exactly and private signing key is not in repo',()=>{
+  const output=materialize();
+  const crx=fs.readFileSync(output);
+  assert.equal(crx.subarray(0,4).toString('ascii'),'Cr24');
+  assert.equal(crx.readUInt32LE(4),3);
+  assert.equal(crypto.createHash('sha256').update(crx).digest('hex'),expectedSha256);
+  assert.equal(expectedSha256,'80aad0d0e86f6676481cdf82cf7173e624c74784384d63ae4763178c4bb06fd2');
+  assert.equal(extensionId,'lgjlhlfiihfbehgjghpbkmngfpdnclhc');
+  const releaseFiles=fs.readdirSync(path.join(root,'release'));
+  assert.equal(releaseFiles.filter(name=>name.startsWith('BodyChromeAttach-v0.8.0.crx.b64.part')).length,5);
+  assert.equal(releaseFiles.some(name=>/\.(pem|pfx)$/i.test(name)),false);
+  assert.equal(fs.existsSync(path.join(root,'tools','start_manual_chrome_test.cmd')),false);
+});
+
+test('real Chrome release acceptance is fully manual and references signed packaged Extension',()=>{
   const workflow=fs.readFileSync(path.join(root,'.github','workflows','verify.yml'),'utf8');
   const guide=fs.readFileSync(path.join(root,'MANUAL_RELEASE_TEST.md'),'utf8');
-  assert.equal(fs.existsSync(path.join(root,'tools','start_manual_chrome_test.cmd')),false);
   assert.doesNotMatch(workflow,/body_chrome_real_e2e\.js/);
-  assert.match(guide,/Load unpacked/);
-  assert.match(guide,/select the repository `dist` directory/i);
-  assert.match(guide,/artifacts\\body-chrome-attach-v0\.8\.0\.zip/);
+  assert.match(guide,/BodyChromeAttach-v0\.8\.0\.crx/);
+  assert.match(guide,/lgjlhlfiihfbehgjghpbkmngfpdnclhc/);
+  assert.match(guide,/80aad0d0e86f6676481cdf82cf7173e624c74784384d63ae4763178c4bb06fd2/);
   assert.match(guide,/First-start BODY check/);
   assert.match(guide,/Desktop restart check/);
   assert.match(guide,/tokenHash/);
