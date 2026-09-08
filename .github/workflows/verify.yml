@@ -30,13 +30,6 @@ jobs:
           tests/desktop_runtime_smoke.py tests/bodybrain_exe_smoke.py tests/bodybrain_release_manifest_contract.py
       - name: Smoke Desktop runtime without Chrome
         run: python3 tests/desktop_runtime_smoke.py
-      - name: Upload protected Chrome BODY Extension
-        uses: actions/upload-artifact@v4
-        with:
-          name: body-chrome-extension-${{ github.sha }}
-          path: artifacts/BodyChromeAttach-v*-PROTECTED.zip
-          if-no-files-found: error
-          retention-days: 14
 
   windows-native-input:
     runs-on: windows-latest
@@ -81,16 +74,15 @@ jobs:
         run: python tools/build_bodybrain_release.py
       - name: Smoke actual BodyBrain.exe twice
         run: python tests/bodybrain_exe_smoke.py artifacts/BodyBrain.exe
-      - name: Verify release hashes and boundary
+      - name: Verify exact three-file release
         run: python tests/bodybrain_release_manifest_contract.py
-      - name: Upload BodyBrain Windows release
+      - name: Upload clean BodyBrain Windows release
         uses: actions/upload-artifact@v4
         with:
           name: bodybrain-windows-release-${{ github.sha }}
           path: |
             artifacts/BodyBrain.exe
+            artifacts/BodyChromeAttach-v*.zip
             artifacts/bodybrain-release-v*.json
-            artifacts/BodyChromeAttach-v*-PROTECTED.zip
-            MANUAL_RELEASE_TEST.md
           if-no-files-found: error
           retention-days: 14
