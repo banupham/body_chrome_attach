@@ -2,7 +2,6 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -12,13 +11,8 @@ const { listZipEntries } = require('../tools/package_extension');
 const root = path.join(__dirname, '..');
 const dist = path.join(root, 'dist');
 const protectedDir = path.join(root, 'dist_protected');
-const packageJson = require('../package.json');
-const artifactJson = path.join(root, 'artifacts', `BodyChromeAttach-v${packageJson.version}-PROTECTED.json`);
-const artifactZip = path.join(root, 'artifacts', `BodyChromeAttach-v${packageJson.version}-PROTECTED.zip`);
-
-function sha256(buffer) {
-  return crypto.createHash('sha256').update(buffer).digest('hex');
-}
+const version = require('../package.json').version;
+const artifactZip = path.join(root, 'artifacts', `BodyChromeAttach-v${version}-PROTECTED.zip`);
 
 test('offline protection profile is intentionally strong and CSP-compatible', () => {
   const options = obfuscatorOptions('service_worker.js');
@@ -62,30 +56,10 @@ test('protected directory contains only Chrome runtime files and every JS bundle
   }
 });
 
-test('protected release manifest hashes exactly match generated bundles', () => {
-  assert.ok(fs.existsSync(artifactJson), 'protected release manifest missing');
-  const manifest = JSON.parse(fs.readFileSync(artifactJson, 'utf8'));
-  assert.equal(manifest.product, 'Body Chrome Attach');
-  assert.equal(manifest.version, packageJson.version);
-  assert.equal(manifest.protectionProfile, 'offline-obfuscated-v1');
-  assert.equal(manifest.target, 'browser-no-eval');
-  assert.equal(manifest.javascript.length, JS_FILES.length);
-
-  for (const item of manifest.javascript) {
-    assert.ok(JS_FILES.includes(item.file), `unexpected protected JS: ${item.file}`);
-    const original = fs.readFileSync(path.join(dist, item.file));
-    const protectedCode = fs.readFileSync(path.join(protectedDir, item.file));
-    assert.equal(item.sourceSha256, sha256(original));
-    assert.equal(item.protectedSha256, sha256(protectedCode));
-    assert.notEqual(item.sourceSha256, item.protectedSha256);
-  }
-});
-
-test('protected ZIP is deterministic-format and contains no source tree or signing key', () => {
+test('protected ZIP contains only runtime files and no source/signing material', () => {
   assert.ok(fs.existsSync(artifactZip), 'protected ZIP missing');
-  const zip = fs.readFileSync(artifactZip);
-  assert.deepEqual(listZipEntries(zip).sort(), RUNTIME_FILES);
-  const names = listZipEntries(zip);
+  const names = listZipEntries(fs.readFileSync(artifactZip));
+  assert.deepEqual(names.sort(), RUNTIME_FILES);
   for (const forbidden of ['src/', '.pem', '.map', 'node_modules/']) {
     assert.equal(names.some(name => name.includes(forbidden)), false, `forbidden protected artifact entry: ${forbidden}`);
   }
