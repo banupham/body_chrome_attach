@@ -2,16 +2,18 @@
 
 Production acceptance is fully manual: no Puppeteer, CDP browser automation, automatic Chrome launch, or automatic Extension installation.
 
-## Release outputs
+## User-facing release
 
-Only these two files are user-facing:
+Give the user exactly these two files:
 
 ```text
-artifacts\BodyBrain.exe
-artifacts\BodyChromeAttach-v0.8.0-PROTECTED.zip
+BodyBrain.exe
+BodyChromeAttach-v0.8.0.zip
 ```
 
-`dist\`, `dist_protected\`, `.release-build\`, `build\`, logs and test files are build/runtime internals and must not be distributed.
+The ZIP is already the protected/obfuscated Extension build.
+
+Internal integrity metadata is kept separately as `bodybrain-release-v0.8.0.json` and does not need to be distributed to normal users.
 
 ## 1. Build clean release
 
@@ -24,39 +26,45 @@ npm run clean
 npm run extension:protected:test
 python -m pip install -r requirements-release.txt
 python tools\build_bodybrain_release.py
+python tests\bodybrain_release_manifest_contract.py
 ```
 
-Expected Extension outputs:
-
-```text
-dist_protected\
-artifacts\BodyChromeAttach-v0.8.0-PROTECTED.zip
-```
-
-Expected Windows output:
+After the build, this directory must contain exactly three files:
 
 ```text
 artifacts\BodyBrain.exe
+artifacts\BodyChromeAttach-v0.8.0.zip
+artifacts\bodybrain-release-v0.8.0.json
 ```
+
+There must be no normal/unprotected Extension ZIP, no `-PROTECTED` duplicate, no CRX, no Extension-specific JSON manifest, no `dist_protected\`, and no `.release-build\` left behind.
 
 `python tests\bodybrain_exe_smoke.py artifacts\BodyBrain.exe` is a no-Chrome smoke test. Run it only with Chrome/Extension isolated; do not mix it with the real-Chrome acceptance below.
 
-## 2. Load protected Extension manually
+## 2. Extract and load Extension manually
 
-1. Extract `BodyChromeAttach-v0.8.0-PROTECTED.zip` to a permanent folder, or use local `dist_protected\`.
-2. Open normal Chrome manually.
-3. Open `chrome://extensions/`.
-4. Enable **Developer mode**.
-5. Click **Load unpacked**.
-6. Select the protected folder containing `manifest.json`.
-7. Verify **Body Chrome Attach 0.8.0** is enabled.
-8. Open a normal web page.
+Use a permanent folder outside the repository, for example:
 
-Never distribute the repository `src\` tree or normal `dist\` directory.
+```cmd
+rmdir /s /q C:\BodyBrain\Extension-v0.8.0 2>nul
+powershell -NoProfile -Command "Expand-Archive -Force 'artifacts\BodyChromeAttach-v0.8.0.zip' 'C:\BodyBrain\Extension-v0.8.0'"
+```
+
+Then:
+
+1. Open normal Chrome manually.
+2. Open `chrome://extensions/`.
+3. Enable **Developer mode**.
+4. Click **Load unpacked**.
+5. Select `C:\BodyBrain\Extension-v0.8.0`.
+6. Verify **Body Chrome Attach 0.8.0** is enabled.
+7. Open a normal web page.
+
+Never distribute repository source, `dist\`, tests, signing keys, or build directories.
 
 ## 3. First-start BODY check
 
-Keep Chrome and the protected Extension open. Run:
+Keep Chrome and the Extension open. Run:
 
 ```cmd
 artifacts\BodyBrain.exe --check --json --ready-timeout 8
@@ -100,4 +108,4 @@ powershell -NoProfile -Command "Get-Content (Join-Path $env:LOCALAPPDATA 'BodyBr
 
 ## Acceptance
 
-Release is accepted only when the protected offline Extension reaches `READY`, Desktop restart reconnects, `tokenHash` is reused, Brain remains `NOT_CONFIGURED`, Guardian remains fail-closed, and the two user-facing files above are the only distributed artifacts.
+Release is accepted only when the protected offline Extension reaches `READY`, Desktop restart reconnects, `tokenHash` is reused, Brain remains `NOT_CONFIGURED`, Guardian remains fail-closed, and the user distribution contains only `BodyBrain.exe` plus `BodyChromeAttach-v0.8.0.zip`.
