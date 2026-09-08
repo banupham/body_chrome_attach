@@ -1,8 +1,8 @@
 # Manual Real Chrome Release Test
 
-This acceptance test intentionally uses no Puppeteer, CDP automation, scripted clicking, browser assertions, automatic Chrome launch, or automatic Extension installation.
+This acceptance test uses no Puppeteer, CDP automation, scripted clicking, automatic Chrome launch, or automatic Extension installation.
 
-## 1. Prepare the packaged Extension and EXE
+## 1. Prepare release artifacts
 
 From the repository root:
 
@@ -13,41 +13,42 @@ python tools\build_bodybrain_release.py
 python tests\bodybrain_exe_smoke.py artifacts\BodyBrain.exe
 ```
 
-The unpacked Extension for Chrome Developer Mode is:
+Primary signed packaged Extension:
 
 ```text
-dist\
+artifacts\BodyChromeAttach-v0.8.0.crx
 ```
 
-The packaged Extension ZIP is:
+Signed Extension identity:
+
+```text
+Extension ID: lgjlhlfiihfbehgjghpbkmngfpdnclhc
+SHA-256: 80aad0d0e86f6676481cdf82cf7173e624c74784384d63ae4763178c4bb06fd2
+```
+
+Release ZIP retained for package regression/archive:
 
 ```text
 artifacts\body-chrome-attach-v0.8.0.zip
 ```
 
-The ZIP is the distributable package. Chrome's **Load unpacked** button must point to the `dist` directory, not to the ZIP file.
+The private signing key is not stored in the repository or release artifacts.
 
-## 2. Load BODY Extension manually in Chrome
+## 2. Install/load Extension manually
 
-1. Open your normal Chrome manually.
-2. Open `chrome://extensions/`.
-3. Turn on **Developer mode**.
-4. Click **Load unpacked**.
-5. Select the repository `dist` directory.
-6. Verify **Body Chrome Attach** is present and enabled.
-7. Open a normal web page, for example `https://example.com/`.
+Use the signed `BodyChromeAttach-v0.8.0.crx` as the production packaged Extension where the Chrome deployment policy permits CRX installation. For Developer Mode functional testing, the built runtime remains available under `dist\` and may be loaded manually with **Load unpacked**.
 
 No launcher or browser automation is used.
 
 ## 3. First-start BODY check
 
-Keep Chrome open. In CMD from the repository root, run:
+Keep Chrome with BODY Extension active. In CMD from the repository root, run:
 
 ```cmd
 artifacts\BodyBrain.exe --check --json --ready-timeout 8
 ```
 
-Read the final JSON line manually. Acceptance criteria:
+Acceptance criteria:
 
 - `product` is `BodyBrain`.
 - `desktop` is `RUNNING`.
@@ -76,7 +77,7 @@ artifacts\BodyBrain.exe --check --json --ready-timeout 8
 
 The Extension must reconnect and return to `READY`; the browser must not be `browser_offline`.
 
-Read the pairing state again:
+Read pairing state again:
 
 ```cmd
 type "%LOCALAPPDATA%\BodyBrain\body\profiles\.auth\extensions.json"
@@ -88,7 +89,7 @@ The same Extension entry must retain the same `tokenHash`.
 
 The real-Chrome portion is accepted only when a human has observed:
 
-1. BODY Extension was loaded manually from `dist` using Chrome Developer Mode.
+1. The intended packaged Extension is `artifacts\BodyChromeAttach-v0.8.0.crx` with the expected Extension ID and SHA-256.
 2. First-start Extension state is `READY` with no `browser_offline`.
 3. Desktop restart reconnects the same Chrome session.
 4. Pairing `tokenHash` is reused across the Desktop restart.
