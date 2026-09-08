@@ -2,85 +2,80 @@
 
 ## Production target
 
-The current production target is **BODY**, delivered as two user-facing components:
-
-1. **`BodyBrain.exe`** — Windows host containing Desktop Host + Guardian + BODY Core.
-2. **Chrome BODY Extension** — Chrome-resident sensors, Human recorder, environment evidence and actuator bridge.
-
-**Brain is not part of the current production release.** Brain remains a separate R&D track until its reasoning, planning, context and memory architecture is approved.
+Current production is **BODY only**:
 
 ```text
-Windows
-  |
-  v
 BodyBrain.exe
-  +-- Desktop Host
-  +-- Guardian
-  +-- BODY Core
-  |
-  +---- authenticated local status/readiness channel
-             |
-             v
-      Chrome BODY Extension
-             |
-             v
-           Chrome
-
-Brain
-  -> separate R&D track
-  -> NOT_CONFIGURED in production health
+├── Desktop Host
+├── Guardian
+└── BODY Core
+        ↕ authenticated local channel
+Chrome BODY Extension
 ```
 
-## Locked production boundaries
+Brain remains a separate R&D track and must report `NOT_CONFIGURED` in production.
 
-- Guardian owns ALLOW / BLOCK and remains fail-closed.
+## User-facing release
+
+A user receives exactly two files:
+
+```text
+BodyBrain.exe
+BodyChromeAttach-v0.8.0-PROTECTED.zip
+```
+
+The protected ZIP is extracted and loaded manually through `chrome://extensions/` → **Load unpacked**.
+
+## Repository cleanliness rules
+
+- Do not commit generated binaries, ZIPs, CRXs, signing keys, Base64 binary payload parts, logs, temp extraction files, or build directories.
+- `dist/`, `dist_protected/`, `artifacts/`, `.release-build/` and `build/` are generated/ignored outputs only.
+- Keep source, tests, build tools and release documentation only when they have an active production purpose.
+- No Puppeteer or browser automation in production acceptance.
+- Do not create duplicate release manifests for the Extension; the protected ZIP SHA-256 is emitted by the build and CI stores the package artifact.
+- Persistent BODY state belongs only under `%LOCALAPPDATA%\BodyBrain\body`.
+
+## Locked boundaries
+
+- Guardian owns ALLOW/BLOCK and remains fail-closed.
 - BODY owns physical implementation, observation, provenance, StepLedger and motor learning.
 - Chrome Extension is part of BODY.
-- Desktop production code does not reason about WHAT / WHY / NEXT.
-- Desktop production status client is read-only and does not expose physical action commands.
+- Desktop production status access is read-only; Desktop does not reason about WHAT/WHY/NEXT.
 - Human and Agent provenance remain separate.
-- One-file extraction never owns persistent identity/auth/task/evidence/learning/ledger state; persistent BODY state lives under `%LOCALAPPDATA%\BodyBrain\body`.
-- Brain is reported as `NOT_CONFIGURED`; production packaging does not import or bundle Brain modules.
+- Production packaging does not import or bundle Brain modules.
 
-## Production delivery plan
+## Delivery stages
 
-| Stage | Scope | Acceptance gate | Status |
+| Stage | Scope | Gate | Status |
 |---|---|---|---|
-| A | BODY Contract + provenance + at-most-once execution | Contract/regression tests green | DONE |
-| B | Chrome BODY Extension release package | Bundled/minified ZIP, signed CRX identity artifact, protected offline package | DONE |
-| C | Desktop Host foundation | Deterministic paths, redacted logs, health, worker supervision, clean shutdown/orphan cleanup | IMPLEMENTED |
-| D | Guardian + BODY hosted runtime | EXE starts BODY internally; waits for Extension; Guardian remains fail-closed | IMPLEMENTED |
-| E | One-file Windows release | Bundle Node + native input helper; build/smoke actual `BodyBrain.exe`; release hashes | DONE |
-| F | Release acceptance | CI build/contracts green + manual real-Chrome first-start/restart/token-reuse + final diff/security review | MANUAL GATE |
+| A | BODY Contract + provenance + at-most-once execution | Contract/regression tests | DONE |
+| B | Protected offline Chrome Extension | Protected ZIP only; no source/signing material | DONE |
+| C | Desktop Host | Persistent paths, redacted logs, worker lifecycle, clean process-tree shutdown | DONE |
+| D | Guardian + BODY runtime lifecycle | Start/restart without stale lock or orphan runtime; fail-closed | HARDENING |
+| E | One-file Windows build | `BodyBrain.exe` build + isolated smoke + release hash | DONE |
+| F | Real release acceptance | Windows + real Chrome first start/restart/token reuse + final security review | BLOCKED ON D |
 
-## Offline protected Extension release
+## Current blocker: runtime ownership recovery
 
-The preferred offline user package is produced by:
-
-```cmd
-npm run extension:protected
-```
-
-Generated outputs:
+Real Windows testing exposed a stale runtime ownership failure:
 
 ```text
-dist_protected\
-artifacts\BodyChromeAttach-v0.8.0-PROTECTED.zip
-artifacts\BodyChromeAttach-v0.8.0-PROTECTED.json
+company_runtime_already_running:<stale-or-reused-pid>
 ```
 
-The protected pipeline starts from the normal esbuild release bundles, then applies deterministic JavaScript obfuscation with a Manifest V3 compatible `browser-no-eval` target. The release contract requires transformed JavaScript, no source maps, no `eval`, no `new Function`, no source tree, and no signing key in the protected package.
+The runtime lock must not trust PID existence alone because Windows can retain/reuse a PID after the original runtime is no longer valid. Stage D is complete only when runtime ownership uses a bounded lease/heartbeat, stale legacy locks recover safely, active runtimes remain protected from duplicate ownership, and Windows regression tests pass.
 
-The normal `dist\` and `body-chrome-attach-v0.8.0.zip` remain development/regression outputs and are not the preferred offline user package.
+## Release acceptance
 
-## Manual real-Chrome acceptance
+Stage F becomes PASS only when all of the following are true:
 
-Real-Chrome release acceptance is intentionally human-operated. CI does not launch or control Chrome. The tester extracts `artifacts\BodyChromeAttach-v0.8.0-PROTECTED.zip`, opens `chrome://extensions/`, enables Developer mode, chooses **Load unpacked**, and selects the extracted protected directory containing `manifest.json`. `MANUAL_RELEASE_TEST.md` then covers first-start readiness, Desktop restart reconnect, pairing token reuse, Brain `NOT_CONFIGURED`, and Guardian fail-closed behavior.
+1. `npm run verify` passes on CI.
+2. Windows native/Desktop contracts pass.
+3. Actual `BodyBrain.exe` isolated smoke passes.
+4. Protected Extension loaded in real Chrome reaches `READY`.
+5. A second `BodyBrain.exe --check` reconnects cleanly without stale-lock failure.
+6. Extension `tokenHash` is reused across Desktop restart.
+7. Brain remains `NOT_CONFIGURED` and Guardian remains authoritative/fail-closed.
+8. Final release artifact set contains only the two user-facing files plus CI/internal integrity metadata.
 
-## Brain R&D track
-
-Brain development is intentionally not scheduled as a production stage here. It should be researched and validated on a separate branch/roadmap. Only after its architecture is approved should a future integration contract be proposed. That future work must not weaken Guardian authority or BODY ownership of physical execution.
-
-## Release result expected
-
-A user receives the protected offline Chrome BODY Extension package and `BodyBrain.exe`. The executable starts and owns BODY runtime workers, persists BODY data outside the one-file extraction directory, waits for Chrome, reports Guardian/Extension health, shuts down cleanly, and contains no production Brain logic.
+Do not merge PR #12 until Stage F is explicitly accepted.
