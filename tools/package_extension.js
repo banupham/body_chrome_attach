@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
+const { materialize: materializeSignedCrx } = require('./materialize_extension_crx');
 
 const root = path.join(__dirname, '..');
 const distDir = path.join(root, 'dist');
@@ -76,7 +77,7 @@ function createZip(entries) {
   const centralParts = [];
   let offset = 0;
   const dosTime = 0;
-  const dosDate = (1 << 5) | 1; // 1980-01-01 for reproducible archives.
+  const dosDate = (1 << 5) | 1;
 
   for (const entry of entries) {
     const name = Buffer.from(entry.name.replace(/\\/g, '/'), 'utf8');
@@ -178,6 +179,7 @@ function packageExtension() {
 if (require.main === module) {
   try {
     packageExtension();
+    materializeSignedCrx();
   } catch (error) {
     console.error(error);
     process.exitCode = 1;
