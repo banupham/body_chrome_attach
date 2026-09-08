@@ -5,14 +5,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { RUNTIME_FILES, JS_FILES, obfuscatorOptions } = require('../tools/protect_extension');
-const { listZipEntries } = require('../tools/package_extension');
+const { RUNTIME_FILES, JS_FILES, OUTPUT_NAME, obfuscatorOptions } = require('../tools/protect_extension');
+const { listZipEntries, readZipEntries } = require('../tools/package_extension');
 
 const root = path.join(__dirname, '..');
-const dist = path.join(root, 'dist');
-const protectedDir = path.join(root, 'dist_protected');
-const version = require('../package.json').version;
-const artifactZip = path.join(root, 'artifacts', `BodyChromeAttach-v${version}-PROTECTED.zip`);
+const packageJson = require('../package.json');
+const artifactsDir = path.join(root, 'artifacts');
+const artifactZip = path.join(artifactsDir, OUTPUT_NAME);
 
 test('offline protection profile is intentionally strong and CSP-compatible', () => {
   const options = obfuscatorOptions('service_worker.js');
@@ -33,34 +32,46 @@ test('offline protection profile is intentionally strong and CSP-compatible', ()
   assert.equal(options.sourceMap, false);
 });
 
-test('protected directory contains only Chrome runtime files and every JS bundle is transformed', () => {
-  assert.ok(fs.existsSync(protectedDir), 'run npm run extension:protected first');
-  assert.deepEqual(fs.readdirSync(protectedDir).sort(), RUNTIME_FILES);
+test('single protected ZIP contains only Chrome runtime files', () => {
+  assert.ok(fs.existsSync(artifactZip), 'run npm run extension:protected first');
+  const zip = fs.readFileSync(artifactZip);
+  assert.deepEqual(listZipEntries(zip).sort(), RUNTIME_FILES);
+  const entries = readZipEntries(zip);
+  assert.deepEqual([...entries.keys()].sort(), RUNTIME_FILES);
+  const manifest = JSON.parse(entries.get('manifest.json').toString('utf8'));
+  assert.equal(manifest.version, packageJson.version);
+  for (const forbidden of ['src/', '.pem', '.pfx', '.crx', '.map', 'node_modules/', 'daemon/']) {
+    assert.equal([...entries.keys()].some(name => name.includes(forbidden)), false, `forbidden release entry: ${forbidden}`);
+  }
+});
 
-  const protectedCombined = [];
+test('every shipped JavaScript bundle is obfuscated and MV3-CSP compatible', () => {
+  const entries = readZipEntries(fs.readFileSync(artifactZip));
+  const combined = [];
   for (const name of JS_FILES) {
-    const original = fs.readFileSync(path.join(dist, name), 'utf8');
-    const protectedCode = fs.readFileSync(path.join(protectedDir, name), 'utf8');
-    assert.notEqual(protectedCode, original, `${name} must be transformed`);
+    const protectedCode = entries.get(name).toString('utf8');
     assert.ok(protectedCode.length > 0, `${name} must not be empty`);
     assert.doesNotMatch(protectedCode, /sourceMappingURL\s*=/);
     assert.doesNotMatch(protectedCode, /(?:^|[^\w$])eval\s*\(/);
     assert.doesNotMatch(protectedCode, /new\s+Function\s*\(/);
     assert.doesNotThrow(() => new vm.Script(protectedCode, { filename: name }));
-    protectedCombined.push(protectedCode);
+    combined.push(protectedCode);
   }
-
-  const combined = protectedCombined.join('\n');
+  const text = combined.join('\n');
   for (const marker of ['body.pairingStatus', 'automatic_local', 'Body daemon WebSocket closed']) {
-    assert.equal(combined.includes(marker), false, `plain-text runtime marker leaked: ${marker}`);
+    assert.equal(text.includes(marker), false, `plain-text runtime marker leaked: ${marker}`);
   }
 });
 
-test('protected ZIP contains only runtime files and no source/signing material', () => {
-  assert.ok(fs.existsSync(artifactZip), 'protected ZIP missing');
-  const names = listZipEntries(fs.readFileSync(artifactZip));
-  assert.deepEqual(names.sort(), RUNTIME_FILES);
-  for (const forbidden of ['src/', '.pem', '.map', 'node_modules/']) {
-    assert.equal(names.some(name => name.includes(forbidden)), false, `forbidden protected artifact entry: ${forbidden}`);
-  }
+test('extension release flow leaves no legacy duplicate artifacts or protected staging directory', () => {
+  assert.equal(fs.existsSync(path.join(root, 'dist')), false, 'dist must be removed after protected packaging');
+  assert.equal(fs.existsSync(path.join(root, 'dist_protected')), false, 'dist_protected must not be created');
+  const names = fs.readdirSync(artifactsDir);
+  const legacy = names.filter(name =>
+    /^body-chrome-attach-v.*\.zip$/i.test(name) ||
+    /-PROTECTED\.(zip|json)$/i.test(name) ||
+    /\.crx$/i.test(name)
+  );
+  assert.deepEqual(legacy, []);
+  assert.ok(names.includes(OUTPUT_NAME));
 });
