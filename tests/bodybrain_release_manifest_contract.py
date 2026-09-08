@@ -15,7 +15,7 @@ def sha256(pathname: Path) -> str:
 
 
 def main() -> int:
-    package = json.loads((ROOT / "package.json").read_text(encoding="utf-8")); runtime = json.loads((ROOT / "config" / "bodybrain-runtime.json").read_text(encoding="utf-8")); manifest_path = ARTIFACTS / f"bodybrain-release-v{package['version']}.json"; executable = ARTIFACTS / "BodyBrain.exe"; extension = ARTIFACTS / f"BodyChromeAttach-v{package['version']}-PROTECTED.zip"
+    package = json.loads((ROOT / "package.json").read_text(encoding="utf-8")); runtime = json.loads((ROOT / "config" / "bodybrain-runtime.json").read_text(encoding="utf-8")); manifest_path = ARTIFACTS / f"bodybrain-release-v{package['version']}.json"; executable = ARTIFACTS / "BodyBrain.exe"; extension = ARTIFACTS / f"BodyChromeAttach-v{package['version']}.zip"
     expected = {manifest_path.name, executable.name, extension.name}
     actual = {path.name for path in ARTIFACTS.iterdir() if path.is_file()}
     if actual != expected: raise AssertionError(f"release directory must contain exactly {sorted(expected)}, got {sorted(actual)}")
