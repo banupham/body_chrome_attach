@@ -51,6 +51,19 @@ test('service worker has a Chrome-alarm reconnect backstop for Desktop restarts 
   assert.match(worker,/Body daemon WebSocket closed/);
 });
 
+test('real Chrome release gate uses a startup-loaded headful Extension and preserves strict readiness checks',()=>{
+  const e2e=fs.readFileSync(path.join(root,'tests','body_chrome_real_e2e.js'),'utf8');
+  assert.match(e2e,/READY_TIMEOUT_SECONDS\s*=\s*8/);
+  assert.match(e2e,/headless:\s*false/);
+  assert.match(e2e,/enableExtensions:\s*\[extensionDir\]/);
+  assert.doesNotMatch(e2e,/\.installExtension\s*\(/);
+  assert.match(e2e,/assert\.equal\(extension\.state,\s*'READY'/);
+  assert.match(e2e,/browser_offline/);
+  assert.match(e2e,/assertConnectedRun\(first,\s*'first-start'/);
+  assert.match(e2e,/assertConnectedRun\(second,\s*'desktop-restart'/);
+  assert.match(e2e,/firstTokenHash\(secondPairing\),\s*tokenHash/);
+});
+
 test('Guardian page overlay is passive, periodic, and maps readiness to three compact states',()=>{
   const source=fs.readFileSync(path.join(root,'src','guardian_status_overlay.js'),'utf8');
   const content=fs.readFileSync(path.join(root,'src','virtual_cursor_content.js'),'utf8');

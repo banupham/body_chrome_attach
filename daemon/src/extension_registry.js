@@ -4,8 +4,6 @@ class ExtensionRegistry {
   constructor() {
     this.items=new Map();
     this.socketToId=new WeakMap();
-    this.socketIds=new WeakMap();
-    this.socketSequence=0;
     this.selectedId=null;
   }
 
@@ -28,12 +26,7 @@ class ExtensionRegistry {
     if(!extensionId) throw new Error('extension_id_required');
 
     const existing=this.items.get(extensionId);
-    const socketId=++this.socketSequence;
-    this.socketIds.set(ws,socketId);
-    const previousSocketId=existing?.ws?(this.socketIds.get(existing.ws)||null):null;
-    const replacing=Boolean(existing?.ws && existing.ws!==ws);
-    console.log(`[WS-REGISTRY] register ext=${extensionId.slice(0,8)} socket=${socketId} replacing=${replacing} previous=${previousSocketId??'none'}`);
-    if(replacing) {
+    if(existing?.ws && existing.ws!==ws) {
       try { existing.ws.close(4001,'replaced_by_reconnect'); } catch {}
     }
 
@@ -68,25 +61,16 @@ class ExtensionRegistry {
   }
 
   unregisterSocket(ws) {
-    const socketId=this.socketIds.get(ws)||null;
     const id=this.socketToId.get(ws);
-    if(!id) {
-      console.log(`[WS-REGISTRY] unregister-unmapped socket=${socketId??'unknown'}`);
-      return null;
-    }
+    if(!id) return null;
     this.socketToId.delete(ws);
     const item=this.items.get(id);
-    const currentSocketId=item?.ws?(this.socketIds.get(item.ws)||null):null;
-    if(!item || item.ws!==ws) {
-      console.log(`[WS-REGISTRY] stale-unregister ext=${String(id).slice(0,8)} socket=${socketId??'unknown'} current=${currentSocketId??'none'}`);
-      return null;
-    }
+    if(!item || item.ws!==ws) return null;
     item.online=false;
     item.ws=null;
     item.lastSeenAt=Date.now();
     if(this.selectedId===id) this.selectedId=null;
     this._reconcileSelection();
-    console.log(`[WS-REGISTRY] unregister-current ext=${String(id).slice(0,8)} socket=${socketId??'unknown'}`);
     return id;
   }
 
