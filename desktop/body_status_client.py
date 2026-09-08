@@ -189,21 +189,21 @@ class BodyStatusClient:
 
     @staticmethod
     def readiness_from_status(status: dict[str, Any]) -> dict[str, Any]:
-        browsers = list(status.get("browsers") or [])
+        all_browsers = list(status.get("browsers") or [])
+        browsers = [browser for browser in all_browsers if browser.get("online") is True]
         protection = (((status.get("environment") or {}).get("protection") or {}).get("browsers") or {})
         rows: list[dict[str, Any]] = []
         for browser in browsers:
             browser_id = str(browser.get("browserInstanceId") or "")
             guard = protection.get(browser_id) or {}; initial = guard.get("initialCheck") or {}; environment = browser.get("environment") or {}; browser_state = str(browser.get("state") or "UNKNOWN")
-            if browser.get("online") is not True: state, reason = "BLOCKED", "browser_offline"
-            elif guard.get("blocked") is True or browser_state in {"QUARANTINED", "ERROR"}:
+            if guard.get("blocked") is True or browser_state in {"QUARANTINED", "ERROR"}:
                 reasons = list(guard.get("reasons") or []); state, reason = "BLOCKED", (reasons[0] if reasons else str(browser.get("stateReason") or "browser_blocked"))
             elif environment.get("eligible") is not True: state, reason = "CHECKING", "environment_pending"
             elif initial.get("complete") is not True: state, reason = "CHECKING", "guardian_initial_check_pending"
             else: state, reason = "READY", None
             rows.append({"browserInstanceId":browser_id,"state":state,"reason":reason,"browserState":browser_state,"environment":environment.get("status") or "UNKNOWN","guardian":initial.get("status") or "PENDING"})
         overall = "READY" if any(row["state"] == "READY" for row in rows) else ("BLOCKED" if rows and all(row["state"] == "BLOCKED" for row in rows) else "CHECKING")
-        return {"state": overall, "browsers": rows, "reason": None if rows else "browser_waiting"}
+        return {"state":overall,"browsers":rows,"reason":None if rows else "browser_waiting","ignoredOfflineBrowserCount":max(0,len(all_browsers)-len(browsers))}
 
     def readiness(self) -> dict[str, Any]: return self.readiness_from_status(self.status())
 
