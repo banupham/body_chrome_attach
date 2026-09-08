@@ -68,7 +68,7 @@ test('real Chrome release acceptance is fully manual and uses one clean protecte
   assert.doesNotMatch(guide,/BodyChromeAttach-v0\.8\.0-PROTECTED|PROTECTED\.json|dist_protected|\.crx/);
   assert.match(guide,/Load unpacked/);
   assert.match(guide,/First-start BODY check/);
-  assert.match(guide,/Desktop restart check/);
+  assert.match(guide,/Restart\/token reuse|Desktop restart check/);
   assert.match(guide,/tokenHash/);
   assert.match(guide,/brain.*NOT_CONFIGURED/is);
   assert.match(guide,/browser_offline/);
