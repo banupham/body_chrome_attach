@@ -51,7 +51,7 @@ function runBodyBrain(executable, localAppData) {
 function runtimeLogTail(localAppData) {
   const logPath = path.join(localAppData, 'BodyBrain', 'logs', 'body-runtime.log');
   if (!fs.existsSync(logPath)) return 'body-runtime.log missing';
-  return fs.readFileSync(logPath, 'utf8').split(/\r?\n/).slice(-80).join('\n');
+  return fs.readFileSync(logPath, 'utf8').split(/\r?\n/).slice(-100).join('\n');
 }
 
 function diagnosticText(diagnostics, localAppData) {
@@ -95,7 +95,7 @@ async function delay(ms) {
   await new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function pushBounded(target, value, limit = 80) {
+function pushBounded(target, value, limit = 100) {
   target.push(value);
   if (target.length > limit) target.shift();
 }
@@ -128,43 +128,58 @@ async function remoteValue(client, arg) {
 }
 
 async function startWorkerDiagnostics(extension) {
-  const diagnostics = { samples: [], console: [], exceptions: [], webSockets: [], logEntries: [], setupErrors: [] };
-  const attached = new Set();
+  const diagnostics = { samples: [], workers: [], console: [], exceptions: [], webSockets: [], logEntries: [], setupErrors: [] };
+  const attached = new WeakSet();
+  const workerIds = new WeakMap();
+  let workerSequence = 0;
   let stopped = false;
+
+  function workerId(worker) {
+    if (!workerIds.has(worker)) workerIds.set(worker, ++workerSequence);
+    return workerIds.get(worker);
+  }
 
   async function attachWorker(worker) {
     const url = worker.url();
-    if (attached.has(url)) return;
-    attached.add(url);
+    const id = workerId(worker);
+    if (attached.has(worker)) return;
+    attached.add(worker);
+    pushBounded(diagnostics.workers, { at: Date.now(), event: 'attached', workerId: id, url });
     worker.client.on('Runtime.consoleAPICalled', event => {
       Promise.all((event.args || []).map(arg => remoteValue(worker.client, arg)))
-        .then(args => pushBounded(diagnostics.console, { at: Date.now(), type: event.type, args }))
-        .catch(error => pushBounded(diagnostics.setupErrors, { at: Date.now(), url, error: `console_decode:${String(error?.message || error)}` }, 20));
+        .then(args => pushBounded(diagnostics.console, { at: Date.now(), workerId: id, type: event.type, args }))
+        .catch(error => pushBounded(diagnostics.setupErrors, { at: Date.now(), workerId: id, url, error: `console_decode:${String(error?.message || error)}` }, 20));
     });
     worker.client.on('Runtime.exceptionThrown', event => {
-      pushBounded(diagnostics.exceptions, { at: Date.now(), exception: event.exceptionDetails?.exception?.description || event.exceptionDetails?.text || 'unknown' }, 40);
+      pushBounded(diagnostics.exceptions, { at: Date.now(), workerId: id, exception: event.exceptionDetails?.exception?.description || event.exceptionDetails?.text || 'unknown' }, 40);
+    });
+    worker.client.on('Runtime.executionContextsCleared', () => {
+      pushBounded(diagnostics.workers, { at: Date.now(), event: 'contexts-cleared', workerId: id, url });
+    });
+    worker.client.on('Inspector.detached', event => {
+      pushBounded(diagnostics.workers, { at: Date.now(), event: 'inspector-detached', workerId: id, url, reason: String(event?.reason || '') });
     });
     worker.client.on('Network.webSocketCreated', event => {
-      pushBounded(diagnostics.webSockets, { at: Date.now(), event: 'created', requestId: event.requestId, url: event.url });
+      pushBounded(diagnostics.webSockets, { at: Date.now(), workerId: id, event: 'created', requestId: event.requestId, url: event.url });
     });
     worker.client.on('Network.webSocketHandshakeResponseReceived', event => {
-      pushBounded(diagnostics.webSockets, { at: Date.now(), event: 'handshake-response', requestId: event.requestId, status: event.response?.status, statusText: event.response?.statusText });
+      pushBounded(diagnostics.webSockets, { at: Date.now(), workerId: id, event: 'handshake-response', requestId: event.requestId, status: event.response?.status, statusText: event.response?.statusText });
     });
     worker.client.on('Network.webSocketFrameError', event => {
-      pushBounded(diagnostics.webSockets, { at: Date.now(), event: 'frame-error', requestId: event.requestId, errorMessage: event.errorMessage });
+      pushBounded(diagnostics.webSockets, { at: Date.now(), workerId: id, event: 'frame-error', requestId: event.requestId, errorMessage: event.errorMessage });
     });
     worker.client.on('Network.webSocketClosed', event => {
-      pushBounded(diagnostics.webSockets, { at: Date.now(), event: 'closed', requestId: event.requestId });
+      pushBounded(diagnostics.webSockets, { at: Date.now(), workerId: id, event: 'closed', requestId: event.requestId });
     });
     worker.client.on('Log.entryAdded', event => {
       const entry = event.entry || {};
-      pushBounded(diagnostics.logEntries, { at: Date.now(), source: entry.source, level: entry.level, text: entry.text });
+      pushBounded(diagnostics.logEntries, { at: Date.now(), workerId: id, source: entry.source, level: entry.level, text: entry.text });
     });
     try {
       await worker.client.send('Network.enable');
       await worker.client.send('Log.enable');
     } catch (error) {
-      pushBounded(diagnostics.setupErrors, { at: Date.now(), url, error: String(error?.message || error) }, 20);
+      pushBounded(diagnostics.setupErrors, { at: Date.now(), workerId: id, url, error: String(error?.message || error) }, 20);
     }
   }
 
@@ -172,7 +187,8 @@ async function startWorkerDiagnostics(extension) {
     if (stopped) return;
     try {
       const workers = await extension.workers();
-      pushBounded(diagnostics.samples, { at: Date.now(), count: workers.length, urls: workers.map(worker => worker.url()) });
+      const identities = workers.map(worker => ({ workerId: workerId(worker), url: worker.url() }));
+      pushBounded(diagnostics.samples, { at: Date.now(), count: workers.length, workers: identities });
       for (const worker of workers) await attachWorker(worker);
     } catch (error) {
       pushBounded(diagnostics.samples, { at: Date.now(), error: String(error?.message || error) });
@@ -180,7 +196,7 @@ async function startWorkerDiagnostics(extension) {
   }
 
   await sample();
-  const timer = setInterval(() => { sample().catch(() => {}); }, 500);
+  const timer = setInterval(() => { sample().catch(() => {}); }, 250);
   return {
     diagnostics,
     stop() {
