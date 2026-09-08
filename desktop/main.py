@@ -135,6 +135,7 @@ def run(argv: list[str] | None = None) -> int:
     supervisor = BodyRuntimeSupervisor(config)
     client: BodyStatusClient | None = None
     tray: BodyBrainTray | None = None
+    tray_started = False
 
     try:
         if tray_mode:
@@ -143,6 +144,7 @@ def run(argv: list[str] | None = None) -> int:
                 on_quit=lambda: _request_stop("tray_quit"),
             )
             tray.start()
+            tray_started = True
             tray.set_notice("Starting Guardian + BODY runtime...")
 
         supervisor.start()
@@ -192,11 +194,11 @@ def run(argv: list[str] | None = None) -> int:
     except (SupervisorError, BodyStatusClientError, TrayUiError, OSError, ValueError) as exc:
         health.set_desktop("ERROR", type(exc).__name__)
         _print({"product":"BodyBrain","state":"ERROR","error":str(exc),"health":health.snapshot()}, args.json)
-        if tray is not None and not args.check:
+        if tray is not None and tray_started and not args.check:
             _hold_error_for_tray(tray, str(exc))
         return 1
     finally:
-        if tray is not None:
+        if tray is not None and tray_started:
             tray.set_notice("Shutting down BODY runtime...")
         if client is not None:
             try:
