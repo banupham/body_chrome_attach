@@ -35,6 +35,8 @@ test('offline protection profile is intentionally strong and CSP-compatible', ()
   assert.equal(options.transformObjectKeys, true);
   assert.equal(options.renameGlobals, false);
   assert.equal(options.debugProtection, false);
+  assert.equal(options.target, 'browser-no-eval');
+  assert.equal(options.sourceMap, false);
 });
 
 test('protected directory contains only Chrome runtime files and every JS bundle is transformed', () => {
@@ -48,6 +50,8 @@ test('protected directory contains only Chrome runtime files and every JS bundle
     assert.notEqual(protectedCode, original, `${name} must be transformed`);
     assert.ok(protectedCode.length > 0, `${name} must not be empty`);
     assert.doesNotMatch(protectedCode, /sourceMappingURL\s*=/);
+    assert.doesNotMatch(protectedCode, /(?:^|[^\w$])eval\s*\(/);
+    assert.doesNotMatch(protectedCode, /new\s+Function\s*\(/);
     assert.doesNotThrow(() => new vm.Script(protectedCode, { filename: name }));
     protectedCombined.push(protectedCode);
   }
@@ -64,6 +68,7 @@ test('protected release manifest hashes exactly match generated bundles', () => 
   assert.equal(manifest.product, 'Body Chrome Attach');
   assert.equal(manifest.version, packageJson.version);
   assert.equal(manifest.protectionProfile, 'offline-obfuscated-v1');
+  assert.equal(manifest.target, 'browser-no-eval');
   assert.equal(manifest.javascript.length, JS_FILES.length);
 
   for (const item of manifest.javascript) {
