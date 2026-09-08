@@ -1,24 +1,25 @@
 # Chrome BODY Extension release
 
-## Release artifact
+## Production artifact
 
 Run:
 
 ```cmd
-npm run extension:package
+npm run clean
+npm run extension:protected:test
 ```
 
-This creates:
+This creates one Extension distributable:
 
 ```text
-artifacts/body-chrome-attach-v<version>.zip
+artifacts/BodyChromeAttach-v0.8.0.zip
 ```
 
-The ZIP is the production Extension deliverable. Development source under `src/`, daemon code, `node_modules`, source maps and signing keys are not included.
+The ZIP is already bundled, minified and obfuscated for offline distribution. There is no second unprotected ZIP, CRX release path, protection JSON, or protected staging directory.
 
-## Production build contents
+## Package contents
 
-The package contains only:
+The ZIP contains only:
 
 ```text
 manifest.json
@@ -29,21 +30,36 @@ virtual_cursor_content.js
 pairing_popup.js
 ```
 
-Manifest V3 requires distinct JavaScript entry files for the background service worker, content script and popup execution contexts. Each file above is a minified bundle; the original module tree is not shipped.
+It must contain no source tree, daemon code, `node_modules`, source maps, signing keys or remote code.
 
-## Development build
+## Protection profile
 
-For local debugging with source maps and remembered local runtime port:
+Production JavaScript is built with:
 
-```cmd
-npm run build:dev
+- bundle/minify
+- identifier mangling
+- control-flow flattening
+- dead-code injection
+- encoded/split strings
+- self-defending output
+- Manifest V3 `browser-no-eval` target
+
+The release contract rejects source maps, `eval()` and `new Function()`.
+
+## Offline installation
+
+Extract `BodyChromeAttach-v0.8.0.zip` to a permanent folder, then open:
+
+```text
+chrome://extensions/
 ```
 
-Do not use the development build as a release artifact.
+Enable **Developer mode**, choose **Load unpacked**, and select the extracted folder containing `manifest.json`.
 
-## Release security
+Real-Chrome release acceptance is manual only. Do not add Puppeteer, CDP browser automation, automatic Chrome launch, or automatic Extension installation.
 
-- Production packages contain no source maps.
-- Production `runtime-endpoint.json` is inactive and contains no developer-machine port.
-- `*.pem` signing keys and `*.crx` local output are ignored by Git and must not be committed.
-- A signed CRX / Chrome Web Store publication step may consume the ZIP later, but release-key management is intentionally separate from the source repository.
+## Clean build boundary
+
+`dist/` is only a temporary build intermediate and is removed after the protected ZIP is created. `npm run clean` also removes legacy local `dist_protected/`, `release/`, `artifacts/`, `.release-build/` and `build/` directories.
+
+The source repository never stores generated ZIP/CRX files, signing keys, Base64 binary payload parts or runtime logs.
