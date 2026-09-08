@@ -6,7 +6,7 @@
   "scripts": {
     "build": "node build.js",
     "build:dev": "node build.js --dev",
-    "clean": "node -e \"for(const p of ['dist','dist_protected','release','artifacts','.release-build','build'])require('fs').rmSync(p,{recursive:true,force:true})\"",
+    "clean": "node -e \"for(const p of ['dist','dist_protected','release','artifacts','.release-build','build','package-lock.json'])require('fs').rmSync(p,{recursive:true,force:true})\"",
     "extension:validate": "npm run build && node tools/package_extension.js && node tests/extension_package_contract.js",
     "extension:protected": "npm run build && node tools/package_extension.js && node tests/extension_package_contract.js && node tools/protect_extension.js",
     "extension:protected:test": "npm run extension:protected && node tests/protected_extension_contract.js",
