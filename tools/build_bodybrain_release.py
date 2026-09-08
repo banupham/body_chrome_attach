@@ -33,9 +33,14 @@ def sha256(pathname: Path) -> str:
     return digest.hexdigest()
 
 
+def extension_artifact() -> Path:
+    package=json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+    return ARTIFACTS / f"BodyChromeAttach-v{package['version']}-PROTECTED.zip"
+
+
 def clean_release_artifacts() -> Path:
-    package=json.loads((ROOT / "package.json").read_text(encoding="utf-8")); extension=ARTIFACTS / f"BodyChromeAttach-v{package['version']}.zip"
-    if not extension.exists() or extension.stat().st_size <= 0: raise ReleaseBuildError("extension_release_artifact_missing:run_npm_run_extension_protected")
+    extension=extension_artifact()
+    if not extension.exists() or extension.stat().st_size <= 0: raise ReleaseBuildError("extension_release_artifact_missing:run_npm_run_extension_protected_test")
     for path in ARTIFACTS.iterdir():
         if path.resolve() == extension.resolve(): continue
         if path.is_dir(): shutil.rmtree(path,ignore_errors=True)
@@ -84,8 +89,8 @@ def build_bodybrain(helper: Path) -> Path:
 
 
 def write_release_manifest(executable: Path, signing_status: str | None = None) -> Path:
-    package=json.loads((ROOT / "package.json").read_text(encoding="utf-8")); runtime=json.loads((ROOT / "config" / "bodybrain-runtime.json").read_text(encoding="utf-8")); extension=ARTIFACTS / f"BodyChromeAttach-v{package['version']}.zip"
-    if not extension.exists(): raise ReleaseBuildError("extension_release_artifact_missing:run_npm_run_extension_protected")
+    package=json.loads((ROOT / "package.json").read_text(encoding="utf-8")); runtime=json.loads((ROOT / "config" / "bodybrain-runtime.json").read_text(encoding="utf-8")); extension=extension_artifact()
+    if not extension.exists(): raise ReleaseBuildError("extension_release_artifact_missing:run_npm_run_extension_protected_test")
     manifest={"schemaVersion":3,"product":"BodyBrain","version":str(package["version"]),"bodyContractVersion":str(runtime["bodyContractVersion"]),"controlProtocolVersion":int(runtime["controlProtocolVersion"]),"runtimeBootstrap":{"host":runtime["host"],"port":int(runtime["port"])},"brain":{"included":False,"state":"NOT_CONFIGURED","track":"separate-research"},"artifacts":{"BodyBrain.exe":{"sha256":sha256(executable),"authenticodeStatus":signing_status or authenticode_status(executable)},extension.name:{"sha256":sha256(extension),"protectionProfile":"offline-obfuscated-v1","target":"browser-no-eval"}},"distributionBoundary":{"desktop":"one-file BODY host with Guardian and bundled runtime; Brain is not included","extension":"single protected offline Manifest V3 ZIP; no source maps, source tree, CRX, or signing key"}}
     output=ARTIFACTS / f"bodybrain-release-v{package['version']}.json"; output.write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+"\n",encoding="utf-8"); return output
 
