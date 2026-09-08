@@ -37,7 +37,7 @@ artifacts\BodyChromeAttach-v0.8.0.zip
 artifacts\bodybrain-release-v0.8.0.json
 ```
 
-There must be no normal/unprotected Extension ZIP, no `-PROTECTED` duplicate, no CRX, no Extension-specific JSON manifest, no `dist_protected\`, and no `.release-build\` left behind.
+No duplicate or legacy Extension artifacts and no temporary release-build directory may remain after a successful build.
 
 `python tests\bodybrain_exe_smoke.py artifacts\BodyBrain.exe` is a no-Chrome smoke test. Run it only with Chrome/Extension isolated; do not mix it with the real-Chrome acceptance below.
 
