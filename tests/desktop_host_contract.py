@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import struct
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -14,6 +17,7 @@ from desktop.body_status_client import BodyStatusClient, _encode_client_frame
 from desktop.config import load_runtime_config
 from desktop.health import HealthModel
 from desktop.main import _apply_readiness
+from desktop.supervisor import BodyRuntimeSupervisor
 
 
 class DesktopHostContractTest(unittest.TestCase):
@@ -85,7 +89,42 @@ class DesktopHostContractTest(unittest.TestCase):
         self.assertIn("bodybrain-runtime.json", build)
         for required in ["BODY_RUNTIME_PORT", "BODY_RUNTIME_DATA_DIR", "BODY_WINDOWS_INPUT_HELPER_EXE", 'runtime" / "node" / "node.exe"']:
             self.assertIn(required, supervisor)
+        self.assertIn("_recover_stale_runtime_state", supervisor)
+        self.assertIn("runtime_stale_state_recovered", supervisor)
         self.assertEqual(runtime["port"], 43147)
+
+    def test_stale_runtime_pid_is_not_authoritative_when_product_port_is_closed(self):
+        config = load_runtime_config(ROOT / "config" / "bodybrain-runtime.json")
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            paths = {
+                "root": base,
+                "runtime": base / "runtime",
+                "data": base / "data",
+                "logs": base / "logs",
+                "body": base / "body",
+            }
+            for path in paths.values():
+                path.mkdir(parents=True, exist_ok=True)
+            with patch("desktop.supervisor.ensure_runtime_dirs", return_value=paths):
+                supervisor = BodyRuntimeSupervisor(config, root=ROOT)
+            state = paths["body"] / "state"
+            state.mkdir(parents=True, exist_ok=True)
+            # Deliberately use this live Python PID to model Windows reusing the
+            # old BODY PID for Chrome or another unrelated process.
+            (state / "runtime.lock").write_text(json.dumps({"pid": os.getpid(), "createdAt": "2026-09-08T00:00:00Z"}), encoding="utf-8")
+            (state / "runtime-endpoint.json").write_text(json.dumps({"active": True, "pid": os.getpid(), "host": config.host, "port": config.port}), encoding="utf-8")
+            supervisor._port_open = lambda: False
+            removed = supervisor._recover_stale_runtime_state()
+            self.assertEqual(set(removed), {"runtime.lock", "runtime-endpoint.json"})
+            self.assertFalse((state / "runtime.lock").exists())
+            self.assertFalse((state / "runtime-endpoint.json").exists())
+
+    def test_guardian_transport_error_is_handled_and_cleans_ownership(self):
+        bootstrap = (ROOT / "daemon" / "guardian_bootstrap.js").read_text(encoding="utf-8")
+        self.assertIn("server.wss.on('error'", bootstrap)
+        self.assertIn("server.clearEndpoint()", bootstrap)
+        self.assertIn("[FATAL_TRANSPORT]", bootstrap)
 
     def test_packaged_runtime_uses_persistent_control_auth_and_data(self):
         supervisor = (ROOT / "desktop" / "supervisor.py").read_text(encoding="utf-8")
