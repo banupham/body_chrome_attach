@@ -3,11 +3,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
-const { materialize: materializeSignedCrx } = require('./materialize_extension_crx');
 
 const root = path.join(__dirname, '..');
 const distDir = path.join(root, 'dist');
-const artifactsDir = path.join(root, 'artifacts');
 const packageJson = require('../package.json');
 const runtimeConfig = require('../config/bodybrain-runtime.json');
 
@@ -55,12 +53,7 @@ function assertReleaseDist() {
   const expectedHost = String(runtimeConfig.host || '');
   const expectedPort = Number(runtimeConfig.port);
   const expectedUrl = `ws://${expectedHost}:${expectedPort}`;
-  if (
-    endpoint.active !== false ||
-    endpoint.host !== expectedHost ||
-    endpoint.port !== expectedPort ||
-    endpoint.wsUrl !== expectedUrl
-  ) {
+  if (endpoint.active !== false || endpoint.host !== expectedHost || endpoint.port !== expectedPort || endpoint.wsUrl !== expectedUrl) {
     throw new Error('extension_release_runtime_endpoint_contract_mismatch');
   }
 
@@ -68,7 +61,6 @@ function assertReleaseDist() {
     const text = fs.readFileSync(path.join(distDir, name), 'utf8');
     if (/sourceMappingURL\s*=/.test(text)) throw new Error(`extension_release_sourcemap_reference_forbidden:${name}`);
   }
-
   return files;
 }
 
@@ -97,7 +89,6 @@ function createZip(entries) {
     local.writeUInt32LE(data.length, 22);
     local.writeUInt16LE(name.length, 26);
     local.writeUInt16LE(0, 28);
-
     localParts.push(local, name, compressed);
 
     const central = Buffer.alloc(46);
@@ -119,7 +110,6 @@ function createZip(entries) {
     central.writeUInt32LE(0, 38);
     central.writeUInt32LE(offset, 42);
     centralParts.push(central, name);
-
     offset += local.length + name.length + compressed.length;
   }
 
@@ -133,7 +123,6 @@ function createZip(entries) {
   end.writeUInt32LE(centralDirectory.length, 12);
   end.writeUInt32LE(offset, 16);
   end.writeUInt16LE(0, 20);
-
   return Buffer.concat([...localParts, centralDirectory, end]);
 }
 
@@ -146,40 +135,54 @@ function findEndOfCentralDirectory(buffer) {
   throw new Error('zip_eocd_not_found');
 }
 
-function listZipEntries(buffer) {
+function centralEntries(buffer) {
   const eocd = findEndOfCentralDirectory(buffer);
   const total = buffer.readUInt16LE(eocd + 10);
   let offset = buffer.readUInt32LE(eocd + 16);
-  const names = [];
+  const entries = [];
   for (let i = 0; i < total; i++) {
     if (buffer.readUInt32LE(offset) !== 0x02014b50) throw new Error(`zip_central_header_invalid:${i}`);
+    const compression = buffer.readUInt16LE(offset + 10);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
+    const uncompressedSize = buffer.readUInt32LE(offset + 24);
     const nameLength = buffer.readUInt16LE(offset + 28);
     const extraLength = buffer.readUInt16LE(offset + 30);
     const commentLength = buffer.readUInt16LE(offset + 32);
-    names.push(buffer.subarray(offset + 46, offset + 46 + nameLength).toString('utf8'));
+    const localOffset = buffer.readUInt32LE(offset + 42);
+    const name = buffer.subarray(offset + 46, offset + 46 + nameLength).toString('utf8');
+    entries.push({ name, compression, compressedSize, uncompressedSize, localOffset });
     offset += 46 + nameLength + extraLength + commentLength;
   }
-  return names;
+  return entries;
 }
 
-function packageExtension() {
-  const files = assertReleaseDist();
-  const entries = files.map(name => ({ name, data: fs.readFileSync(path.join(distDir, name)) }));
-  const zip = createZip(entries);
-  const listed = listZipEntries(zip).sort();
-  if (JSON.stringify(listed) !== JSON.stringify(EXPECTED_ENTRIES)) throw new Error('extension_release_zip_entry_mismatch');
+function listZipEntries(buffer) {
+  return centralEntries(buffer).map(entry => entry.name);
+}
 
-  fs.mkdirSync(artifactsDir, { recursive: true });
-  const output = path.join(artifactsDir, `body-chrome-attach-v${packageJson.version}.zip`);
-  fs.writeFileSync(output, zip);
-  console.log(`Packaged extension: ${output}`);
-  return output;
+function readZipEntries(buffer) {
+  const result = new Map();
+  for (const entry of centralEntries(buffer)) {
+    const offset = entry.localOffset;
+    if (buffer.readUInt32LE(offset) !== 0x04034b50) throw new Error(`zip_local_header_invalid:${entry.name}`);
+    const nameLength = buffer.readUInt16LE(offset + 26);
+    const extraLength = buffer.readUInt16LE(offset + 28);
+    const dataOffset = offset + 30 + nameLength + extraLength;
+    const compressed = buffer.subarray(dataOffset, dataOffset + entry.compressedSize);
+    let data;
+    if (entry.compression === 0) data = Buffer.from(compressed);
+    else if (entry.compression === 8) data = zlib.inflateRawSync(compressed);
+    else throw new Error(`zip_compression_unsupported:${entry.name}:${entry.compression}`);
+    if (data.length !== entry.uncompressedSize) throw new Error(`zip_size_mismatch:${entry.name}`);
+    result.set(entry.name, data);
+  }
+  return result;
 }
 
 if (require.main === module) {
   try {
-    packageExtension();
-    materializeSignedCrx();
+    assertReleaseDist();
+    console.log('extension_dist_contract: PASS');
   } catch (error) {
     console.error(error);
     process.exitCode = 1;
@@ -191,6 +194,6 @@ module.exports = {
   crc32,
   createZip,
   listZipEntries,
-  assertReleaseDist,
-  packageExtension
+  readZipEntries,
+  assertReleaseDist
 };
