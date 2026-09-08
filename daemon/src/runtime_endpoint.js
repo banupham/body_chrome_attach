@@ -28,9 +28,6 @@ function endpointPaths(baseDir, env = process.env) {
     state: path.join(dataRoot, 'state', RUNTIME_ENDPOINT_FILENAME),
     port: path.join(dataRoot, 'state', RUNTIME_PORT_FILENAME),
     lock: path.join(dataRoot, 'state', RUNTIME_LOCK_FILENAME),
-    // Development builds may still mirror the live endpoint into dist. For a
-    // packed Extension this path normally does not exist, so no package file is
-    // mutated at runtime.
     extension: path.join(baseDir, '..', 'dist', RUNTIME_ENDPOINT_FILENAME)
   };
 }
@@ -96,11 +93,8 @@ function runtimeRecordPredatesCurrentBoot(record, options = {}) {
 }
 
 function readJson(file) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch {
-    return null;
-  }
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch { return null; }
 }
 
 function writeJsonAtomic(file, value) {
@@ -133,9 +127,7 @@ function rememberRuntimePort(baseDir, port, { now = () => Date.now(), allowChang
   if (!normalized) throw new Error('runtime_port_invalid');
   const paths = endpointPaths(baseDir);
   const current = readRememberedRuntimePort(baseDir);
-  if (current && current !== normalized && !allowChange) {
-    throw new Error(`runtime_port_change_forbidden:${current}:${normalized}`);
-  }
+  if (current && current !== normalized && !allowChange) throw new Error(`runtime_port_change_forbidden:${current}:${normalized}`);
   writeJsonAtomic(paths.port, {
     schemaVersion: RUNTIME_PORT_VERSION,
     host: RUNTIME_HOST,
@@ -150,11 +142,8 @@ function preferredRuntimePort(baseDir) {
 }
 
 function lockAgeMs(file, now = Date.now()) {
-  try {
-    return Math.max(0, Number(now) - fs.statSync(file).mtimeMs);
-  } catch {
-    return Infinity;
-  }
+  try { return Math.max(0, Number(now) - fs.statSync(file).mtimeMs); }
+  catch { return Infinity; }
 }
 
 function newRuntimeLockOwnerToken() {
@@ -180,9 +169,7 @@ function writeRuntimeLockRecord(file, record) {
     fs.writeFileSync(fd, text, { encoding: 'utf8' });
     try { fs.fsyncSync(fd); } catch {}
   } finally {
-    if (fd !== undefined) {
-      try { fs.closeSync(fd); } catch {}
-    }
+    if (fd !== undefined) try { fs.closeSync(fd); } catch {}
   }
   try { fs.chmodSync(file, 0o600); } catch {}
 }
@@ -197,51 +184,42 @@ function acquireRuntimeLock(baseDir, {
 } = {}) {
   const paths = endpointPaths(baseDir);
   const ownerPid = Number(pid);
-  const normalizedOwnerToken = String(ownerToken || '').trim();
+  const token = String(ownerToken || '').trim();
   if (!Number.isInteger(ownerPid) || ownerPid <= 0) throw new Error('runtime_lock_pid_invalid');
-  if (!normalizedOwnerToken) throw new Error('runtime_lock_owner_token_invalid');
+  if (!token) throw new Error('runtime_lock_owner_token_invalid');
   fs.mkdirSync(path.dirname(paths.lock), { recursive: true });
+
   for (let attempt = 0; attempt < 3; attempt++) {
     const createdAt = new Date(now()).toISOString();
-    const record = {
-      schemaVersion: RUNTIME_LOCK_VERSION,
-      pid: ownerPid,
-      ownerToken: normalizedOwnerToken,
-      createdAt,
-      heartbeatAt: createdAt
-    };
+    const record = { schemaVersion: RUNTIME_LOCK_VERSION, pid: ownerPid, ownerToken: token, createdAt, heartbeatAt: createdAt };
     try {
       fs.writeFileSync(paths.lock, JSON.stringify(record) + '\n', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
       try { fs.chmodSync(paths.lock, 0o600); } catch {}
-      return { acquired: true, pid: ownerPid, ownerToken: normalizedOwnerToken, path: paths.lock };
+      return { acquired: true, pid: ownerPid, ownerToken: token, path: paths.lock };
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
       const current = readJson(paths.lock);
       const currentPid = Number(current?.pid);
+      const age = lockAgeMs(paths.lock, now());
+
       if (runtimeRecordPredatesCurrentBoot(current, { now, uptimeImpl })) {
         try { fs.rmSync(paths.lock, { force: true }); } catch {}
         continue;
       }
       if (currentPid === ownerPid) {
-        return {
-          acquired: false,
-          pid: ownerPid,
-          ownerToken: String(current?.ownerToken || ''),
-          path: paths.lock,
-          alreadyOwned: true
-        };
+        const existingToken = String(current?.ownerToken || '').trim();
+        return { acquired: false, pid: ownerPid, ownerToken: existingToken || token, path: paths.lock, alreadyOwned: true };
       }
+
       if (Number.isInteger(currentPid) && currentPid > 0 && processAlive(currentPid, killImpl)) {
-        const leaseAware = Number(current?.schemaVersion) >= RUNTIME_LOCK_VERSION && String(current?.ownerToken || '').trim();
-        if (leaseAware && !runtimeLockLeaseFresh(current, { now, staleAfterMs })) {
-          try { fs.rmSync(paths.lock, { force: true }); } catch {}
-          continue;
-        }
-        throw new Error(`company_runtime_already_running:${currentPid}`);
+        const leaseAware = Number(current?.schemaVersion) >= RUNTIME_LOCK_VERSION && Boolean(String(current?.ownerToken || '').trim());
+        const stale = leaseAware ? !runtimeLockLeaseFresh(current, { now, staleAfterMs }) : age >= staleAfterMs;
+        if (!stale) throw new Error(`company_runtime_already_running:${currentPid}`);
+        try { fs.rmSync(paths.lock, { force: true }); } catch {}
+        continue;
       }
-      if ((!Number.isInteger(currentPid) || currentPid <= 0) && lockAgeMs(paths.lock, now()) < 10000) {
-        throw new Error('company_runtime_lock_busy');
-      }
+
+      if ((!Number.isInteger(currentPid) || currentPid <= 0) && age < 10000) throw new Error('company_runtime_lock_busy');
       try { fs.rmSync(paths.lock, { force: true }); } catch {}
     }
   }
@@ -253,17 +231,10 @@ function refreshRuntimeLock(baseDir, { pid = process.pid, ownerToken, now = Date
   const current = readJson(paths.lock);
   const token = String(ownerToken || '').trim();
   if (!current || Number(current.pid) !== Number(pid) || !token || String(current.ownerToken || '') !== token) return false;
-  const next = {
-    ...current,
-    schemaVersion: RUNTIME_LOCK_VERSION,
-    heartbeatAt: new Date(now()).toISOString()
-  };
   try {
-    writeRuntimeLockRecord(paths.lock, next);
+    writeRuntimeLockRecord(paths.lock, { ...current, schemaVersion: RUNTIME_LOCK_VERSION, heartbeatAt: new Date(now()).toISOString() });
     return true;
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
 function startRuntimeLockHeartbeat(baseDir, lock, { intervalMs = RUNTIME_LOCK_HEARTBEAT_INTERVAL_MS } = {}) {
@@ -290,19 +261,14 @@ function releaseRuntimeLock(baseDir, { pid = process.pid, ownerToken = null } = 
   if (current && Number(current.pid) !== Number(pid)) return false;
   const token = String(ownerToken || '').trim();
   if (current && token && String(current.ownerToken || '') && String(current.ownerToken) !== token) return false;
-  try {
-    fs.rmSync(paths.lock, { force: true });
-    return true;
-  } catch {
-    return false;
-  }
+  try { fs.rmSync(paths.lock, { force: true }); return true; }
+  catch { return false; }
 }
 
 function runtimeLockOwnedBy(stateFile, { pid = process.pid, ownerToken = null, now = Date.now } = {}) {
   const token = String(ownerToken || '').trim();
   if (!token) return false;
-  const lockFile = path.join(path.dirname(stateFile), RUNTIME_LOCK_FILENAME);
-  const lock = readJson(lockFile);
+  const lock = readJson(path.join(path.dirname(stateFile), RUNTIME_LOCK_FILENAME));
   return Number(lock?.pid) === Number(pid) && String(lock?.ownerToken || '') === token && runtimeLockLeaseFresh(lock, { now });
 }
 
@@ -365,11 +331,8 @@ function clearRuntimeEndpoint(baseDir, { pid = process.pid, ownerToken = null } 
 
 function readRuntimeEndpoint(file) {
   let raw;
-  try {
-    raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch {
-    throw new Error(`runtime_endpoint_unavailable:${file}`);
-  }
+  try { raw = JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch { throw new Error(`runtime_endpoint_unavailable:${file}`); }
   const port = validPort(raw?.port);
   if (raw?.active !== true || raw?.host !== RUNTIME_HOST || !port) throw new Error(`runtime_endpoint_inactive:${file}`);
   return {
