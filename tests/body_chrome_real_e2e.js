@@ -95,117 +95,6 @@ async function delay(ms) {
   await new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function pushBounded(target, value, limit = 100) {
-  target.push(value);
-  if (target.length > limit) target.shift();
-}
-
-async function remoteValue(client, arg) {
-  if (Object.prototype.hasOwnProperty.call(arg || {}, 'value')) return arg.value;
-  if (arg?.unserializableValue !== undefined) return arg.unserializableValue;
-  if (arg?.objectId) {
-    try {
-      const response = await client.send('Runtime.getProperties', {
-        objectId: arg.objectId,
-        ownProperties: true,
-        accessorPropertiesOnly: false,
-        generatePreview: false
-      });
-      const object = {};
-      for (const property of response?.result || []) {
-        if (!property?.name || !property?.value) continue;
-        const value = property.value;
-        object[property.name] = Object.prototype.hasOwnProperty.call(value, 'value')
-          ? value.value
-          : (value.unserializableValue ?? value.description ?? value.type ?? null);
-      }
-      return object;
-    } catch (error) {
-      return { description: arg.description || arg.type || 'object', propertyError: String(error?.message || error) };
-    }
-  }
-  return arg?.description ?? arg?.type ?? 'unknown';
-}
-
-async function startWorkerDiagnostics(extension) {
-  const diagnostics = { samples: [], workers: [], console: [], exceptions: [], webSockets: [], logEntries: [], setupErrors: [] };
-  const attached = new WeakSet();
-  const workerIds = new WeakMap();
-  let workerSequence = 0;
-  let stopped = false;
-
-  function workerId(worker) {
-    if (!workerIds.has(worker)) workerIds.set(worker, ++workerSequence);
-    return workerIds.get(worker);
-  }
-
-  async function attachWorker(worker) {
-    const url = worker.url();
-    const id = workerId(worker);
-    if (attached.has(worker)) return;
-    attached.add(worker);
-    pushBounded(diagnostics.workers, { at: Date.now(), event: 'attached', workerId: id, url });
-    worker.client.on('Runtime.consoleAPICalled', event => {
-      Promise.all((event.args || []).map(arg => remoteValue(worker.client, arg)))
-        .then(args => pushBounded(diagnostics.console, { at: Date.now(), workerId: id, type: event.type, args }))
-        .catch(error => pushBounded(diagnostics.setupErrors, { at: Date.now(), workerId: id, url, error: `console_decode:${String(error?.message || error)}` }, 20));
-    });
-    worker.client.on('Runtime.exceptionThrown', event => {
-      pushBounded(diagnostics.exceptions, { at: Date.now(), workerId: id, exception: event.exceptionDetails?.exception?.description || event.exceptionDetails?.text || 'unknown' }, 40);
-    });
-    worker.client.on('Runtime.executionContextsCleared', () => {
-      pushBounded(diagnostics.workers, { at: Date.now(), event: 'contexts-cleared', workerId: id, url });
-    });
-    worker.client.on('Inspector.detached', event => {
-      pushBounded(diagnostics.workers, { at: Date.now(), event: 'inspector-detached', workerId: id, url, reason: String(event?.reason || '') });
-    });
-    worker.client.on('Network.webSocketCreated', event => {
-      pushBounded(diagnostics.webSockets, { at: Date.now(), workerId: id, event: 'created', requestId: event.requestId, url: event.url });
-    });
-    worker.client.on('Network.webSocketHandshakeResponseReceived', event => {
-      pushBounded(diagnostics.webSockets, { at: Date.now(), workerId: id, event: 'handshake-response', requestId: event.requestId, status: event.response?.status, statusText: event.response?.statusText });
-    });
-    worker.client.on('Network.webSocketFrameError', event => {
-      pushBounded(diagnostics.webSockets, { at: Date.now(), workerId: id, event: 'frame-error', requestId: event.requestId, errorMessage: event.errorMessage });
-    });
-    worker.client.on('Network.webSocketClosed', event => {
-      pushBounded(diagnostics.webSockets, { at: Date.now(), workerId: id, event: 'closed', requestId: event.requestId });
-    });
-    worker.client.on('Log.entryAdded', event => {
-      const entry = event.entry || {};
-      pushBounded(diagnostics.logEntries, { at: Date.now(), workerId: id, source: entry.source, level: entry.level, text: entry.text });
-    });
-    try {
-      await worker.client.send('Network.enable');
-      await worker.client.send('Log.enable');
-    } catch (error) {
-      pushBounded(diagnostics.setupErrors, { at: Date.now(), workerId: id, url, error: String(error?.message || error) }, 20);
-    }
-  }
-
-  async function sample() {
-    if (stopped) return;
-    try {
-      const workers = await extension.workers();
-      const identities = workers.map(worker => ({ workerId: workerId(worker), url: worker.url() }));
-      pushBounded(diagnostics.samples, { at: Date.now(), count: workers.length, workers: identities });
-      for (const worker of workers) await attachWorker(worker);
-    } catch (error) {
-      pushBounded(diagnostics.samples, { at: Date.now(), error: String(error?.message || error) });
-    }
-  }
-
-  await sample();
-  const timer = setInterval(() => { sample().catch(() => {}); }, 250);
-  return {
-    diagnostics,
-    stop() {
-      stopped = true;
-      clearInterval(timer);
-    }
-  };
-}
-
 async function main() {
   if (process.platform !== 'win32') throw new Error('body_chrome_real_e2e_windows_only');
   if (process.argv.length !== 4) throw new Error('usage: node body_chrome_real_e2e.js <BodyBrain.exe> <extension-dir>');
@@ -219,7 +108,7 @@ async function main() {
   const localAppData = path.join(tempRoot, 'local-app-data');
   fs.mkdirSync(localAppData, { recursive: true });
   let browser = null;
-  let workerDiagnostics = null;
+  const diagnostics = { mode: 'real-chrome-no-service-worker-cdp-attachment' };
   try {
     browser = await puppeteer.launch({ headless: true, pipe: true, enableExtensions: true });
     const extensionId = await browser.installExtension(extensionDir);
@@ -228,25 +117,25 @@ async function main() {
     const extensions = await browser.extensions();
     const extension = extensions.get(extensionId);
     assert.ok(extension, `BODY Extension not installed in Chrome for Testing: ${extensionId}`);
-    workerDiagnostics = await startWorkerDiagnostics(extension);
 
+    // Do not attach DevTools/Network/Runtime sessions to the MV3 service worker here.
+    // The release gate must observe the same lifecycle as a normal installed Extension.
     const page = await browser.newPage();
     await page.goto('https://example.com/', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     const first = await runBodyBrain(executable, localAppData);
-    assertConnectedRun(first, 'first-start', workerDiagnostics.diagnostics, localAppData);
+    assertConnectedRun(first, 'first-start', diagnostics, localAppData);
     const firstPairing = readPairing(localAppData);
     const tokenHash = firstTokenHash(firstPairing);
 
     await delay(1500);
     const second = await runBodyBrain(executable, localAppData);
-    assertConnectedRun(second, 'desktop-restart', workerDiagnostics.diagnostics, localAppData);
+    assertConnectedRun(second, 'desktop-restart', diagnostics, localAppData);
     const secondPairing = readPairing(localAppData);
     assert.equal(firstTokenHash(secondPairing), tokenHash, 'Extension token rotated instead of reusing persisted automatic pairing after Desktop restart');
 
     console.log('body_chrome_real_e2e: PASS');
   } finally {
-    workerDiagnostics?.stop();
     if (browser) {
       try { await browser.close(); } catch {}
     }
