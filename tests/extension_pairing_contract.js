@@ -51,11 +51,21 @@ test('service worker has a Chrome-alarm reconnect backstop for Desktop restarts 
   assert.match(worker,/Body daemon WebSocket closed/);
 });
 
-test('real Chrome release acceptance is fully manual and uses protected offline package',()=>{
+test('release path is protected offline ZIP only and contains no legacy CRX materializer',()=>{
+  assert.equal(fs.existsSync(path.join(root,'tools','materialize_extension_crx.js')),false);
+  const releaseDir=path.join(root,'release');
+  if(fs.existsSync(releaseDir)){
+    const releaseFiles=fs.readdirSync(releaseDir);
+    assert.equal(releaseFiles.some(name=>/\.crx|crx\.b64|\.(pem|pfx)$/i.test(name)),false);
+  }
+});
+
+test('real Chrome release acceptance is fully manual and uses one clean protected package',()=>{
   const workflow=fs.readFileSync(path.join(root,'.github','workflows','verify.yml'),'utf8');
   const guide=fs.readFileSync(path.join(root,'MANUAL_RELEASE_TEST.md'),'utf8');
   assert.doesNotMatch(workflow,/body_chrome_real_e2e\.js|puppeteer/i);
-  assert.match(guide,/BodyChromeAttach-v0\.8\.0-PROTECTED\.zip/);
+  assert.match(guide,/BodyChromeAttach-v0\.8\.0\.zip/);
+  assert.doesNotMatch(guide,/BodyChromeAttach-v0\.8\.0-PROTECTED|PROTECTED\.json|dist_protected|\.crx/);
   assert.match(guide,/Load unpacked/);
   assert.match(guide,/First-start BODY check/);
   assert.match(guide,/Desktop restart check/);
