@@ -6,6 +6,7 @@ const { VIRTUAL_CURSOR_SCOPE, MESSAGE_TYPES } = require('./virtual_cursor_protoc
 
 const gateway = new CdpInputGateway(chrome);
 const daemon = new DaemonBridge(chrome, { gateway, WebSocketImpl: WebSocket });
+const daemonIdentityReady = daemon.identity();
 const observedUserMotorByTab = new Map();
 const pendingPageContextByTab = new Map();
 const pendingUserMotorByTab = new Map();
@@ -23,6 +24,13 @@ let pageContextRetryStartedAt = 0;
 
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+async function connectDaemon() {
+  await daemonIdentityReady;
+  const status = await daemon.connect();
+  observeDaemonSocket();
+  return status;
 }
 
 function webTab(tab) {
@@ -187,8 +195,7 @@ async function forwardUserMotorReliable(tabId, payload) {
     if (sent || daemon.recordingEnabled !== true || daemon.socket?.readyState === 1) return sent;
   }
   queueUserMotor(tabId, payload);
-  await daemon.connect().catch(() => null);
-  observeDaemonSocket();
+  await connectDaemon().catch(() => null);
   return flushPendingUserMotor();
 }
 
@@ -282,7 +289,7 @@ function schedulePageContextFlush(delayMs = PAGE_CONTEXT_RETRY_MS) {
   pageContextRetryTimer = setTimeout(() => {
     pageContextRetryTimer = null;
     if (flushPendingPageContexts()) return;
-    daemon.connect().then(() => observeDaemonSocket()).catch(() => {});
+    connectDaemon().catch(() => {});
     schedulePageContextFlush(PAGE_CONTEXT_RETRY_MS);
   }, Math.max(0, Number(delayMs) || 0));
 }
@@ -292,7 +299,7 @@ function pageContextFromContent(sender, message) {
   if (!packet) return false;
   pendingPageContextByTab.set(packet.tabId, packet);
   if (flushPendingPageContexts()) return true;
-  daemon.connect().then(() => observeDaemonSocket()).catch(() => {});
+  connectDaemon().catch(() => {});
   schedulePageContextFlush(0);
   return false;
 }
@@ -312,6 +319,7 @@ function recentEvents(tabId, limit = 250) {
 }
 
 async function pairingStatus() {
+  await daemonIdentityReady;
   const saved = await chrome.storage.local.get({ bodyDaemonAuthToken: null });
   const connected = daemon.socket?.readyState === 1;
   if (connected) daemon.send({ type: 'READINESS_POLL', ts: Date.now() });
@@ -330,6 +338,7 @@ async function pairingStatus() {
 }
 
 async function resetLocalPairing() {
+  await daemonIdentityReady;
   await chrome.storage.local.remove('bodyDaemonAuthToken');
   daemon.authToken = null;
   daemon.readinessStatus = null;
@@ -351,7 +360,7 @@ function wakeDaemonConnection() {
     flushPendingUserMotor().catch(() => {});
     return true;
   }
-  daemon.connect().then(() => observeDaemonSocket()).catch(() => {});
+  connectDaemon().catch(() => {});
   return false;
 }
 
@@ -374,7 +383,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (daemon.socket?.readyState === 1) {
       daemon.forwardUserMotor(tabId, message.payload).catch(() => {
         queueUserMotor(tabId, message.payload);
-        daemon.connect().then(() => observeDaemonSocket()).catch(() => {});
+        connectDaemon().catch(() => {});
       });
       return false;
     }
@@ -453,7 +462,8 @@ chrome.windows?.onFocusChanged?.addListener(windowId => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  repairOpenWebTabs()
+  daemonIdentityReady
+    .then(() => repairOpenWebTabs())
     .catch(() => null)
     .then(() => ensureDaemonWakeAlarm())
     .then(() => wakeDaemonConnection())
@@ -461,7 +471,8 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 chrome.runtime.onInstalled.addListener(() => {
-  repairOpenWebTabs()
+  daemonIdentityReady
+    .then(() => repairOpenWebTabs())
     .catch(() => null)
     .then(() => ensureDaemonWakeAlarm())
     .then(() => wakeDaemonConnection())
@@ -476,6 +487,7 @@ chrome.debugger.onDetach.addListener(debuggee => {
 ensureDaemonWakeAlarm().catch(() => {});
 
 (async () => {
+  await daemonIdentityReady;
   await repairOpenWebTabs().catch(() => null);
   const status = await daemon.start();
   observeDaemonSocket();
@@ -500,5 +512,6 @@ module.exports={
   learningInputStatus,
   queueUserMotor,
   flushPendingUserMotor,
-  forwardUserMotorReliable
+  forwardUserMotorReliable,
+  connectDaemon
 };
