@@ -26,27 +26,40 @@ function detailFor(readiness){
   return reasonText[reason]||'Không đủ điều kiện hoạt động.';
 }
 
+function diagnosticText(state){
+  const browser=String(state?.browserInstanceId||'').trim();
+  const shortBrowser=browser?browser.slice(0,13):'chưa có';
+  const learning=state?.learningInput||{};
+  const events=Math.max(0,Number(learning.eventCount)||0);
+  const tab=Number.isInteger(Number(state?.activeTabId))?Number(state.activeTabId):null;
+  return `Browser ${shortBrowser} · Học: ${events} sự kiện${tab===null?'':` · Tab ${tab}`}`;
+}
+
+function setHint(text,state){
+  hint.textContent=`${text} ${diagnosticText(state)}`;
+}
+
 function render(state){
   if(!state?.connected){
     reset.hidden=!state?.paired;
     setStatus('BỊ CHẶN','blocked');
-    hint.textContent='Daemon chưa kết nối.';
+    setHint('Daemon chưa kết nối.',state);
     return;
   }
   reset.hidden=true;
   const readiness=state.readiness||null;
   if(readiness?.state==='READY'){
     setStatus('SẴN SÀNG','ready');
-    hint.textContent='Environment và bot check đã đạt.';
+    setHint('Environment và bot check đã đạt.',state);
     return;
   }
   if(readiness?.state==='BLOCKED'){
     setStatus('BỊ CHẶN','blocked');
-    hint.textContent=detailFor(readiness);
+    setHint(detailFor(readiness),state);
     return;
   }
   setStatus('ĐANG KIỂM TRA','checking');
-  hint.textContent=readiness?detailFor(readiness):'Đang lấy trạng thái từ Daemon.';
+  setHint(readiness?detailFor(readiness):'Đang lấy trạng thái từ Daemon.',state);
 }
 
 async function send(message){
