@@ -23,6 +23,19 @@ test('new valid extension auto-pairs without manual code and reconnect uses pers
   assert.deepEqual(reconnect,{ok:true,paired:false});
 });
 
+test('multiple Chrome profiles may share runtime Extension ID while keeping independent instance/browser tokens',()=>{
+  const auth=new LocalAuth(tmp('pair-multi-profile'));
+  const a=auth.authenticateExtension(hello('profile-extension-a','shared-runtime-id',null));
+  const b=auth.authenticateExtension(hello('profile-extension-b','shared-runtime-id',null));
+  assert.equal(a.ok,true);assert.equal(a.paired,true);
+  assert.equal(b.ok,true);assert.equal(b.paired,true);
+  assert.notEqual(a.pairedToken,b.pairedToken);
+  assert.equal(auth.status().pairedExtensions,2);
+  assert.deepEqual(auth.authenticateExtension(hello('profile-extension-a','shared-runtime-id',a.pairedToken)),{ok:true,paired:false});
+  assert.deepEqual(auth.authenticateExtension(hello('profile-extension-b','shared-runtime-id',b.pairedToken)),{ok:true,paired:false});
+  assert.equal(auth.authenticateExtension({...hello('profile-extension-a','shared-runtime-id',a.pairedToken),browserInstanceId:'browser-profile-extension-b'}).error,'extension_browser_id_mismatch');
+});
+
 test('missing or stale token auto-rotates only when full extension binding still matches',()=>{
   const auth=new LocalAuth(tmp('pair-rotate'));
   const first=auth.authenticateExtension(hello());
