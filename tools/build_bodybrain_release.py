@@ -33,6 +33,18 @@ def sha256(pathname: Path) -> str:
     return digest.hexdigest()
 
 
+def clean_release_artifacts() -> Path:
+    package=json.loads((ROOT / "package.json").read_text(encoding="utf-8")); extension=ARTIFACTS / f"BodyChromeAttach-v{package['version']}.zip"
+    if not extension.exists() or extension.stat().st_size <= 0: raise ReleaseBuildError("extension_release_artifact_missing:run_npm_run_extension_protected")
+    for path in ARTIFACTS.iterdir():
+        if path.resolve() == extension.resolve(): continue
+        if path.is_dir(): shutil.rmtree(path,ignore_errors=True)
+        else:
+            try: path.unlink()
+            except FileNotFoundError: pass
+    return extension
+
+
 def authenticode_status(executable: Path) -> str:
     if os.name != "nt": return "NOT_WINDOWS"
     command=["powershell.exe","-NoProfile","-NonInteractive","-Command",f"$s=Get-AuthenticodeSignature -LiteralPath '{str(executable).replace(chr(39), chr(39)*2)}'; [Console]::Out.Write($s.Status.ToString())"]
@@ -80,7 +92,7 @@ def write_release_manifest(executable: Path, signing_status: str | None = None) 
 
 def main() -> int:
     if os.name != "nt": raise ReleaseBuildError("bodybrain_release_build_windows_only")
-    shutil.rmtree(WORK,ignore_errors=True)
+    clean_release_artifacts(); shutil.rmtree(WORK,ignore_errors=True)
     try:
         SPEC_DIR.mkdir(parents=True,exist_ok=True); helper=build_native_helper(); executable=build_bodybrain(helper); signing_status=maybe_sign(executable); manifest=write_release_manifest(executable,signing_status); print(f"Built BodyBrain: {executable}"); print(f"Authenticode status: {signing_status}"); print(f"Release manifest: {manifest}"); return 0
     finally:
