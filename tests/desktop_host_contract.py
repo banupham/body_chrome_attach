@@ -5,6 +5,7 @@ import os
 import struct
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -110,8 +111,6 @@ class DesktopHostContractTest(unittest.TestCase):
                 supervisor = BodyRuntimeSupervisor(config, root=ROOT)
             state = paths["body"] / "state"
             state.mkdir(parents=True, exist_ok=True)
-            # Deliberately use this live Python PID to model Windows reusing the
-            # old BODY PID for Chrome or another unrelated process.
             (state / "runtime.lock").write_text(json.dumps({"pid": os.getpid(), "createdAt": "2026-09-08T00:00:00Z"}), encoding="utf-8")
             (state / "runtime-endpoint.json").write_text(json.dumps({"active": True, "pid": os.getpid(), "host": config.host, "port": config.port}), encoding="utf-8")
             supervisor._port_open = lambda: False
@@ -167,6 +166,35 @@ class DesktopHostContractTest(unittest.TestCase):
         self.assertIn("self._hide_logs()", close_block)
         self.assertNotIn("_request_quit", close_block)
         self.assertEqual(tray.count("self._request_quit()"), 1)
+
+    @unittest.skipUnless(os.name == "nt", "Windows-only native tray lifecycle")
+    def test_native_tray_window_message_loop_starts_and_stops_cleanly(self):
+        import desktop.tray_ui as tray_module
+
+        class ShellStub:
+            @staticmethod
+            def Shell_NotifyIconW(*_args):
+                return 1
+
+        with tempfile.TemporaryDirectory() as temp:
+            log_path = Path(temp) / "body-runtime.log"
+            log_path.write_text("daemon-started\n", encoding="utf-8")
+            quit_calls: list[str] = []
+            tray = None
+            with patch.object(tray_module, "shell32", ShellStub()):
+                try:
+                    tray = tray_module.BodyBrainTray(log_path, on_quit=lambda: quit_calls.append("quit"))
+                    tray.start()
+                    self.assertIsNotNone(tray._thread)
+                    self.assertTrue(tray._thread.is_alive())
+                    tray.set_notice("RUNNING")
+                    tray.show()
+                    time.sleep(0.1)
+                finally:
+                    if tray is not None:
+                        tray.stop()
+            self.assertFalse(tray._thread.is_alive())
+            self.assertEqual(quit_calls, [])
 
     def test_windows_input_prefers_bundled_helper_when_supplied(self):
         source = (ROOT / "daemon" / "src" / "windows_native_input.js").read_text(encoding="utf-8")
