@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -15,11 +16,19 @@ if os.name == "nt":
     from ctypes import wintypes
 
     LRESULT = ctypes.c_ssize_t
-    WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+    UINT_PTR = ctypes.c_size_t
     HICON = getattr(wintypes, "HICON", wintypes.HANDLE)
     HCURSOR = getattr(wintypes, "HCURSOR", wintypes.HANDLE)
     HBRUSH = getattr(wintypes, "HBRUSH", wintypes.HANDLE)
     HFONT = getattr(wintypes, "HFONT", wintypes.HANDLE)
+    HMENU = getattr(wintypes, "HMENU", wintypes.HANDLE)
+    WNDPROC = ctypes.WINFUNCTYPE(
+        LRESULT,
+        wintypes.HWND,
+        wintypes.UINT,
+        wintypes.WPARAM,
+        wintypes.LPARAM,
+    )
 
     WM_DESTROY = 0x0002
     WM_SIZE = 0x0005
@@ -130,16 +139,121 @@ if os.name == "nt":
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
 
-    user32.DefWindowProcW.restype = LRESULT
-    user32.CreateWindowExW.restype = wintypes.HWND
-    user32.LoadIconW.restype = HICON
-    user32.LoadCursorW.restype = HCURSOR
-    user32.CreatePopupMenu.restype = wintypes.HANDLE
+    # ctypes defaults untyped Win32 arguments to c_int. That is unsafe for
+    # handles/pointers on 64-bit Windows and caused real Windows 10 tray startup
+    # failures. Keep every production call explicitly typed.
+    kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
     kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+
+    user32.LoadIconW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR]
+    user32.LoadIconW.restype = HICON
+    user32.LoadCursorW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR]
+    user32.LoadCursorW.restype = HCURSOR
+    user32.RegisterClassExW.argtypes = [ctypes.POINTER(WNDCLASSEXW)]
+    user32.RegisterClassExW.restype = wintypes.ATOM
+    user32.CreateWindowExW.argtypes = [
+        wintypes.DWORD,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.HWND,
+        HMENU,
+        wintypes.HINSTANCE,
+        wintypes.LPVOID,
+    ]
+    user32.CreateWindowExW.restype = wintypes.HWND
+    user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.DefWindowProcW.restype = LRESULT
+    user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.SendMessageW.restype = LRESULT
+    user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.PostMessageW.restype = wintypes.BOOL
+    user32.SetTimer.argtypes = [wintypes.HWND, UINT_PTR, wintypes.UINT, wintypes.LPVOID]
+    user32.SetTimer.restype = UINT_PTR
+    user32.KillTimer.argtypes = [wintypes.HWND, UINT_PTR]
+    user32.KillTimer.restype = wintypes.BOOL
+    user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.ShowWindow.restype = wintypes.BOOL
+    user32.UpdateWindow.argtypes = [wintypes.HWND]
+    user32.UpdateWindow.restype = wintypes.BOOL
+    user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT]
+    user32.GetMessageW.restype = wintypes.BOOL
+    user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
+    user32.TranslateMessage.restype = wintypes.BOOL
+    user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
+    user32.DispatchMessageW.restype = LRESULT
+    user32.SystemParametersInfoW.argtypes = [wintypes.UINT, wintypes.UINT, wintypes.LPVOID, wintypes.UINT]
+    user32.SystemParametersInfoW.restype = wintypes.BOOL
+    user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+    user32.GetSystemMetrics.restype = ctypes.c_int
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetWindowRect.restype = wintypes.BOOL
+    user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetClientRect.restype = wintypes.BOOL
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    user32.SetWindowPos.restype = wintypes.BOOL
+    user32.SetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPCWSTR]
+    user32.SetWindowTextW.restype = wintypes.BOOL
+    user32.MoveWindow.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.BOOL]
+    user32.MoveWindow.restype = wintypes.BOOL
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    user32.SetForegroundWindow.restype = wintypes.BOOL
+    user32.CreatePopupMenu.argtypes = []
+    user32.CreatePopupMenu.restype = HMENU
+    user32.AppendMenuW.argtypes = [HMENU, wintypes.UINT, UINT_PTR, wintypes.LPCWSTR]
+    user32.AppendMenuW.restype = wintypes.BOOL
+    user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+    user32.GetCursorPos.restype = wintypes.BOOL
+    user32.TrackPopupMenu.argtypes = [HMENU, wintypes.UINT, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.HWND, wintypes.LPVOID]
+    user32.TrackPopupMenu.restype = wintypes.BOOL
+    user32.DestroyMenu.argtypes = [HMENU]
+    user32.DestroyMenu.restype = wintypes.BOOL
+    user32.DestroyWindow.argtypes = [wintypes.HWND]
+    user32.DestroyWindow.restype = wintypes.BOOL
+    user32.PostQuitMessage.argtypes = [ctypes.c_int]
+    user32.PostQuitMessage.restype = None
+    user32.RegisterWindowMessageW.argtypes = [wintypes.LPCWSTR]
+    user32.RegisterWindowMessageW.restype = wintypes.UINT
+
+    shell32.Shell_NotifyIconW.argtypes = [wintypes.DWORD, ctypes.POINTER(NOTIFYICONDATAW)]
+    shell32.Shell_NotifyIconW.restype = wintypes.BOOL
+
+    gdi32.CreateFontW.argtypes = [
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPCWSTR,
+    ]
     gdi32.CreateFontW.restype = HFONT
+    gdi32.DeleteObject.argtypes = [wintypes.HANDLE]
+    gdi32.DeleteObject.restype = wintypes.BOOL
 
     def _resource(identifier: int):
-        return ctypes.cast(ctypes.c_void_p(identifier), wintypes.LPCWSTR)
+        return ctypes.cast(ctypes.c_void_p(int(identifier) & 0xFFFF), wintypes.LPCWSTR)
+
+    def _handle_value(value) -> int:
+        if value is None:
+            return 0
+        if isinstance(value, int):
+            return value
+        raw = ctypes.cast(value, ctypes.c_void_p).value
+        return int(raw or 0)
 
 
 class BodyBrainTray:
@@ -166,6 +280,7 @@ class BodyBrainTray:
         self._thread: threading.Thread | None = None
         self._started = threading.Event()
         self._start_error: Exception | None = None
+        self._start_stage = "not_started"
         self._quit_once = threading.Event()
         self._notice_lock = threading.RLock()
         self._notice = "Starting BODY runtime..."
@@ -175,6 +290,9 @@ class BodyBrainTray:
         self._font = None
         self._nid = None
         self._wndproc = None
+        self._icon = None
+        self._instance = None
+        self._taskbar_created = 0
         self._class_name = f"BodyBrainTrayWindow_{os.getpid()}_{id(self)}"
 
     @staticmethod
@@ -191,7 +309,11 @@ class BodyBrainTray:
         if not self._started.wait(5.0):
             raise TrayUiError("windows_tray_ui_start_timeout")
         if self._start_error is not None:
-            raise TrayUiError(f"windows_tray_ui_start_failed:{type(self._start_error).__name__}") from self._start_error
+            detail = str(self._start_error).strip().replace("\r", " ").replace("\n", " ")
+            raise TrayUiError(
+                f"windows_tray_ui_start_failed:{self._start_stage}:"
+                f"{type(self._start_error).__name__}:{detail or 'no_detail'}"
+            ) from self._start_error
 
     def set_notice(self, value: str) -> None:
         with self._notice_lock:
@@ -244,24 +366,51 @@ class BodyBrainTray:
         return f"[BodyBrain] {notice}\r\n\r\n{log_text}" if notice else log_text
 
     if os.name == "nt":
+        def _set_stage(self, stage: str) -> None:
+            self._start_stage = stage
+
+        def _add_tray_icon(self, *, retry: bool) -> bool:
+            if self._nid is None:
+                return False
+            attempts = 12 if retry else 1
+            for index in range(attempts):
+                ctypes.set_last_error(0)
+                if shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(self._nid)):
+                    return True
+                if index + 1 < attempts:
+                    time.sleep(0.25)
+            return False
+
         def _run(self) -> None:
             try:
+                self._set_stage("wndproc")
                 self._wndproc = WNDPROC(self._window_proc)
-                instance = kernel32.GetModuleHandleW(None)
-                icon = user32.LoadIconW(None, _resource(IDI_APPLICATION))
+
+                self._set_stage("module_handle")
+                self._instance = kernel32.GetModuleHandleW(None)
+                if not self._instance:
+                    raise ctypes.WinError(ctypes.get_last_error())
+
+                self._set_stage("stock_icon_cursor")
+                self._icon = user32.LoadIconW(None, _resource(IDI_APPLICATION))
                 cursor = user32.LoadCursorW(None, _resource(IDC_ARROW))
+                if not self._icon or not cursor:
+                    raise ctypes.WinError(ctypes.get_last_error())
+
+                self._set_stage("window_class")
                 wc = WNDCLASSEXW()
                 wc.cbSize = ctypes.sizeof(WNDCLASSEXW)
                 wc.lpfnWndProc = self._wndproc
-                wc.hInstance = instance
-                wc.hIcon = icon
+                wc.hInstance = self._instance
+                wc.hIcon = self._icon
                 wc.hCursor = cursor
-                wc.hbrBackground = ctypes.c_void_p(COLOR_WINDOW + 1)
+                wc.hbrBackground = COLOR_WINDOW + 1
                 wc.lpszClassName = self._class_name
-                wc.hIconSm = icon
+                wc.hIconSm = self._icon
                 if not user32.RegisterClassExW(ctypes.byref(wc)):
                     raise ctypes.WinError(ctypes.get_last_error())
 
+                self._set_stage("log_window")
                 width, height = 680, 360
                 x, y = self._top_right_xy(width, height)
                 style = WS_CAPTION | WS_SYSMENU | WS_THICKFRAME
@@ -277,12 +426,13 @@ class BodyBrainTray:
                     height,
                     None,
                     None,
-                    instance,
+                    self._instance,
                     None,
                 )
                 if not self._hwnd:
                     raise ctypes.WinError(ctypes.get_last_error())
 
+                self._set_stage("readonly_edit")
                 self._edit = user32.CreateWindowExW(
                     0,
                     "EDIT",
@@ -294,41 +444,64 @@ class BodyBrainTray:
                     height,
                     self._hwnd,
                     None,
-                    instance,
+                    self._instance,
                     None,
                 )
                 if not self._edit:
                     raise ctypes.WinError(ctypes.get_last_error())
 
+                self._set_stage("font")
                 self._font = gdi32.CreateFontW(
-                    -15, 0, 0, 0, 400, 0, 0, 0,
-                    DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                    CLEARTYPE_QUALITY, FIXED_PITCH | FF_MODERN, "Consolas"
+                    -15,
+                    0,
+                    0,
+                    0,
+                    400,
+                    0,
+                    0,
+                    0,
+                    DEFAULT_CHARSET,
+                    OUT_DEFAULT_PRECIS,
+                    CLIP_DEFAULT_PRECIS,
+                    CLEARTYPE_QUALITY,
+                    FIXED_PITCH | FF_MODERN,
+                    "Consolas",
                 )
                 if self._font:
-                    user32.SendMessageW(self._edit, WM_SETFONT, self._font, 1)
+                    user32.SendMessageW(self._edit, WM_SETFONT, _handle_value(self._font), 1)
 
+                self._set_stage("tray_data")
                 self._nid = NOTIFYICONDATAW()
                 self._nid.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
                 self._nid.hWnd = self._hwnd
                 self._nid.uID = 1
                 self._nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP
                 self._nid.uCallbackMessage = WM_TRAY
-                self._nid.hIcon = icon
+                self._nid.hIcon = self._icon
                 self._nid.szTip = "BodyBrain - right-click for menu"
-                if not shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(self._nid)):
+                self._taskbar_created = int(user32.RegisterWindowMessageW("TaskbarCreated") or 0)
+
+                self._set_stage("tray_add")
+                if not self._add_tray_icon(retry=True):
+                    error = ctypes.get_last_error()
+                    raise OSError(error, f"Shell_NotifyIconW(NIM_ADD) failed after retry; winerror={error}")
+
+                self._set_stage("timer")
+                if not user32.SetTimer(self._hwnd, TIMER_ID, TIMER_MS, None):
                     raise ctypes.WinError(ctypes.get_last_error())
 
-                user32.SetTimer(self._hwnd, TIMER_ID, TIMER_MS, None)
                 self._refresh_log(force=True)
                 user32.ShowWindow(self._hwnd, SW_SHOWNOACTIVATE)
                 user32.UpdateWindow(self._hwnd)
+                self._set_stage("running")
                 self._started.set()
 
                 message = wintypes.MSG()
                 while True:
                     result = user32.GetMessageW(ctypes.byref(message), None, 0, 0)
-                    if result <= 0:
+                    if result == -1:
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    if result == 0:
                         break
                     user32.TranslateMessage(ctypes.byref(message))
                     user32.DispatchMessageW(ctypes.byref(message))
@@ -430,6 +603,9 @@ class BodyBrainTray:
                 user32.DestroyMenu(menu)
 
         def _window_proc(self, hwnd, message, wparam, lparam):
+            if self._taskbar_created and int(message) == self._taskbar_created:
+                self._add_tray_icon(retry=False)
+                return 0
             if message == WM_TRAY:
                 event = int(lparam)
                 if event == WM_LBUTTONUP:
