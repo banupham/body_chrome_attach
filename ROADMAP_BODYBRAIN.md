@@ -50,8 +50,12 @@ Brain
 | B | Chrome BODY Extension release package | Bundled/minified ZIP, no source maps/dev source, deterministic package | DONE |
 | C | Desktop Host foundation | Deterministic paths, redacted logs, health, worker supervision, clean shutdown/orphan cleanup | IMPLEMENTED |
 | D | Guardian + BODY hosted runtime | EXE starts BODY internally; waits for Extension; Guardian remains fail-closed | IMPLEMENTED |
-| E | One-file Windows release | Bundle Node + native input helper; build/smoke actual `BodyBrain.exe`; release hashes | CI GATE |
-| F | Release acceptance | CI green, final diff/security review, artifacts published | PENDING |
+| E | One-file Windows release | Bundle Node + native input helper; build/smoke actual `BodyBrain.exe`; release hashes | DONE |
+| F | Release acceptance | CI build/contracts green + manual real-Chrome first-start/restart/token-reuse + final diff/security review | MANUAL GATE |
+
+## Manual real-Chrome acceptance
+
+Real-Chrome release acceptance is intentionally human-operated. CI does not launch or control Chrome. Use `tools\start_manual_chrome_test.cmd` to start Chrome for Testing with the built BODY Extension loaded at browser startup, then follow `MANUAL_RELEASE_TEST.md` to verify first-start readiness, Desktop restart reconnect, pairing token reuse, Brain `NOT_CONFIGURED`, and Guardian fail-closed behavior.
 
 ## Brain R&D track
 
