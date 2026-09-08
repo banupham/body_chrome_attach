@@ -108,12 +108,13 @@ async function main() {
   const localAppData = path.join(tempRoot, 'local-app-data');
   fs.mkdirSync(localAppData, { recursive: true });
   let browser = null;
-  const diagnostics = { mode: 'real-chrome-startup-loaded-extension' };
+  const diagnostics = { mode: 'real-headful-chrome-startup-loaded-extension' };
   try {
-    // Production-equivalent lifecycle: BODY Extension exists when Chrome starts.
-    // Starting the EXE afterwards still exercises ECONNREFUSED -> reconnect -> ONLINE.
+    // Windows production uses a normal visible Chrome session with BODY already installed.
+    // Loading the unpacked release at browser startup avoids the transient onInstalled
+    // worker used by Puppeteer's runtime install path while preserving the startup race.
     browser = await puppeteer.launch({
-      headless: true,
+      headless: false,
       pipe: true,
       enableExtensions: [extensionDir]
     });
