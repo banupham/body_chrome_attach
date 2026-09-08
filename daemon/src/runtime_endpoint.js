@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -7,11 +8,14 @@ const { runtimeDataDir } = require('./runtime_data_dir');
 
 const RUNTIME_ENDPOINT_VERSION = 2;
 const RUNTIME_PORT_VERSION = 1;
+const RUNTIME_LOCK_VERSION = 2;
 const RUNTIME_HOST = '127.0.0.1';
 const RUNTIME_ENDPOINT_FILENAME = 'runtime-endpoint.json';
 const RUNTIME_PORT_FILENAME = 'runtime-port.json';
 const RUNTIME_LOCK_FILENAME = 'runtime.lock';
 const BOOT_STALE_TOLERANCE_MS = 5000;
+const RUNTIME_LOCK_HEARTBEAT_INTERVAL_MS = 2000;
+const RUNTIME_LOCK_STALE_MS = 30000;
 
 function validPort(value) {
   const port = Number(value);
@@ -31,10 +35,10 @@ function endpointPaths(baseDir, env = process.env) {
   };
 }
 
-function endpointRecord(port, { pid = process.pid, now = () => Date.now() } = {}) {
+function endpointRecord(port, { pid = process.pid, now = () => Date.now(), ownerToken = null } = {}) {
   const normalized = validPort(port);
   if (!normalized) throw new Error('runtime_endpoint_port_invalid');
-  return {
+  const record = {
     schemaVersion: RUNTIME_ENDPOINT_VERSION,
     active: true,
     host: RUNTIME_HOST,
@@ -43,6 +47,9 @@ function endpointRecord(port, { pid = process.pid, now = () => Date.now() } = {}
     pid: Number(pid) || null,
     startedAt: new Date(now()).toISOString()
   };
+  const token = String(ownerToken || '').trim();
+  if (token) record.ownerToken = token;
+  return record;
 }
 
 function inactiveRecord(port = null) {
@@ -150,16 +157,63 @@ function lockAgeMs(file, now = Date.now()) {
   }
 }
 
-function acquireRuntimeLock(baseDir, { pid = process.pid, killImpl = process.kill, now = Date.now, uptimeImpl = os.uptime } = {}) {
+function newRuntimeLockOwnerToken() {
+  return crypto.randomBytes(16).toString('hex');
+}
+
+function runtimeLockLeaseFresh(record, { now = Date.now, staleAfterMs = RUNTIME_LOCK_STALE_MS } = {}) {
+  if (!record || typeof record !== 'object') return false;
+  const leaseAt = Date.parse(String(record.heartbeatAt || record.createdAt || ''));
+  let nowMs;
+  try { nowMs = Number(now()); } catch { return false; }
+  if (!Number.isFinite(leaseAt) || !Number.isFinite(nowMs)) return false;
+  const threshold = Math.max(RUNTIME_LOCK_HEARTBEAT_INTERVAL_MS * 2, Number(staleAfterMs) || RUNTIME_LOCK_STALE_MS);
+  return nowMs - leaseAt <= threshold;
+}
+
+function writeRuntimeLockRecord(file, record) {
+  const text = JSON.stringify(record) + '\n';
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r+');
+    fs.ftruncateSync(fd, 0);
+    fs.writeFileSync(fd, text, { encoding: 'utf8' });
+    try { fs.fsyncSync(fd); } catch {}
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch {}
+    }
+  }
+  try { fs.chmodSync(file, 0o600); } catch {}
+}
+
+function acquireRuntimeLock(baseDir, {
+  pid = process.pid,
+  killImpl = process.kill,
+  now = Date.now,
+  uptimeImpl = os.uptime,
+  ownerToken = newRuntimeLockOwnerToken(),
+  staleAfterMs = RUNTIME_LOCK_STALE_MS
+} = {}) {
   const paths = endpointPaths(baseDir);
   const ownerPid = Number(pid);
+  const normalizedOwnerToken = String(ownerToken || '').trim();
   if (!Number.isInteger(ownerPid) || ownerPid <= 0) throw new Error('runtime_lock_pid_invalid');
+  if (!normalizedOwnerToken) throw new Error('runtime_lock_owner_token_invalid');
   fs.mkdirSync(path.dirname(paths.lock), { recursive: true });
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const createdAt = new Date(now()).toISOString();
+    const record = {
+      schemaVersion: RUNTIME_LOCK_VERSION,
+      pid: ownerPid,
+      ownerToken: normalizedOwnerToken,
+      createdAt,
+      heartbeatAt: createdAt
+    };
     try {
-      fs.writeFileSync(paths.lock, JSON.stringify({ pid: ownerPid, createdAt: new Date(now()).toISOString() }) + '\n', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      fs.writeFileSync(paths.lock, JSON.stringify(record) + '\n', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
       try { fs.chmodSync(paths.lock, 0o600); } catch {}
-      return { acquired: true, pid: ownerPid, path: paths.lock };
+      return { acquired: true, pid: ownerPid, ownerToken: normalizedOwnerToken, path: paths.lock };
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
       const current = readJson(paths.lock);
@@ -168,19 +222,74 @@ function acquireRuntimeLock(baseDir, { pid = process.pid, killImpl = process.kil
         try { fs.rmSync(paths.lock, { force: true }); } catch {}
         continue;
       }
-      if (currentPid === ownerPid) return { acquired: false, pid: ownerPid, path: paths.lock, alreadyOwned: true };
-      if (Number.isInteger(currentPid) && currentPid > 0 && processAlive(currentPid, killImpl)) throw new Error(`company_runtime_already_running:${currentPid}`);
-      if ((!Number.isInteger(currentPid) || currentPid <= 0) && lockAgeMs(paths.lock, now()) < 10000) throw new Error('company_runtime_lock_busy');
+      if (currentPid === ownerPid) {
+        return {
+          acquired: false,
+          pid: ownerPid,
+          ownerToken: String(current?.ownerToken || ''),
+          path: paths.lock,
+          alreadyOwned: true
+        };
+      }
+      if (Number.isInteger(currentPid) && currentPid > 0 && processAlive(currentPid, killImpl)) {
+        const leaseAware = Number(current?.schemaVersion) >= RUNTIME_LOCK_VERSION && String(current?.ownerToken || '').trim();
+        if (leaseAware && !runtimeLockLeaseFresh(current, { now, staleAfterMs })) {
+          try { fs.rmSync(paths.lock, { force: true }); } catch {}
+          continue;
+        }
+        throw new Error(`company_runtime_already_running:${currentPid}`);
+      }
+      if ((!Number.isInteger(currentPid) || currentPid <= 0) && lockAgeMs(paths.lock, now()) < 10000) {
+        throw new Error('company_runtime_lock_busy');
+      }
       try { fs.rmSync(paths.lock, { force: true }); } catch {}
     }
   }
   throw new Error('company_runtime_lock_unavailable');
 }
 
-function releaseRuntimeLock(baseDir, { pid = process.pid } = {}) {
+function refreshRuntimeLock(baseDir, { pid = process.pid, ownerToken, now = Date.now } = {}) {
+  const paths = endpointPaths(baseDir);
+  const current = readJson(paths.lock);
+  const token = String(ownerToken || '').trim();
+  if (!current || Number(current.pid) !== Number(pid) || !token || String(current.ownerToken || '') !== token) return false;
+  const next = {
+    ...current,
+    schemaVersion: RUNTIME_LOCK_VERSION,
+    heartbeatAt: new Date(now()).toISOString()
+  };
+  try {
+    writeRuntimeLockRecord(paths.lock, next);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function startRuntimeLockHeartbeat(baseDir, lock, { intervalMs = RUNTIME_LOCK_HEARTBEAT_INTERVAL_MS } = {}) {
+  const pid = Number(lock?.pid);
+  const ownerToken = String(lock?.ownerToken || '').trim();
+  if (!Number.isInteger(pid) || pid <= 0 || !ownerToken) throw new Error('runtime_lock_heartbeat_owner_invalid');
+  const interval = Math.max(250, Number(intervalMs) || RUNTIME_LOCK_HEARTBEAT_INTERVAL_MS);
+  let timer = setInterval(() => {
+    if (!refreshRuntimeLock(baseDir, { pid, ownerToken })) {
+      clearInterval(timer);
+      timer = null;
+    }
+  }, interval);
+  if (typeof timer.unref === 'function') timer.unref();
+  return () => {
+    if (timer) clearInterval(timer);
+    timer = null;
+  };
+}
+
+function releaseRuntimeLock(baseDir, { pid = process.pid, ownerToken = null } = {}) {
   const paths = endpointPaths(baseDir);
   const current = readJson(paths.lock);
   if (current && Number(current.pid) !== Number(pid)) return false;
+  const token = String(ownerToken || '').trim();
+  if (current && token && String(current.ownerToken || '') && String(current.ownerToken) !== token) return false;
   try {
     fs.rmSync(paths.lock, { force: true });
     return true;
@@ -189,11 +298,26 @@ function releaseRuntimeLock(baseDir, { pid = process.pid } = {}) {
   }
 }
 
-function assertRuntimeOwnershipAvailable(stateFile, { pid = process.pid, killImpl = process.kill, now = Date.now, uptimeImpl = os.uptime } = {}) {
+function runtimeLockOwnedBy(stateFile, { pid = process.pid, ownerToken = null, now = Date.now } = {}) {
+  const token = String(ownerToken || '').trim();
+  if (!token) return false;
+  const lockFile = path.join(path.dirname(stateFile), RUNTIME_LOCK_FILENAME);
+  const lock = readJson(lockFile);
+  return Number(lock?.pid) === Number(pid) && String(lock?.ownerToken || '') === token && runtimeLockLeaseFresh(lock, { now });
+}
+
+function assertRuntimeOwnershipAvailable(stateFile, {
+  pid = process.pid,
+  killImpl = process.kill,
+  now = Date.now,
+  uptimeImpl = os.uptime,
+  ownerToken = null
+} = {}) {
   const current = readJson(stateFile);
   const ownerPid = Number(current?.pid);
   if (current?.active === true && Number.isInteger(ownerPid) && ownerPid > 0 && ownerPid !== Number(pid) && processAlive(ownerPid, killImpl)) {
     if (runtimeRecordPredatesCurrentBoot(current, { now, uptimeImpl })) return true;
+    if (runtimeLockOwnedBy(stateFile, { pid, ownerToken, now })) return true;
     throw new Error(`company_runtime_already_running:${ownerPid}:${validPort(current.port) || 'unknown'}`);
   }
   return true;
@@ -208,7 +332,8 @@ function publishRuntimeEndpoint(baseDir, port, options = {}) {
     pid: record.pid,
     killImpl: options.killImpl || process.kill,
     now: options.now || Date.now,
-    uptimeImpl: options.uptimeImpl || os.uptime
+    uptimeImpl: options.uptimeImpl || os.uptime,
+    ownerToken: options.ownerToken || null
   });
   writeJsonAtomic(paths.state, record);
   if (fs.existsSync(path.dirname(paths.extension))) {
@@ -224,10 +349,12 @@ function publishRuntimeEndpoint(baseDir, port, options = {}) {
   return record;
 }
 
-function clearRuntimeEndpoint(baseDir, { pid = process.pid } = {}) {
+function clearRuntimeEndpoint(baseDir, { pid = process.pid, ownerToken = null } = {}) {
   const paths = endpointPaths(baseDir);
   const current = readJson(paths.state);
   if (current?.active === true && Number(current.pid) !== Number(pid)) return false;
+  const token = String(ownerToken || '').trim();
+  if (current?.active === true && token && String(current.ownerToken || '') && String(current.ownerToken) !== token) return false;
   const remembered = readRememberedRuntimePort(baseDir);
   try { fs.rmSync(paths.state, { force: true }); } catch {}
   if (fs.existsSync(path.dirname(paths.extension))) {
@@ -259,11 +386,14 @@ function readRuntimeEndpoint(file) {
 module.exports = {
   RUNTIME_ENDPOINT_VERSION,
   RUNTIME_PORT_VERSION,
+  RUNTIME_LOCK_VERSION,
   RUNTIME_HOST,
   RUNTIME_ENDPOINT_FILENAME,
   RUNTIME_PORT_FILENAME,
   RUNTIME_LOCK_FILENAME,
   BOOT_STALE_TOLERANCE_MS,
+  RUNTIME_LOCK_HEARTBEAT_INTERVAL_MS,
+  RUNTIME_LOCK_STALE_MS,
   validPort,
   endpointPaths,
   endpointRecord,
@@ -278,8 +408,13 @@ module.exports = {
   rememberRuntimePort,
   preferredRuntimePort,
   lockAgeMs,
+  newRuntimeLockOwnerToken,
+  runtimeLockLeaseFresh,
   acquireRuntimeLock,
+  refreshRuntimeLock,
+  startRuntimeLockHeartbeat,
   releaseRuntimeLock,
+  runtimeLockOwnedBy,
   assertRuntimeOwnershipAvailable,
   publishRuntimeEndpoint,
   clearRuntimeEndpoint,
