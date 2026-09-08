@@ -16,8 +16,6 @@ jobs:
         with:
           node-version: '22'
       - name: Install dependencies
-        env:
-          PUPPETEER_SKIP_DOWNLOAD: 'true'
         run: npm install
       - name: Verify BODY, Desktop Host and Extension
         run: npm run verify
@@ -32,15 +30,11 @@ jobs:
           tests/desktop_runtime_smoke.py tests/bodybrain_exe_smoke.py tests/bodybrain_release_manifest_contract.py
       - name: Smoke Desktop runtime without Chrome
         run: python3 tests/desktop_runtime_smoke.py
-      - name: Upload Chrome BODY Extension packages
+      - name: Upload protected Chrome BODY Extension
         uses: actions/upload-artifact@v4
         with:
           name: body-chrome-extension-${{ github.sha }}
-          path: |
-            artifacts/body-chrome-attach-v*.zip
-            artifacts/BodyChromeAttach-v*-PROTECTED.zip
-            artifacts/BodyChromeAttach-v*-PROTECTED.json
-            artifacts/BodyChromeAttach-v*.crx
+          path: artifacts/BodyChromeAttach-v*-PROTECTED.zip
           if-no-files-found: error
           retention-days: 14
 
@@ -76,15 +70,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install Node dependencies
-        env:
-          PUPPETEER_SKIP_DOWNLOAD: 'true'
         run: npm install
-      - name: Build Chrome BODY Extension packages
-        run: |
-          npm run extension:package
-          npm run extension:protected
-      - name: Verify protected offline Extension
-        run: node tests/protected_extension_contract.js
+      - name: Build and verify protected Chrome BODY Extension
+        run: npm run extension:protected:test
       - name: Verify production excludes Brain
         run: python tests/bodybrain_no_brain_contract.py
       - name: Install release builder
@@ -102,10 +90,7 @@ jobs:
           path: |
             artifacts/BodyBrain.exe
             artifacts/bodybrain-release-v*.json
-            artifacts/body-chrome-attach-v*.zip
             artifacts/BodyChromeAttach-v*-PROTECTED.zip
-            artifacts/BodyChromeAttach-v*-PROTECTED.json
-            artifacts/BodyChromeAttach-v*.crx
             MANUAL_RELEASE_TEST.md
           if-no-files-found: error
           retention-days: 14
