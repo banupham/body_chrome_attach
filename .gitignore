@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist_protected/
 artifacts/
 .release-build/
 build/
