@@ -55,7 +55,9 @@ Brain
 
 ## Manual real-Chrome acceptance
 
-Real-Chrome release acceptance is intentionally human-operated. CI does not launch or control Chrome. Use `tools\start_manual_chrome_test.cmd` to start Chrome for Testing with the built BODY Extension loaded at browser startup, then follow `MANUAL_RELEASE_TEST.md` to verify first-start readiness, Desktop restart reconnect, pairing token reuse, Brain `NOT_CONFIGURED`, and Guardian fail-closed behavior.
+Real-Chrome release acceptance is intentionally human-operated. CI does not launch or control Chrome. The tester opens `chrome://extensions/`, enables Developer mode, chooses **Load unpacked**, and selects the built `dist` directory. `MANUAL_RELEASE_TEST.md` then covers first-start readiness, Desktop restart reconnect, pairing token reuse, Brain `NOT_CONFIGURED`, and Guardian fail-closed behavior.
+
+The distributable packaged Extension is `artifacts\body-chrome-attach-v0.8.0.zip`; the ZIP is not passed directly to Chrome's **Load unpacked** action.
 
 ## Brain R&D track
 
