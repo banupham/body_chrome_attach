@@ -106,31 +106,34 @@ async function main() {
 
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'body-real-chrome-e2e-'));
   const localAppData = path.join(tempRoot, 'local-app-data');
+  const chromeProfile = path.join(tempRoot, 'chrome-profile');
   fs.mkdirSync(localAppData, { recursive: true });
+  fs.mkdirSync(chromeProfile, { recursive: true });
   let browser = null;
-  const diagnostics = { mode: 'real-headful-chrome-startup-loaded-extension' };
+  const diagnostics = { mode: 'real-headful-chrome-for-testing-command-line-extension' };
   try {
-    // Windows production uses a normal visible Chrome session with BODY already installed.
-    // Loading the unpacked release at browser startup avoids the transient onInstalled
-    // worker used by Puppeteer's runtime install path while preserving the startup race.
+    // Puppeteer treats enableExtensions:[path] as a post-launch Extensions.loadUnpacked
+    // operation. That lifecycle can close the target before BODY is exercised. Use the
+    // Chrome-for-Testing startup switches instead: the Extension exists when Chrome starts,
+    // matching the production lifecycle while still using a fresh isolated browser profile.
     browser = await puppeteer.launch({
       headless: false,
       pipe: true,
-      enableExtensions: [extensionDir]
+      userDataDir: chromeProfile,
+      enableExtensions: true,
+      args: [
+        `--disable-extensions-except=${extensionDir}`,
+        `--load-extension=${extensionDir}`
+      ]
     });
-    const extensions = await browser.extensions();
-    const extensionEntries = [...extensions.entries()];
-    const bodyEntry = extensionEntries.find(([, extension]) => extension?.name === 'Body Chrome Attach') ||
-      (extensionEntries.length === 1 ? extensionEntries[0] : null);
-    assert.ok(bodyEntry, `BODY Extension not loaded at Chrome startup; found=${extensionEntries.map(([id, extension]) => `${id}:${extension?.name || 'unknown'}`).join(',')}`);
-    const [extensionId, extension] = bodyEntry;
-    assert.equal(typeof extensionId, 'string');
-    assert.ok(extensionId.length > 0, 'Chrome startup Extension id missing');
-    assert.ok(extension, 'Chrome startup BODY Extension handle missing');
+    diagnostics.browserVersion = await browser.version();
 
     const page = await browser.newPage();
     await page.goto('https://example.com/', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
+    // Do not use browser.extensions()/installExtension() as the release gate. BODY readiness
+    // is the product-level proof that the startup-loaded Extension is alive, authenticated,
+    // and paired to the packaged Desktop runtime.
     const first = await runBodyBrain(executable, localAppData);
     assertConnectedRun(first, 'first-start', diagnostics, localAppData);
     const firstPairing = readPairing(localAppData);
