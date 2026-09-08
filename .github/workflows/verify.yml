@@ -24,7 +24,7 @@ jobs:
           python3 -m py_compile
           daemon/native/windows_input.py
           desktop/__init__.py desktop/config.py desktop/paths.py desktop/host_logging.py desktop/health.py
-          desktop/worker_supervisor.py desktop/lifecycle.py desktop/autostart.py desktop/body_status_client.py desktop/supervisor.py desktop/main.py
+          desktop/worker_supervisor.py desktop/lifecycle.py desktop/autostart.py desktop/body_status_client.py desktop/supervisor.py desktop/tray_ui.py desktop/main.py
           tools/build_bodybrain_release.py
           tests/desktop_host_contract.py tests/desktop_host_foundation_contract.py tests/bodybrain_no_brain_contract.py
           tests/desktop_runtime_smoke.py tests/bodybrain_exe_smoke.py tests/bodybrain_release_manifest_contract.py
