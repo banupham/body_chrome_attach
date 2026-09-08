@@ -17,22 +17,41 @@ Brain remains a separate R&D track and must report `NOT_CONFIGURED` in productio
 
 ## User-facing release
 
-A user receives exactly two files:
+A user receives exactly two distributable files:
 
 ```text
 BodyBrain.exe
-BodyChromeAttach-v0.8.0-PROTECTED.zip
+BodyChromeAttach-v0.8.0.zip
 ```
 
-The protected ZIP is extracted and loaded manually through `chrome://extensions/` → **Load unpacked**.
+`BodyChromeAttach-v0.8.0.zip` is already the protected/obfuscated offline build. There is no second normal ZIP, no `-PROTECTED` duplicate name, and no CRX release path.
+
+The user extracts the ZIP to a permanent folder and installs it through `chrome://extensions/` → **Load unpacked**.
+
+## Exact release output policy
+
+After the Windows release build, `artifacts/` must contain exactly:
+
+```text
+artifacts/
+├── BodyBrain.exe
+├── BodyChromeAttach-v0.8.0.zip
+└── bodybrain-release-v0.8.0.json
+```
+
+Only the first two are user-facing. `bodybrain-release-v0.8.0.json` is internal integrity metadata containing the SHA-256 values and production boundary information.
+
+The release contract fails if any extra file is left in `artifacts/`.
 
 ## Repository cleanliness rules
 
-- Do not commit generated binaries, ZIPs, CRXs, signing keys, Base64 binary payload parts, logs, temp extraction files, or build directories.
-- `dist/`, `dist_protected/`, `artifacts/`, `.release-build/` and `build/` are generated/ignored outputs only.
-- Keep source, tests, build tools and release documentation only when they have an active production purpose.
-- No Puppeteer or browser automation in production acceptance.
-- Do not create duplicate release manifests for the Extension; the protected ZIP SHA-256 is emitted by the build and CI stores the package artifact.
+- Never commit generated binaries, ZIPs, CRXs, signing keys, Base64 binary payload parts, logs, temp extraction files, or build directories.
+- `dist/`, `artifacts/`, `.release-build/` and `build/` are generated/ignored only.
+- `dist/` is an Extension build intermediate and is removed after the protected ZIP is produced.
+- `.release-build/` is removed after the Windows EXE build completes.
+- There is no `dist_protected/` staging tree.
+- There is no separate Extension protection JSON; integrity metadata lives in the single BodyBrain release manifest.
+- There is no Puppeteer/browser automation in production acceptance.
 - Persistent BODY state belongs only under `%LOCALAPPDATA%\BodyBrain\body`.
 
 ## Locked boundaries
@@ -49,21 +68,19 @@ The protected ZIP is extracted and loaded manually through `chrome://extensions/
 | Stage | Scope | Gate | Status |
 |---|---|---|---|
 | A | BODY Contract + provenance + at-most-once execution | Contract/regression tests | DONE |
-| B | Protected offline Chrome Extension | Protected ZIP only; no source/signing material | DONE |
+| B | Protected offline Chrome Extension | One protected ZIP only; no source/signing material | DONE |
 | C | Desktop Host | Persistent paths, redacted logs, worker lifecycle, clean process-tree shutdown | DONE |
-| D | Guardian + BODY runtime lifecycle | Start/restart without stale lock or orphan runtime; fail-closed | HARDENING |
-| E | One-file Windows build | `BodyBrain.exe` build + isolated smoke + release hash | DONE |
-| F | Real release acceptance | Windows + real Chrome first start/restart/token reuse + final security review | BLOCKED ON D |
+| D | Guardian + BODY runtime lifecycle | Start/restart without stale ownership or orphan runtime; fail-closed | HARDENING |
+| E | One-file Windows build | `BodyBrain.exe` build + isolated smoke + exact release hashes | DONE |
+| F | Real release acceptance | Windows + real Chrome first start/restart/token reuse + final security review | BLOCKED ON D RETEST |
 
-## Current blocker: runtime ownership recovery
+## Current blocker: Windows runtime ownership retest
 
-Real Windows testing exposed a stale runtime ownership failure:
+Real Windows testing exposed a stale runtime ownership failure after a prior worker had been force-stopped. A stale PID can later belong to an unrelated process, so PID existence alone cannot prove ownership.
 
-```text
-company_runtime_already_running:<stale-or-reused-pid>
-```
+The current hardening uses the real fixed localhost BODY port as the primary liveness authority before startup, removes stale lock/endpoint state when that port is closed, cleans worker-owned state after forced shutdown, and keeps active port ownership fail-closed.
 
-The runtime lock must not trust PID existence alone because Windows can retain/reuse a PID after the original runtime is no longer valid. Stage D is complete only when runtime ownership uses a bounded lease/heartbeat, stale legacy locks recover safely, active runtimes remain protected from duplicate ownership, and Windows regression tests pass.
+Stage D is complete only after the updated build passes CI and a real Windows Chrome restart test confirms the second `BodyBrain.exe --check` starts cleanly.
 
 ## Release acceptance
 
@@ -73,9 +90,9 @@ Stage F becomes PASS only when all of the following are true:
 2. Windows native/Desktop contracts pass.
 3. Actual `BodyBrain.exe` isolated smoke passes.
 4. Protected Extension loaded in real Chrome reaches `READY`.
-5. A second `BodyBrain.exe --check` reconnects cleanly without stale-lock failure.
+5. A second `BodyBrain.exe --check` reconnects cleanly without stale-runtime failure.
 6. Extension `tokenHash` is reused across Desktop restart.
 7. Brain remains `NOT_CONFIGURED` and Guardian remains authoritative/fail-closed.
-8. Final release artifact set contains only the two user-facing files plus CI/internal integrity metadata.
+8. `artifacts/` contains exactly `BodyBrain.exe`, `BodyChromeAttach-v0.8.0.zip`, and `bodybrain-release-v0.8.0.json`.
 
 Do not merge PR #12 until Stage F is explicitly accepted.
