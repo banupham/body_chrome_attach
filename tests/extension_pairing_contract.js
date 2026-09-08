@@ -51,15 +51,14 @@ test('service worker has a Chrome-alarm reconnect backstop for Desktop restarts 
   assert.match(worker,/Body daemon WebSocket closed/);
 });
 
-test('real Chrome release acceptance is manual and launcher only startup-loads the Extension',()=>{
-  const launcher=fs.readFileSync(path.join(root,'tools','start_manual_chrome_test.cmd'),'utf8');
+test('real Chrome release acceptance is fully manual and uses the built Extension directory',()=>{
   const workflow=fs.readFileSync(path.join(root,'.github','workflows','verify.yml'),'utf8');
   const guide=fs.readFileSync(path.join(root,'MANUAL_RELEASE_TEST.md'),'utf8');
-  assert.match(launcher,/--disable-extensions-except=%EXT%/);
-  assert.match(launcher,/--load-extension=%EXT%/);
-  assert.doesNotMatch(launcher,/BodyBrain\.exe/i);
-  assert.doesNotMatch(launcher,/installExtension/i);
+  assert.equal(fs.existsSync(path.join(root,'tools','start_manual_chrome_test.cmd')),false);
   assert.doesNotMatch(workflow,/body_chrome_real_e2e\.js/);
+  assert.match(guide,/Load unpacked/);
+  assert.match(guide,/select the repository `dist` directory/i);
+  assert.match(guide,/artifacts\\body-chrome-attach-v0\.8\.0\.zip/);
   assert.match(guide,/First-start BODY check/);
   assert.match(guide,/Desktop restart check/);
   assert.match(guide,/tokenHash/);
