@@ -30,9 +30,12 @@ function diagnosticText(state){
   const browser=String(state?.browserInstanceId||'').trim();
   const shortBrowser=browser?browser.slice(0,13):'chưa có';
   const learning=state?.learningInput||{};
-  const events=Math.max(0,Number(learning.eventCount)||0);
+  const observed=Math.max(0,Number(learning.eventCount)||0);
+  const forwarded=Math.max(0,Number(learning.forwardedEventCount)||0);
+  const pending=Math.max(0,Number(learning.pendingEventCount)||0);
   const tab=Number.isInteger(Number(state?.activeTabId))?Number(state.activeTabId):null;
-  return `Browser ${shortBrowser} · Học: ${events} sự kiện${tab===null?'':` · Tab ${tab}`}`;
+  const content=state?.contentScript?.ready===true?'CS:OK':`CS:${String(state?.contentScript?.reason||'WAIT').slice(0,22)}`;
+  return `Browser ${shortBrowser} · Nhận ${observed} · Gửi ${forwarded} · Chờ ${pending}${tab===null?'':` · Tab ${tab}`} · ${content}`;
 }
 
 function setHint(text,state){
