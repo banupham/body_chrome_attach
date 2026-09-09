@@ -9,6 +9,7 @@ const reasonText={
   protection_starting:'Đang khởi tạo kiểm tra.',
   environment_pending:'Đang kiểm tra môi trường.',
   bot_check_pending:'Đang kiểm tra bot/controller.',
+  controller_probe_unavailable:'Không xác minh được controller trên máy. Hệ thống sẽ tự kiểm tra lại.',
   browser_offline:'Browser chưa kết nối.',
   browser_not_found:'Không tìm thấy Browser Runtime.',
   EXTERNAL_CONTROLLER_CONFLICT:'Phát hiện trình điều khiển ngoài BODY.',
@@ -33,7 +34,8 @@ function diagnosticText(state){
   const observed=Math.max(0,Number(learning.eventCount)||0);
   const forwarded=Math.max(0,Number(learning.forwardedEventCount)||0);
   const pending=Math.max(0,Number(learning.pendingEventCount)||0);
-  const tab=Number.isInteger(Number(state?.activeTabId))?Number(state.activeTabId):null;
+  const rawTab=state?.activeTabId;
+  const tab=rawTab!==null&&rawTab!==undefined&&Number.isInteger(Number(rawTab))?Number(rawTab):null;
   const content=state?.contentScript?.ready===true?'CS:OK':`CS:${String(state?.contentScript?.reason||'WAIT').slice(0,22)}`;
   return `Browser ${shortBrowser} · Nhận ${observed} · Gửi ${forwarded} · Chờ ${pending}${tab===null?'':` · Tab ${tab}`} · ${content}`;
 }
