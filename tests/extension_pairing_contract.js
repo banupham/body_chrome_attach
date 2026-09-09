@@ -110,24 +110,21 @@ test('release path is protected offline ZIP only and contains no legacy CRX mate
   }
 });
 
-test('real Chrome release acceptance is fully manual, multi-Chrome aware, and tray-owned',()=>{
+test('release acceptance is code-enforced without Markdown or automated real-Chrome E2E',()=>{
   const workflow=fs.readFileSync(path.join(root,'.github','workflows','verify.yml'),'utf8');
-  const guide=fs.readFileSync(path.join(root,'MANUAL_RELEASE_TEST.md'),'utf8');
+  const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
+  const releaseContract=fs.readFileSync(path.join(root,'tests','bodybrain_release_manifest_contract.py'),'utf8');
   assert.doesNotMatch(workflow,/body_chrome_real_e2e\.js|puppeteer/i);
-  assert.match(guide,/BodyChromeAttach-v0\.8\.0\.zip/);
-  assert.doesNotMatch(guide,/BodyChromeAttach-v0\.8\.0-PROTECTED|PROTECTED\.json|dist_protected|\.crx/);
-  assert.match(guide,/Load unpacked/);
-  assert.match(guide,/Diagnostic READY check/);
-  assert.match(guide,/Multi-Chrome learning \+ focused-window acceptance/);
-  assert.match(guide,/Học.*sự kiện/);
-  assert.match(guide,/browserInstanceId/);
-  assert.match(guide,/HTTP_TAB_REQUIRED_FOR_ENVIRONMENT_PROBE/);
-  assert.match(guide,/historical\/offline Browser/);
-  assert.match(guide,/Tray \+ read-only daemon log acceptance/);
-  assert.match(guide,/Quit BodyBrain/);
-  assert.match(guide,/Restart \+ token reuse/);
-  assert.match(guide,/tokenHash/);
-  assert.match(guide,/brain.*NOT_CONFIGURED/is);
+  assert.match(workflow,/Build and verify protected Chrome BODY Extension/);
+  assert.match(workflow,/Build one-file BodyBrain\.exe/);
+  assert.match(workflow,/Verify exact three-file release/);
+  assert.match(workflow,/artifacts\/BodyBrain\.exe/);
+  assert.match(workflow,/artifacts\/BodyChromeAttach-v\*\.zip/);
+  assert.equal(pkg.scripts['extension:protected:test'],'npm run extension:protected && node tests/protected_extension_contract.js');
+  assert.match(releaseContract,/release directory must contain exactly/);
+  assert.match(releaseContract,/BodyBrain\.exe/);
+  assert.match(releaseContract,/BodyChromeAttach-v/);
+  assert.match(releaseContract,/NOT_CONFIGURED/);
 });
 
 test('Guardian page overlay is passive, periodic, maps readiness, and exposes learning receive/forward health',()=>{
