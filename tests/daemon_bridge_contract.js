@@ -20,6 +20,20 @@ function chromeStub(){
   assert.equal(PROTOCOL_VERSION,5);const sent=[];const chromeApi=chromeStub();const gateway={attachedTabs:new Set(),async sendInput(tabId,method,params){sent.push({tabId,method,params});return {ok:true};},async detach(){return {detached:true};}};const bridge=new DaemonBridge(chromeApi,{gateway,WebSocketImpl:function(){}});
   const firstIdentity=await bridge.identity();assert.ok(firstIdentity.browserInstanceId.startsWith('browser-'));assert.ok(firstIdentity.extensionInstanceId);assert.notEqual(firstIdentity.browserInstanceId,firstIdentity.extensionInstanceId);
   const bridgeReloaded=new DaemonBridge(chromeApi,{gateway,WebSocketImpl:function(){}});const secondIdentity=await bridgeReloaded.identity();assert.equal(secondIdentity.browserInstanceId,firstIdentity.browserInstanceId);assert.equal(secondIdentity.extensionInstanceId,firstIdentity.extensionInstanceId);
+
+  const sockets=[];
+  class DeferredSocket{
+    constructor(url){this.url=url;this.readyState=0;this.sent=[];sockets.push(this);}
+    send(raw){this.sent.push(JSON.parse(raw));}
+    async open(){this.readyState=1;if(this.onopen)await this.onopen();}
+    close(){if(this.readyState===3)return;this.readyState=3;if(this.onclose)this.onclose({code:1000,reason:'test'});}
+  }
+  const raceBridge=new DaemonBridge(chromeStub(),{gateway,WebSocketImpl:DeferredSocket,url:'ws://127.0.0.1:43147'});raceBridge.started=true;await raceBridge.identity();
+  await Promise.all([raceBridge.connect(),raceBridge.connect(),raceBridge.connect()]);assert.equal(sockets.length,1,'CONNECTING socket must suppress duplicate WebSocket attempts');
+  await sockets[0].open();assert.equal(sockets[0].sent.filter(row=>row.type==='HELLO').length,1,'one socket must emit one HELLO');
+  await raceBridge.connect();assert.equal(sockets.length,1,'OPEN socket must suppress duplicate WebSocket attempts');
+  raceBridge.started=false;sockets[0].close();
+
   bridge.socket={readyState:1,send(raw){sent.push(JSON.parse(raw));}};
   assert.equal(siteKeyFromUrl('https://Sub.Example.com/a'),'sub.example.com');
   bridge.installTabListeners();

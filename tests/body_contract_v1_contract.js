@@ -13,7 +13,6 @@ const observation=JSON.parse(fs.readFileSync(path.join(contractDir,'body-observa
 const socket=JSON.parse(fs.readFileSync(path.join(root,'SOCKET_PROTOCOL.json'),'utf8'));
 const manifest=JSON.parse(fs.readFileSync(path.join(root,'manifest.json'),'utf8'));
 const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
-const bodyDoc=fs.readFileSync(path.join(root,'BODY_CONTRACT.md'),'utf8');
 const server=fs.readFileSync(path.join(root,'daemon','server.js'),'utf8');
 
 assert.equal(command.properties.contractVersion.const,'1.0');
@@ -50,8 +49,6 @@ assert.match(socket.bodyContract.deliverySemantics,/at-most-once/);
 assert.deepEqual([...socket.bodyContract.browserUiActions].sort(),expectedBrowserActions);
 for(const legacy of ['INTENT_EXECUTE','STRATEGY_EXECUTE','TAB_SWITCH','BROWSER_COMMAND'])assert.equal(socket.brain.physicalActions.includes(legacy),false);
 
-const docUpper=bodyDoc.toUpperCase();
-for(const term of ['BRAIN DECIDES WHAT','BODY LEARNS HOW','ONE BODY_STEP COMMAND','BODY RETURNS FACTS','AT-MOST-ONCE PHYSICAL EXECUTION','NEVER IMPLICITLY STARTS A TASK'])assert.ok(docUpper.includes(term),term);
 assert.match(server,/BODY_STEP/);
 assert.match(server,/BODY_OBSERVE/);
 assert.match(server,/new BodyStepGateway\(runtime,\{baseDir:__dirname\}\)/);

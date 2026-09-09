@@ -180,13 +180,14 @@ function tmp(name) {
     assert.equal(source.includes('8765'), false, `${file} must not hard-code port 8765`);
   }
   const server = fs.readFileSync(path.join(__dirname, '..', 'daemon', 'server.js'), 'utf8');
-  const launcher = fs.readFileSync(path.join(__dirname, '..', 'daemon.cmd'), 'utf8');
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
   const preload = fs.readFileSync(path.join(__dirname, '..', 'daemon', 'src', 'sticky_runtime_port_preload.js'), 'utf8');
   const build = fs.readFileSync(path.join(__dirname, '..', 'build.js'), 'utf8');
   assert.match(server, /port:0/);
   assert.match(server, /acquireRuntimeLock/);
   assert.doesNotMatch(server, /ensureAutomaticPairingWindow/);
-  assert.match(launcher, /sticky_runtime_port_preload\.js/);
+  assert.match(String(pkg.scripts?.daemon || ''), /sticky_runtime_port_preload\.js/);
+  assert.match(String(pkg.scripts?.daemon || ''), /guardian_bootstrap\.js/);
   assert.match(preload, /preferredRuntimePort/);
   assert.match(preload, /installStickyRuntimePort/);
   assert.match(preload, /BODY_RUNTIME_PORT/);

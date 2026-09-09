@@ -19,14 +19,21 @@ class ProtectionSupervisor{
   }
   _deepRequired(){return this.runtime.guardian?.policy?.deepFingerprintEnabled!==false;}
   _initialCheck(browser,controller,behavior,blocked){
-    if(!this.policy.enabled)return {complete:true,status:'DISABLED',continuousMonitoring:false,controllerComplete:true,deepComplete:true,reasons:[],checkedAt:null};
-    const deep=deepEvidence(browser),controllerComplete=controller?.available===true,deepComplete=!this._deepRequired()||deep?.available===true,reasons=[];
-    if(!controllerComplete)reasons.push(String(controller?.reason||'controller_scan_pending'));
+    if(!this.policy.enabled)return {complete:true,status:'DISABLED',continuousMonitoring:false,controllerComplete:true,controllerAvailable:true,controllerFailed:false,controllerReason:null,deepComplete:true,reasons:[],checkedAt:null};
+    const deep=deepEvidence(browser),controllerReason=String(controller?.reason||'controller_scan_pending'),controllerPending=controller?.available!==true&&controllerReason==='controller_scan_pending',controllerFailed=controller?.available!==true&&!controllerPending,controllerComplete=!controllerPending;
+    // EnvironmentGuardian is the single authority for environment/deep-fingerprint policy.
+    // Once it marks the Browser eligible, Protection must not independently hold READY
+    // forever because a compact deep evidence row is absent or represented differently.
+    const environmentComplete=browser?.environment?.eligible===true;
+    const deepComplete=!this._deepRequired()||deep?.available===true||environmentComplete;
+    const reasons=[];
+    if(controllerPending)reasons.push('controller_scan_pending');
+    else if(controllerFailed)reasons.push(controllerReason||'controller_probe_unavailable');
     if(!deepComplete)reasons.push('deep_fingerprint_pending');
     const complete=controllerComplete&&deepComplete;
-    const status=blocked?'BLOCKED':!complete?'PENDING':(controller?.review===true||behavior?.review===true?'REVIEW':'PASSED');
+    const status=blocked?'BLOCKED':controllerFailed?'FAILED':!complete?'PENDING':(controller?.review===true||behavior?.review===true?'REVIEW':'PASSED');
     const timestamps=[controller?.observedAt,browser?.environment?.observedAt].map(value=>Date.parse(value||'')).filter(Number.isFinite);
-    return {complete,status,continuousMonitoring:true,controllerComplete,deepComplete,reasons,checkedAt:complete&&timestamps.length?new Date(Math.max(...timestamps)).toISOString():null};
+    return {complete,status,continuousMonitoring:true,controllerComplete,controllerAvailable:controller?.available===true,controllerFailed,controllerReason:controllerFailed?controllerReason:null,deepComplete,reasons,checkedAt:complete&&timestamps.length?new Date(Math.max(...timestamps)).toISOString():null};
   }
   _decorateProbeResult(result,browserId){const protection=this.browserStatus(browserId),reasons=[...(Array.isArray(result?.reasons)?result.reasons:[]),...protection.reasons];const pending=result?.status==='PENDING'||(result?.probeDeferred===true&&result?.eligible!==true);return {...result,eligible:pending?false:result?.eligible===true&&!protection.blocked,status:pending?'PENDING':result?.eligible===true&&!protection.blocked?String(result?.status||'ELIGIBLE'):'INELIGIBLE',reasons:[...new Set(reasons)],protection};}
   _kickTransientProbe(browser){
@@ -105,7 +112,7 @@ class ProtectionSupervisor{
     if(browser.state==='QUARANTINED'&&String(browser.stateReason||'').startsWith('protection_')&&browser.environment?.eligible===true)return this.runtime.browsers.setState(id,'ACTIVE','protection_cleared');
     return this.runtime.browsers.public(browser);
   }
-  assertAssignable(browserInstanceId){const id=String(browserInstanceId||'').trim();if(!id)return;const decision=this.combined(id);if(this.policy.enabled&&!decision.initialCheck.complete)throw new Error(`browser_protection_check_pending:${id}:${decision.initialCheck.reasons.join(',')||'pending'}`);if(decision.blocked)throw new Error(`browser_protection_blocked:${id}:${decision.reasons.join(',')}`);}
+  assertAssignable(browserInstanceId){const id=String(browserInstanceId||'').trim();if(!id)return;const decision=this.combined(id);if(this.policy.enabled&&decision.initialCheck.controllerFailed===true)throw new Error(`browser_protection_check_failed:${id}:${decision.initialCheck.controllerReason||'controller_probe_unavailable'}`);if(this.policy.enabled&&!decision.initialCheck.complete)throw new Error(`browser_protection_check_pending:${id}:${decision.initialCheck.reasons.join(',')||'pending'}`);if(decision.blocked)throw new Error(`browser_protection_blocked:${id}:${decision.reasons.join(',')}`);}
   browserStatus(browserInstanceId){return this.combined(browserInstanceId);}
   readiness(browserInstanceId){
     const id=String(browserInstanceId||'').trim();let browser;try{browser=this.runtime.browsers.require(id);}catch{return {state:'BLOCKED',reason:'browser_not_found',browserState:'UNKNOWN',environment:'UNKNOWN',botCheck:'UNKNOWN'};}
@@ -113,6 +120,7 @@ class ProtectionSupervisor{
     if(!browser.online)return {state:'BLOCKED',reason:'browser_offline',browserState:browser.state,environment:browser.environment?.status||'UNKNOWN',botCheck:initial.status||'PENDING'};
     if(protection.blocked||['QUARANTINED','ERROR'].includes(browser.state))return {state:'BLOCKED',reason:protection.reasons[0]||browser.stateReason||'browser_blocked',browserState:browser.state,environment:browser.environment?.status||'UNKNOWN',botCheck:initial.status||'BLOCKED'};
     if(browser.environment?.eligible!==true)return {state:'CHECKING',reason:'environment_pending',browserState:browser.state,environment:browser.environment?.status||'PENDING',botCheck:initial.status||'PENDING'};
+    if(initial.controllerFailed===true)return {state:'BLOCKED',reason:'controller_probe_unavailable',controllerReason:initial.controllerReason||'controller_probe_unavailable',browserState:browser.state,environment:browser.environment?.status||'ELIGIBLE',botCheck:initial.status||'FAILED'};
     if(initial.complete!==true)return {state:'CHECKING',reason:'bot_check_pending',browserState:browser.state,environment:browser.environment?.status||'ELIGIBLE',botCheck:initial.status||'PENDING'};
     return {state:'READY',reason:null,browserState:browser.state,environment:browser.environment?.status||'ELIGIBLE',botCheck:initial.status||'PASSED'};
   }

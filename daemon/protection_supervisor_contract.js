@@ -99,13 +99,34 @@ test('initial bot check gates tasks while controller scan is pending and passes 
   assert.equal(runtime.tasks.create({browserInstanceId:'b1'}).ok,true);supervisor.stop();
 });
 
-test('initial bot check remains pending until Deep fingerprint evidence is available when Deep Guardian is enabled',()=>{
+test('completed controller probe failure blocks fail-closed instead of checking forever and recovers on retry',async()=>{
+  const runtime=fakeRuntime();let calls=0;
+  const failed={available:false,reason:'controller_probe_failed:ETIMEDOUT',driverProcesses:[],frameworkProcesses:[],inputAutomationProcesses:[],browserAutomationFlags:[],browserRemoteDebugFlags:[],suspectUdpEndpoints:[]};
+  const probe={probe:()=>{calls++;return Promise.resolve(calls===1?failed:compactProcessSnapshot({processes:[],udp:[]}));}};
+  const supervisor=new ProtectionSupervisor(runtime,{controllerProbe:probe,setIntervalImpl:()=>({unref(){}}),clearIntervalImpl:()=>{}}).start();
+  assert.equal(supervisor.readiness('b1').state,'CHECKING');
+  await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+  let check=supervisor.status().browsers.b1.initialCheck;
+  assert.equal(check.complete,true);assert.equal(check.status,'FAILED');assert.equal(check.controllerFailed,true);assert.equal(check.controllerAvailable,false);assert.match(check.controllerReason,/ETIMEDOUT/);
+  let readiness=supervisor.readiness('b1');
+  assert.equal(readiness.state,'BLOCKED');assert.equal(readiness.reason,'controller_probe_unavailable');assert.match(readiness.controllerReason,/ETIMEDOUT/);
+  assert.throws(()=>runtime.tasks.create({browserInstanceId:'b1'}),/browser_protection_check_failed/);
+  supervisor.scanLightAll();await supervisor.ensureControllerScan();
+  check=supervisor.status().browsers.b1.initialCheck;
+  assert.equal(check.status,'PASSED');assert.equal(check.controllerFailed,false);assert.equal(check.controllerAvailable,true);
+  readiness=supervisor.readiness('b1');assert.equal(readiness.state,'READY');
+  assert.equal(runtime.tasks.create({browserInstanceId:'b1'}).ok,true);supervisor.stop();
+});
+
+test('eligible Environment Guardian result satisfies the deep gate without a duplicate compact-evidence requirement',()=>{
   const runtime=fakeRuntime(),row=runtime.browsers.require('b1');row.environment.evidence=[];
   const supervisor=new ProtectionSupervisor(runtime,{controllerProbe:{probe:()=>compactProcessSnapshot({processes:[],udp:[]})},setIntervalImpl:()=>({unref(){}}),clearIntervalImpl:()=>{}}).start();
   const check=supervisor.status().browsers.b1.initialCheck;
-  assert.equal(check.complete,false);assert.equal(check.status,'PENDING');assert.equal(check.controllerComplete,true);assert.equal(check.deepComplete,false);assert.ok(check.reasons.includes('deep_fingerprint_pending'));
-  assert.equal(supervisor.readiness('b1').state,'CHECKING');
-  assert.throws(()=>runtime.tasks.create({browserInstanceId:'b1'}),/browser_protection_check_pending/);supervisor.stop();
+  assert.equal(row.environment.eligible,true);
+  assert.equal(check.complete,true);assert.equal(check.status,'PASSED');assert.equal(check.controllerComplete,true);assert.equal(check.deepComplete,true);
+  assert.equal(check.reasons.includes('deep_fingerprint_pending'),false);
+  assert.equal(supervisor.readiness('b1').state,'READY');
+  assert.equal(runtime.tasks.create({browserInstanceId:'b1'}).ok,true);supervisor.stop();
 });
 
 test('popup readiness stays checking while environment is not eligible',()=>{

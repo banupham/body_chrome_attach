@@ -17,33 +17,19 @@ jobs:
           node-version: '22'
       - name: Install dependencies
         run: npm install
-      - name: Verify
+      - name: Verify BODY, Desktop Host and Extension
         run: npm run verify
-      - name: Check Python runtime syntax
+      - name: Check production Python syntax
         run: >-
           python3 -m py_compile
           daemon/native/windows_input.py
-          desktop/__init__.py desktop/config.py desktop/body_client.py desktop/supervisor.py desktop/main.py
-          brain/__init__.py brain/contracts.py brain/store.py brain/data_factory.py brain/context_builder.py brain/director.py brain/feedback.py brain/runtime.py
-          tests/desktop_host_contract.py tests/desktop_runtime_smoke.py tests/brain_v1_runtime_contract.py
-          tests/brain_evidence_integrity_contract.py tests/brain_evidence_cross_runtime_contract.py
-      - name: Verify BodyBrain desktop contract
-        run: python3 tests/desktop_host_contract.py
-      - name: Verify Brain v1 data and Director contract
-        run: python3 tests/brain_v1_runtime_contract.py
-      - name: Verify Brain evidence integrity
-        run: python3 tests/brain_evidence_integrity_contract.py
-      - name: Verify Node EvidenceStore to Python Data Factory integrity
-        run: python3 tests/brain_evidence_cross_runtime_contract.py
-      - name: Smoke BodyBrain desktop runtime
+          desktop/__init__.py desktop/config.py desktop/paths.py desktop/host_logging.py desktop/health.py
+          desktop/worker_supervisor.py desktop/lifecycle.py desktop/autostart.py desktop/body_status_client.py desktop/supervisor.py desktop/tray_ui.py desktop/main.py
+          tools/build_bodybrain_release.py
+          tests/desktop_host_contract.py tests/desktop_host_foundation_contract.py tests/bodybrain_no_brain_contract.py
+          tests/desktop_runtime_smoke.py tests/bodybrain_exe_smoke.py tests/bodybrain_release_manifest_contract.py
+      - name: Smoke Desktop runtime without Chrome
         run: python3 tests/desktop_runtime_smoke.py
-      - name: Upload Chrome BODY extension package
-        uses: actions/upload-artifact@v4
-        with:
-          name: body-chrome-extension-${{ github.sha }}
-          path: artifacts/body-chrome-attach-v*.zip
-          if-no-files-found: error
-          retention-days: 14
 
   windows-native-input:
     runs-on: windows-latest
@@ -56,9 +42,47 @@ jobs:
           python-version: '3.12'
       - name: Validate Win32 INPUT ABI
         run: python daemon/native/windows_input.py selftest
-      - name: Verify BodyBrain desktop contract on Windows
-        run: python tests/desktop_host_contract.py
-      - name: Verify Brain v1 data and Director contract on Windows
-        run: python tests/brain_v1_runtime_contract.py
-      - name: Verify Brain evidence integrity on Windows
-        run: python tests/brain_evidence_integrity_contract.py
+      - name: Verify Desktop Host contracts on Windows
+        run: |
+          python tests/desktop_host_contract.py
+          python tests/desktop_host_foundation_contract.py
+          python tests/bodybrain_no_brain_contract.py
+
+  release-windows:
+    needs: [verify, windows-native-input]
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Node dependencies
+        run: npm install
+      - name: Build and verify protected Chrome BODY Extension
+        run: npm run extension:protected:test
+      - name: Verify production excludes Brain
+        run: python tests/bodybrain_no_brain_contract.py
+      - name: Install release builder
+        run: python -m pip install -r requirements-release.txt
+      - name: Build one-file BodyBrain.exe
+        run: python tools/build_bodybrain_release.py
+      - name: Smoke actual BodyBrain.exe twice
+        run: python tests/bodybrain_exe_smoke.py artifacts/BodyBrain.exe
+      - name: Verify exact three-file release
+        run: python tests/bodybrain_release_manifest_contract.py
+      - name: Upload clean BodyBrain Windows release
+        uses: actions/upload-artifact@v4
+        with:
+          name: bodybrain-windows-release-${{ github.sha }}
+          path: |
+            artifacts/BodyBrain.exe
+            artifacts/BodyChromeAttach-v*.zip
+            artifacts/bodybrain-release-v*.json
+          if-no-files-found: error
+          retention-days: 14

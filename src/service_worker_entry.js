@@ -6,19 +6,297 @@ const { VIRTUAL_CURSOR_SCOPE, MESSAGE_TYPES } = require('./virtual_cursor_protoc
 
 const gateway = new CdpInputGateway(chrome);
 const daemon = new DaemonBridge(chrome, { gateway, WebSocketImpl: WebSocket });
+let daemonIdentityPromise = null;
+let daemonIdentityLastError = null;
 const observedUserMotorByTab = new Map();
 const pendingPageContextByTab = new Map();
+const pendingUserMotorByTab = new Map();
+const contentRepairByTab = new Map();
+const observedDaemonSockets = new WeakSet();
 const MAX_OBSERVED_EVENTS_PER_TAB = 1500;
+const MAX_PENDING_USER_MOTOR_PER_TAB = 96;
 const PAGE_CONTEXT_RETRY_MS = 250;
 const PAGE_CONTEXT_RETRY_WINDOW_MS = 15000;
+const CONTENT_SCRIPT_FILE = 'virtual_cursor_content.js';
+const DAEMON_WAKE_ALARM = 'body-daemon-wake';
+const DAEMON_WAKE_PERIOD_MINUTES = 0.5;
 let pageContextRetryTimer = null;
 let pageContextRetryStartedAt = 0;
+let forwardedUserMotorCount = 0;
+let lastForwardedUserMotorAt = null;
+let lastUserMotorForwardError = null;
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+function extensionErrorText(error) {
+  return String(error?.message || error || 'extension_error').replace(/\s+/g, ' ').trim().slice(0, 180);
+}
+
+function ensureDaemonIdentity() {
+  if (daemon.browserInstanceId && daemon.extensionInstanceId) {
+    daemonIdentityLastError = null;
+    return Promise.resolve({
+      browserInstanceId: daemon.browserInstanceId,
+      extensionInstanceId: daemon.extensionInstanceId,
+      authToken: daemon.authToken || null
+    });
+  }
+  if (daemonIdentityPromise) return daemonIdentityPromise;
+  daemonIdentityPromise = Promise.resolve()
+    .then(() => daemon.identity())
+    .then(identity => {
+      daemonIdentityLastError = null;
+      return identity;
+    })
+    .catch(error => {
+      daemonIdentityLastError = extensionErrorText(error);
+      daemonIdentityPromise = null;
+      throw error;
+    });
+  return daemonIdentityPromise;
+}
+
+async function connectDaemon() {
+  await ensureDaemonIdentity();
+  const status = await daemon.connect();
+  observeDaemonSocket();
+  return status;
+}
+
+function webTab(tab) {
+  try {
+    const url = new URL(String(tab?.url || ''));
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
 
 async function activeTabId() {
   const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   const id = Number(tabs?.[0]?.id);
   if (!Number.isInteger(id)) throw new Error('active_tab_required');
   return id;
+}
+
+async function contentScriptReady(tabId) {
+  try {
+    const response = await chrome.tabs.sendMessage(Number(tabId), { action: 'body.virtualCursorPing' });
+    return response?.ok === true;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureContentScript(tabId, tabHint = null) {
+  const id = Number(tabId);
+  if (!Number.isInteger(id)) return { ready: false, injected: false, reason: 'invalid_tab_id' };
+  if (contentRepairByTab.has(id)) return contentRepairByTab.get(id);
+
+  const work = (async () => {
+    const tab = tabHint || await chrome.tabs.get(id).catch(() => null);
+    if (!webTab(tab)) return { ready: false, injected: false, reason: 'non_web_tab' };
+    if (await contentScriptReady(id)) return { ready: true, injected: false, reason: null };
+
+    await delay(80);
+    if (await contentScriptReady(id)) return { ready: true, injected: false, reason: null };
+    if (!chrome.scripting?.executeScript) return { ready: false, injected: false, reason: 'scripting_unavailable' };
+
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: id, allFrames: false },
+        files: [CONTENT_SCRIPT_FILE]
+      });
+    } catch (error) {
+      return { ready: false, injected: false, reason: String(error?.message || error) };
+    }
+
+    for (const waitMs of [30, 80, 160]) {
+      if (await contentScriptReady(id)) return { ready: true, injected: true, reason: null };
+      await delay(waitMs);
+    }
+    return { ready: false, injected: true, reason: 'content_script_ping_failed_after_injection' };
+  })().finally(() => contentRepairByTab.delete(id));
+
+  contentRepairByTab.set(id, work);
+  return work;
+}
+
+async function repairOpenWebTabs() {
+  const tabs = await chrome.tabs.query({});
+  const webTabs = tabs.filter(webTab);
+  const results = await Promise.allSettled(webTabs.map(tab => ensureContentScript(tab.id, tab)));
+  return {
+    webTabs: webTabs.length,
+    ready: results.filter(row => row.status === 'fulfilled' && row.value?.ready === true).length
+  };
+}
+
+async function focusedTab(windowId = null) {
+  const query = Number.isInteger(Number(windowId)) && Number(windowId) >= 0
+    ? { active: true, windowId: Number(windowId) }
+    : { active: true, lastFocusedWindow: true };
+  const tabs = await chrome.tabs.query(query);
+  return tabs?.[0] || null;
+}
+
+async function syncFocusedTabContext(windowId = null) {
+  const tab = await focusedTab(windowId);
+  if (!tab || !Number.isInteger(Number(tab.id))) return false;
+  if (webTab(tab)) await ensureContentScript(tab.id, tab).catch(() => {});
+  let urlScheme = '';
+  try { urlScheme = new URL(String(tab.url || '')).protocol; } catch {}
+  return daemon.send({
+    type: 'TAB_CONTEXT',
+    tabId: Number(tab.id),
+    context: {
+      siteKey: siteKeyFromUrl(tab.url),
+      navigationToken: navigationToken(tab.url),
+      navigationEpoch: Number(daemon.navigationEpochByTab.get(Number(tab.id)) || 0),
+      title: String(tab.title || ''),
+      windowId: Number.isInteger(Number(tab.windowId)) ? Number(tab.windowId) : null,
+      status: String(tab.status || ''),
+      urlScheme,
+      contextSource: 'chrome_window_focus',
+      active: true
+    }
+  });
+}
+
+function pendingUserMotorCount() {
+  let total = 0;
+  for (const rows of pendingUserMotorByTab.values()) total += rows.length;
+  return total;
+}
+
+function learningInputStatus() {
+  let events = 0;
+  let lastEventAt = null;
+  for (const rows of observedUserMotorByTab.values()) {
+    events += rows.length;
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const at = Number(rows[index]?.at || rows[index]?.event?.at || 0);
+      if (Number.isFinite(at) && at > 0) {
+        lastEventAt = Math.max(Number(lastEventAt || 0), at);
+        break;
+      }
+    }
+  }
+  return {
+    observedTabs: [...observedUserMotorByTab.keys()],
+    eventCount: events,
+    forwardedEventCount: forwardedUserMotorCount,
+    pendingEventCount: pendingUserMotorCount(),
+    lastEventAt,
+    lastForwardedAt: lastForwardedUserMotorAt,
+    lastForwardError: lastUserMotorForwardError,
+    pendingTabs: [...pendingUserMotorByTab.keys()]
+  };
+}
+
+function markUserMotorForwarded(payload) {
+  forwardedUserMotorCount += 1;
+  lastForwardedUserMotorAt = Number(payload?.at || payload?.event?.at || Date.now());
+  lastUserMotorForwardError = null;
+}
+
+function queueUserMotor(tabId, payload) {
+  const id = Number(tabId);
+  if (!Number.isInteger(id) || daemon.recordingEnabled !== true) return false;
+  const rows = pendingUserMotorByTab.get(id) || [];
+  const isMove = payload?.kind === 'pointer' && payload?.event?.type === 'mouseMoved';
+  const last = rows[rows.length - 1];
+  if (rows.length >= 60 && isMove && last?.kind === 'pointer' && last?.event?.type === 'mouseMoved') rows[rows.length - 1] = payload;
+  else rows.push(payload);
+  if (rows.length > MAX_PENDING_USER_MOTOR_PER_TAB) rows.splice(0, rows.length - MAX_PENDING_USER_MOTOR_PER_TAB);
+  pendingUserMotorByTab.set(id, rows);
+  return true;
+}
+
+async function flushPendingUserMotor() {
+  if (daemon.socket?.readyState !== 1) return false;
+  if (daemon.recordingEnabled !== true) {
+    pendingUserMotorByTab.clear();
+    return true;
+  }
+  for (const [tabId, rows] of [...pendingUserMotorByTab.entries()]) {
+    while (rows.length && daemon.socket?.readyState === 1) {
+      const payload = rows[0];
+      let sent = false;
+      try {
+        sent = await daemon.forwardUserMotor(tabId, payload);
+      } catch (error) {
+        lastUserMotorForwardError = String(error?.message || error);
+        sent = false;
+      }
+      if (!sent) {
+        if (daemon.socket?.readyState !== 1) return false;
+        break;
+      }
+      markUserMotorForwarded(payload);
+      rows.shift();
+    }
+    if (!rows.length) pendingUserMotorByTab.delete(tabId);
+  }
+  return pendingUserMotorByTab.size === 0;
+}
+
+async function forwardUserMotorReliable(tabId, payload) {
+  if (daemon.recordingEnabled !== true) return false;
+  if (daemon.socket?.readyState === 1) {
+    try {
+      const sent = await daemon.forwardUserMotor(tabId, payload);
+      if (sent) {
+        markUserMotorForwarded(payload);
+        return true;
+      }
+      lastUserMotorForwardError = 'recorder_send_returned_false';
+    } catch (error) {
+      lastUserMotorForwardError = String(error?.message || error);
+    }
+  }
+  queueUserMotor(tabId, payload);
+  await connectDaemon().catch(error => {
+    lastUserMotorForwardError = String(error?.message || error);
+    return null;
+  });
+  await flushPendingUserMotor();
+  return !pendingUserMotorByTab.has(Number(tabId));
+}
+
+function observeDaemonSocket(socket = daemon.socket) {
+  if (!socket || observedDaemonSockets.has(socket) || typeof socket.addEventListener !== 'function') return false;
+  observedDaemonSockets.add(socket);
+  socket.addEventListener('open', () => {
+    setTimeout(() => {
+      syncFocusedTabContext().catch(() => {});
+      flushPendingUserMotor().catch(() => {});
+      flushPendingPageContexts();
+    }, 0);
+  });
+  socket.addEventListener('error', event => {
+    lastUserMotorForwardError = `websocket_error:${String(event?.type || 'error')}`;
+    console.warn('Body daemon WebSocket error', {
+      type: String(event?.type || 'error'),
+      readyState: Number(socket.readyState)
+    });
+  });
+  socket.addEventListener('close', event => {
+    console.warn('Body daemon WebSocket closed', {
+      code: Number(event?.code || 0),
+      reason: String(event?.reason || ''),
+      wasClean: event?.wasClean === true
+    });
+  });
+  if (socket.readyState === 1) {
+    setTimeout(() => {
+      syncFocusedTabContext().catch(() => {});
+      flushPendingUserMotor().catch(() => {});
+    }, 0);
+  }
+  return true;
 }
 
 function rememberUserMotor(tabId, payload) {
@@ -77,7 +355,7 @@ function schedulePageContextFlush(delayMs = PAGE_CONTEXT_RETRY_MS) {
   pageContextRetryTimer = setTimeout(() => {
     pageContextRetryTimer = null;
     if (flushPendingPageContexts()) return;
-    daemon.connect().catch(() => {});
+    connectDaemon().catch(() => {});
     schedulePageContextFlush(PAGE_CONTEXT_RETRY_MS);
   }, Math.max(0, Number(delayMs) || 0));
 }
@@ -87,7 +365,7 @@ function pageContextFromContent(sender, message) {
   if (!packet) return false;
   pendingPageContextByTab.set(packet.tabId, packet);
   if (flushPendingPageContexts()) return true;
-  daemon.connect().catch(() => {});
+  connectDaemon().catch(() => {});
   schedulePageContextFlush(0);
   return false;
 }
@@ -107,25 +385,77 @@ function recentEvents(tabId, limit = 250) {
 }
 
 async function pairingStatus() {
-  const saved = await chrome.storage.local.get({ bodyDaemonAuthToken: null });
-  const connected = daemon.socket?.readyState === 1;
+  let identityReady = true;
+  let identityError = null;
+  try {
+    await ensureDaemonIdentity();
+  } catch (error) {
+    identityReady = false;
+    identityError = `identity:${extensionErrorText(error)}`;
+  }
+
+  let saved = { bodyDaemonAuthToken: null };
+  let storageError = null;
+  try {
+    saved = await chrome.storage.local.get({ bodyDaemonAuthToken: null });
+  } catch (error) {
+    storageError = `storage:${extensionErrorText(error)}`;
+  }
+
+  const errors = [identityError, storageError].filter(Boolean);
+  const connected = identityReady && daemon.socket?.readyState === 1;
   if (connected) daemon.send({ type: 'READINESS_POLL', ts: Date.now() });
+  const active = await focusedTab().catch(() => null);
+  const activeTabIdValue = Number.isInteger(Number(active?.id)) ? Number(active.id) : null;
+  const contentScript = activeTabIdValue === null
+    ? { ready: false, injected: false, reason: 'active_tab_unavailable' }
+    : await ensureContentScript(activeTabIdValue, active).catch(error => ({ ready: false, injected: false, reason: extensionErrorText(error) }));
   return {
     paired: Boolean(saved.bodyDaemonAuthToken),
     connected,
     browserInstanceId: daemon.browserInstanceId,
     extensionInstanceId: daemon.extensionInstanceId,
+    activeTabId: activeTabIdValue,
+    activeWindowId: Number.isInteger(Number(active?.windowId)) ? Number(active.windowId) : null,
+    contentScript,
+    learningInput: learningInputStatus(),
+    extensionHealth: {
+      state: errors.length ? 'ERROR' : 'READY',
+      reason: errors[0] || null,
+      identityReady,
+      storageReady: storageError === null,
+      lastIdentityError: daemonIdentityLastError
+    },
     readiness: daemon.readinessStatus,
     mode: 'automatic_local'
   };
 }
 
 async function resetLocalPairing() {
+  await ensureDaemonIdentity();
   await chrome.storage.local.remove('bodyDaemonAuthToken');
   daemon.authToken = null;
   daemon.readinessStatus = null;
   try { daemon.socket?.close(); } catch {}
   return { reset: true, paired: false, automaticReconnect: true };
+}
+
+async function ensureDaemonWakeAlarm() {
+  if (!chrome.alarms?.get || !chrome.alarms?.create) return false;
+  const current = await chrome.alarms.get(DAEMON_WAKE_ALARM);
+  if (!current) await chrome.alarms.create(DAEMON_WAKE_ALARM, { periodInMinutes: DAEMON_WAKE_PERIOD_MINUTES });
+  return true;
+}
+
+function wakeDaemonConnection() {
+  if (daemon.socket?.readyState === 1) {
+    daemon.send({ type: 'KEEPALIVE', ts: Date.now(), source: 'alarm' });
+    syncFocusedTabContext().catch(() => {});
+    flushPendingUserMotor().catch(() => {});
+    return true;
+  }
+  connectDaemon().catch(() => {});
+  return false;
 }
 
 function result(sendResponse, work) {
@@ -144,7 +474,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
     rememberUserMotor(tabId, message.payload);
-    daemon.forwardUserMotor(tabId, message.payload);
+    forwardUserMotorReliable(tabId, message.payload).catch(error => {
+      lastUserMotorForwardError = String(error?.message || error);
+      queueUserMotor(tabId, message.payload);
+    });
     return false;
   }
 
@@ -161,10 +494,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return result(sendResponse, resetLocalPairing);
   }
 
-  // Production runtime API is intentionally read-only. All actions go through the authenticated local daemon transport.
   if (message?.action === 'body.virtualCursorStatus') {
     return result(sendResponse, async () => {
       const tabId = Number.isInteger(Number(message.tabId)) ? Number(message.tabId) : await activeTabId();
+      await ensureContentScript(tabId).catch(() => {});
       return { tabId, gateway: gateway.status(), overlay: await cursorStatus(tabId), daemon: daemon.status() };
     });
   }
@@ -181,6 +514,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       daemon: daemon.status(),
       gateway: gateway.status(),
       observedTabs: [...observedUserMotorByTab.keys()],
+      learningInput: learningInputStatus(),
       pendingPageContextTabs: [...pendingPageContextByTab.keys()]
     }));
   }
@@ -188,17 +522,89 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
+if (chrome.alarms?.onAlarm) {
+  chrome.alarms.onAlarm.addListener(alarm => {
+    if (alarm?.name !== DAEMON_WAKE_ALARM) return;
+    wakeDaemonConnection();
+  });
+}
+
+chrome.tabs?.onActivated?.addListener(info => {
+  ensureContentScript(Number(info?.tabId)).catch(() => {});
+});
+
+chrome.tabs?.onUpdated?.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo?.status === 'complete' || (changeInfo?.url && tab?.status === 'complete')) ensureContentScript(Number(tabId), tab).catch(() => {});
+});
+
+chrome.tabs?.onRemoved?.addListener(tabId => {
+  const id = Number(tabId);
+  observedUserMotorByTab.delete(id);
+  pendingUserMotorByTab.delete(id);
+  pendingPageContextByTab.delete(id);
+  contentRepairByTab.delete(id);
+});
+
+chrome.windows?.onFocusChanged?.addListener(windowId => {
+  const id = Number(windowId);
+  if (!Number.isInteger(id) || id < 0) return;
+  syncFocusedTabContext(id).catch(() => {});
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  ensureDaemonIdentity()
+    .then(() => repairOpenWebTabs())
+    .catch(() => null)
+    .then(() => ensureDaemonWakeAlarm())
+    .then(() => wakeDaemonConnection())
+    .catch(() => {});
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  ensureDaemonIdentity()
+    .then(() => repairOpenWebTabs())
+    .catch(() => null)
+    .then(() => ensureDaemonWakeAlarm())
+    .then(() => wakeDaemonConnection())
+    .catch(() => {});
+});
+
 chrome.debugger.onDetach.addListener(debuggee => {
   const tabId = Number(debuggee?.tabId);
   if (Number.isInteger(tabId)) gateway.attachedTabs.delete(tabId);
 });
 
-daemon.start()
-  .then(status => {
-    flushPendingPageContexts();
-    schedulePageContextFlush(0);
-    console.log('Body Chrome Attach ready. Production actions are daemon-only.', status);
-  })
-  .catch(error => console.error('Body Chrome Attach startup error:', error));
+ensureDaemonWakeAlarm().catch(() => {});
 
-module.exports={pageContextPacket,pageContextFromContent,flushPendingPageContexts,schedulePageContextFlush};
+(async () => {
+  await ensureDaemonIdentity();
+  await repairOpenWebTabs().catch(() => null);
+  const status = await daemon.start();
+  observeDaemonSocket();
+  syncFocusedTabContext().catch(() => {});
+  flushPendingUserMotor().catch(() => {});
+  flushPendingPageContexts();
+  schedulePageContextFlush(0);
+  console.log('Body Chrome Attach ready. Production actions are daemon-only.', status);
+})().catch(error => console.error('Body Chrome Attach startup error:', error));
+
+module.exports={
+  pageContextPacket,
+  pageContextFromContent,
+  flushPendingPageContexts,
+  schedulePageContextFlush,
+  observeDaemonSocket,
+  webTab,
+  ensureContentScript,
+  repairOpenWebTabs,
+  focusedTab,
+  syncFocusedTabContext,
+  learningInputStatus,
+  pendingUserMotorCount,
+  queueUserMotor,
+  flushPendingUserMotor,
+  forwardUserMotorReliable,
+  ensureDaemonIdentity,
+  pairingStatus,
+  connectDaemon
+};

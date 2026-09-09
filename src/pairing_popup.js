@@ -9,6 +9,7 @@ const reasonText={
   protection_starting:'Đang khởi tạo kiểm tra.',
   environment_pending:'Đang kiểm tra môi trường.',
   bot_check_pending:'Đang kiểm tra bot/controller.',
+  controller_probe_unavailable:'Không xác minh được controller trên máy. Hệ thống sẽ tự kiểm tra lại.',
   browser_offline:'Browser chưa kết nối.',
   browser_not_found:'Không tìm thấy Browser Runtime.',
   EXTERNAL_CONTROLLER_CONFLICT:'Phát hiện trình điều khiển ngoài BODY.',
@@ -26,27 +27,55 @@ function detailFor(readiness){
   return reasonText[reason]||'Không đủ điều kiện hoạt động.';
 }
 
+function diagnosticText(state){
+  const browser=String(state?.browserInstanceId||'').trim();
+  const shortBrowser=browser?browser.slice(0,13):'chưa có';
+  const learning=state?.learningInput||{};
+  const observed=Math.max(0,Number(learning.eventCount)||0);
+  const forwarded=Math.max(0,Number(learning.forwardedEventCount)||0);
+  const pending=Math.max(0,Number(learning.pendingEventCount)||0);
+  const rawTab=state?.activeTabId;
+  const tab=rawTab!==null&&rawTab!==undefined&&Number.isInteger(Number(rawTab))?Number(rawTab):null;
+  const content=state?.contentScript?.ready===true?'CS:OK':`CS:${String(state?.contentScript?.reason||'WAIT').slice(0,22)}`;
+  return `Browser ${shortBrowser} · Nhận ${observed} · Gửi ${forwarded} · Chờ ${pending}${tab===null?'':` · Tab ${tab}`} · ${content}`;
+}
+
+function setHint(text,state){
+  hint.textContent=`${text} ${diagnosticText(state)}`;
+}
+
+function extensionErrorText(error){
+  const text=String(error?.message||error||'extension_unreachable').replace(/\s+/g,' ').trim();
+  return text.length>80?`${text.slice(0,77)}...`:text;
+}
+
 function render(state){
+  if(state?.extensionHealth?.state==='ERROR'){
+    reset.hidden=true;
+    setStatus('LỖI EXTENSION','blocked');
+    setHint(`Service worker lỗi: ${String(state.extensionHealth.reason||'không xác định')}.`,state);
+    return;
+  }
   if(!state?.connected){
     reset.hidden=!state?.paired;
     setStatus('BỊ CHẶN','blocked');
-    hint.textContent='Daemon chưa kết nối.';
+    setHint('Daemon chưa kết nối.',state);
     return;
   }
   reset.hidden=true;
   const readiness=state.readiness||null;
   if(readiness?.state==='READY'){
     setStatus('SẴN SÀNG','ready');
-    hint.textContent='Environment và bot check đã đạt.';
+    setHint('Environment và bot check đã đạt.',state);
     return;
   }
   if(readiness?.state==='BLOCKED'){
     setStatus('BỊ CHẶN','blocked');
-    hint.textContent=detailFor(readiness);
+    setHint(detailFor(readiness),state);
     return;
   }
   setStatus('ĐANG KIỂM TRA','checking');
-  hint.textContent=readiness?detailFor(readiness):'Đang lấy trạng thái từ Daemon.';
+  setHint(readiness?detailFor(readiness):'Đang lấy trạng thái từ Daemon.',state);
 }
 
 async function send(message){
@@ -62,8 +91,8 @@ async function refresh(){
     return state;
   }catch(error){
     reset.hidden=true;
-    setStatus('BỊ CHẶN','blocked');
-    hint.textContent='Không đọc được trạng thái Extension.';
+    setStatus('LỖI EXTENSION','blocked');
+    hint.textContent=`Service worker không phản hồi: ${extensionErrorText(error)}`;
     return null;
   }
 }
@@ -77,8 +106,8 @@ reset.addEventListener('click',async()=>{
     hint.textContent='Đang tự kết nối lại.';
     await refresh();
   }catch(error){
-    setStatus('BỊ CHẶN','blocked');
-    hint.textContent='Không thể đặt lại kết nối.';
+    setStatus('LỖI EXTENSION','blocked');
+    hint.textContent=`Không thể đặt lại kết nối: ${extensionErrorText(error)}`;
   }finally{
     reset.disabled=false;
   }
