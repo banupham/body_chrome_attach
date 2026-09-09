@@ -32,6 +32,23 @@ test('offline protection profile is intentionally strong and CSP-compatible', ()
   assert.equal(options.sourceMap, false);
 });
 
+test('content script uses reinjection-safe protection without losing obfuscation', () => {
+  const options = obfuscatorOptions('virtual_cursor_content.js');
+  assert.equal(options.compact, true);
+  assert.equal(options.controlFlowFlattening, false);
+  assert.equal(options.deadCodeInjection, false);
+  assert.equal(options.selfDefending, false);
+  assert.equal(options.numbersToExpressions, false);
+  assert.equal(options.stringArrayCallsTransform, false);
+  assert.equal(options.stringArrayWrappersChainedCalls, false);
+  assert.equal(options.transformObjectKeys, false);
+  assert.equal(options.splitStrings, true);
+  assert.equal(options.stringArray, true);
+  assert.deepEqual(options.stringArrayEncoding, ['base64']);
+  assert.equal(options.identifierNamesGenerator, 'hexadecimal');
+  assert.equal(options.target, 'browser-no-eval');
+});
+
 test('single protected ZIP contains only Chrome runtime files', () => {
   assert.ok(fs.existsSync(artifactZip), 'run npm run extension:protected first');
   const zip = fs.readFileSync(artifactZip);
