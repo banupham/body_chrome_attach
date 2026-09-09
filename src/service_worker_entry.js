@@ -6,7 +6,8 @@ const { VIRTUAL_CURSOR_SCOPE, MESSAGE_TYPES } = require('./virtual_cursor_protoc
 
 const gateway = new CdpInputGateway(chrome);
 const daemon = new DaemonBridge(chrome, { gateway, WebSocketImpl: WebSocket });
-const daemonIdentityReady = daemon.identity();
+let daemonIdentityPromise = null;
+let daemonIdentityLastError = null;
 const observedUserMotorByTab = new Map();
 const pendingPageContextByTab = new Map();
 const pendingUserMotorByTab = new Map();
@@ -29,8 +30,36 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 
+function extensionErrorText(error) {
+  return String(error?.message || error || 'extension_error').replace(/\s+/g, ' ').trim().slice(0, 180);
+}
+
+function ensureDaemonIdentity() {
+  if (daemon.browserInstanceId && daemon.extensionInstanceId) {
+    daemonIdentityLastError = null;
+    return Promise.resolve({
+      browserInstanceId: daemon.browserInstanceId,
+      extensionInstanceId: daemon.extensionInstanceId,
+      authToken: daemon.authToken || null
+    });
+  }
+  if (daemonIdentityPromise) return daemonIdentityPromise;
+  daemonIdentityPromise = Promise.resolve()
+    .then(() => daemon.identity())
+    .then(identity => {
+      daemonIdentityLastError = null;
+      return identity;
+    })
+    .catch(error => {
+      daemonIdentityLastError = extensionErrorText(error);
+      daemonIdentityPromise = null;
+      throw error;
+    });
+  return daemonIdentityPromise;
+}
+
 async function connectDaemon() {
-  await daemonIdentityReady;
+  await ensureDaemonIdentity();
   const status = await daemon.connect();
   observeDaemonSocket();
   return status;
@@ -356,15 +385,31 @@ function recentEvents(tabId, limit = 250) {
 }
 
 async function pairingStatus() {
-  await daemonIdentityReady;
-  const saved = await chrome.storage.local.get({ bodyDaemonAuthToken: null });
-  const connected = daemon.socket?.readyState === 1;
+  let identityReady = true;
+  let identityError = null;
+  try {
+    await ensureDaemonIdentity();
+  } catch (error) {
+    identityReady = false;
+    identityError = `identity:${extensionErrorText(error)}`;
+  }
+
+  let saved = { bodyDaemonAuthToken: null };
+  let storageError = null;
+  try {
+    saved = await chrome.storage.local.get({ bodyDaemonAuthToken: null });
+  } catch (error) {
+    storageError = `storage:${extensionErrorText(error)}`;
+  }
+
+  const errors = [identityError, storageError].filter(Boolean);
+  const connected = identityReady && daemon.socket?.readyState === 1;
   if (connected) daemon.send({ type: 'READINESS_POLL', ts: Date.now() });
   const active = await focusedTab().catch(() => null);
   const activeTabIdValue = Number.isInteger(Number(active?.id)) ? Number(active.id) : null;
   const contentScript = activeTabIdValue === null
     ? { ready: false, injected: false, reason: 'active_tab_unavailable' }
-    : await ensureContentScript(activeTabIdValue, active).catch(error => ({ ready: false, injected: false, reason: String(error?.message || error) }));
+    : await ensureContentScript(activeTabIdValue, active).catch(error => ({ ready: false, injected: false, reason: extensionErrorText(error) }));
   return {
     paired: Boolean(saved.bodyDaemonAuthToken),
     connected,
@@ -374,13 +419,20 @@ async function pairingStatus() {
     activeWindowId: Number.isInteger(Number(active?.windowId)) ? Number(active.windowId) : null,
     contentScript,
     learningInput: learningInputStatus(),
+    extensionHealth: {
+      state: errors.length ? 'ERROR' : 'READY',
+      reason: errors[0] || null,
+      identityReady,
+      storageReady: storageError === null,
+      lastIdentityError: daemonIdentityLastError
+    },
     readiness: daemon.readinessStatus,
     mode: 'automatic_local'
   };
 }
 
 async function resetLocalPairing() {
-  await daemonIdentityReady;
+  await ensureDaemonIdentity();
   await chrome.storage.local.remove('bodyDaemonAuthToken');
   daemon.authToken = null;
   daemon.readinessStatus = null;
@@ -500,7 +552,7 @@ chrome.windows?.onFocusChanged?.addListener(windowId => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  daemonIdentityReady
+  ensureDaemonIdentity()
     .then(() => repairOpenWebTabs())
     .catch(() => null)
     .then(() => ensureDaemonWakeAlarm())
@@ -509,7 +561,7 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 chrome.runtime.onInstalled.addListener(() => {
-  daemonIdentityReady
+  ensureDaemonIdentity()
     .then(() => repairOpenWebTabs())
     .catch(() => null)
     .then(() => ensureDaemonWakeAlarm())
@@ -525,7 +577,7 @@ chrome.debugger.onDetach.addListener(debuggee => {
 ensureDaemonWakeAlarm().catch(() => {});
 
 (async () => {
-  await daemonIdentityReady;
+  await ensureDaemonIdentity();
   await repairOpenWebTabs().catch(() => null);
   const status = await daemon.start();
   observeDaemonSocket();
@@ -552,5 +604,7 @@ module.exports={
   queueUserMotor,
   flushPendingUserMotor,
   forwardUserMotorReliable,
+  ensureDaemonIdentity,
+  pairingStatus,
   connectDaemon
 };
