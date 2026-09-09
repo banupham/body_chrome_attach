@@ -2,6 +2,7 @@
 
 const POLL_MS=1500;
 const ROOT_ID='__body_guardian_status_overlay__';
+const OWNER_KEY='__bodyGuardianStatusOverlayOwnerV1__';
 
 const REASONS={
   protection_starting:'Đang khởi tạo kiểm tra',
@@ -24,6 +25,7 @@ function learningSuffix(state){
 
 function displayState(state){
   const learning=learningSuffix(state);
+  if(state?.extensionHealth?.state==='ERROR')return {state:'ERROR',label:'LỖI EXTENSION',detail:`${String(state.extensionHealth.reason||'Service worker không phản hồi')} · ${learning}`};
   if(!state?.connected)return {state:'BLOCKED',label:'BỊ CHẶN',detail:`Daemon chưa kết nối · ${learning}`};
   const readiness=state.readiness||null;
   if(readiness?.state==='READY')return {state:'READY',label:'SẴN SÀNG',detail:`Environment + bot check đạt · ${learning}`};
@@ -33,7 +35,9 @@ function displayState(state){
 
 function installGuardianStatusOverlay({chromeApi=chrome,documentRef=document,setIntervalImpl=setInterval,clearIntervalImpl=clearInterval}={}){
   if(!chromeApi?.runtime||!documentRef)return {installed:false,uninstall(){}};
-  if(documentRef.getElementById?.(ROOT_ID))return {installed:true,reused:true,uninstall(){}};
+  const win=documentRef.defaultView||globalThis;
+  try{win?.[OWNER_KEY]?.uninstall?.();}catch{}
+  try{documentRef.getElementById?.(ROOT_ID)?.remove?.();}catch{}
 
   const host=documentRef.createElement('div');
   host.id=ROOT_ID;
@@ -51,8 +55,8 @@ function installGuardianStatusOverlay({chromeApi=chrome,documentRef=document,set
     .detail{grid-area:detail;font-size:8px;line-height:10px;color:rgba(203,213,225,.82);white-space:normal}
     div[data-state="READY"]{border-color:rgba(34,197,94,.28)}
     div[data-state="READY"] .dot{background:#22c55e;box-shadow:0 0 0 2px rgba(34,197,94,.10)}
-    div[data-state="BLOCKED"]{border-color:rgba(239,68,68,.32)}
-    div[data-state="BLOCKED"] .dot{background:#ef4444;box-shadow:0 0 0 2px rgba(239,68,68,.10)}
+    div[data-state="BLOCKED"],div[data-state="ERROR"]{border-color:rgba(239,68,68,.32)}
+    div[data-state="BLOCKED"] .dot,div[data-state="ERROR"] .dot{background:#ef4444;box-shadow:0 0 0 2px rgba(239,68,68,.10)}
   `;
   shadow.append(style,wrap);
   (documentRef.documentElement||documentRef.body)?.appendChild(host);
@@ -65,13 +69,22 @@ function installGuardianStatusOverlay({chromeApi=chrome,documentRef=document,set
     inflight=true;
     try{
       const response=await chromeApi.runtime.sendMessage({action:'body.pairingStatus'});
-      render(displayState(response?.ok?response.result:null));
-    }catch{render({state:'CHECKING',label:'ĐANG KIỂM TRA',detail:'Đang kết nối Extension'});}
+      if(!response?.ok)throw new Error(response?.error||'extension_status_failed');
+      render(displayState(response.result));
+    }catch{render({state:'ERROR',label:'LỖI EXTENSION',detail:'Service worker không phản hồi'});}
     finally{inflight=false;}
   }
+  const controller={installed:true,reused:false,refresh,status:()=>({state:wrap.dataset.state||'CHECKING'}),uninstall(){
+    if(stopped)return;
+    stopped=true;
+    if(timer)clearIntervalImpl(timer);
+    host.remove();
+    try{if(win?.[OWNER_KEY]===controller)delete win[OWNER_KEY];}catch{}
+  }};
+  try{if(win)win[OWNER_KEY]=controller;}catch{}
   refresh();
   timer=setIntervalImpl(refresh,POLL_MS);
-  return {installed:true,refresh,status:()=>({state:wrap.dataset.state||'CHECKING'}),uninstall(){stopped=true;if(timer)clearIntervalImpl(timer);host.remove();}};
+  return controller;
 }
 
-module.exports={POLL_MS,ROOT_ID,REASONS,learningSuffix,displayState,installGuardianStatusOverlay};
+module.exports={POLL_MS,ROOT_ID,OWNER_KEY,REASONS,learningSuffix,displayState,installGuardianStatusOverlay};
