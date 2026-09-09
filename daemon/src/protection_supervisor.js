@@ -20,7 +20,13 @@ class ProtectionSupervisor{
   _deepRequired(){return this.runtime.guardian?.policy?.deepFingerprintEnabled!==false;}
   _initialCheck(browser,controller,behavior,blocked){
     if(!this.policy.enabled)return {complete:true,status:'DISABLED',continuousMonitoring:false,controllerComplete:true,deepComplete:true,reasons:[],checkedAt:null};
-    const deep=deepEvidence(browser),controllerComplete=controller?.available===true,deepComplete=!this._deepRequired()||deep?.available===true,reasons=[];
+    const deep=deepEvidence(browser),controllerComplete=controller?.available===true;
+    // EnvironmentGuardian is the single authority for environment/deep-fingerprint policy.
+    // Once it marks the Browser eligible, Protection must not independently hold READY
+    // forever because a compact deep evidence row is absent or represented differently.
+    const environmentComplete=browser?.environment?.eligible===true;
+    const deepComplete=!this._deepRequired()||deep?.available===true||environmentComplete;
+    const reasons=[];
     if(!controllerComplete)reasons.push(String(controller?.reason||'controller_scan_pending'));
     if(!deepComplete)reasons.push('deep_fingerprint_pending');
     const complete=controllerComplete&&deepComplete;
