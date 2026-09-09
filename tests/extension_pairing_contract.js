@@ -15,7 +15,7 @@ test('manifest exposes status popup and only approved runtime/Guardian permissio
   for(const forbidden of ['cookies','history','webRequest','webRequestBlocking','nativeMessaging','management'])assert.equal(manifest.permissions.includes(forbidden),false,`unexpected privileged permission: ${forbidden}`);
 });
 
-test('popup shows compact readiness plus per-Browser learning diagnostics and contains no manual pairing input',()=>{
+test('popup shows compact readiness plus per-Browser learning transport diagnostics and contains no manual pairing input',()=>{
   const html=fs.readFileSync(path.join(root,'pairing.html'),'utf8');
   const popup=fs.readFileSync(path.join(root,'src','pairing_popup.js'),'utf8');
   const worker=fs.readFileSync(path.join(root,'src','service_worker_entry.js'),'utf8');
@@ -28,7 +28,10 @@ test('popup shows compact readiness plus per-Browser learning diagnostics and co
   assert.match(popup,/SẴN SÀNG/);
   assert.match(popup,/BỊ CHẶN/);
   assert.match(popup,/ĐANG KIỂM TRA/);
-  assert.match(popup,/Học: \$\{events\} sự kiện/);
+  assert.match(popup,/Nhận \$\{observed\}/);
+  assert.match(popup,/Gửi \$\{forwarded\}/);
+  assert.match(popup,/Chờ \$\{pending\}/);
+  assert.match(popup,/CS:OK/);
   assert.match(popup,/browserInstanceId/);
   assert.match(popup,/activeTabId/);
   assert.match(popup,/body\.pairingStatus/);
@@ -36,6 +39,10 @@ test('popup shows compact readiness plus per-Browser learning diagnostics and co
   assert.doesNotMatch(popup,/body\.pair['"]/);
   assert.match(worker,/READINESS_POLL/);
   assert.match(worker,/readiness:\s*daemon\.readinessStatus/);
+  assert.match(worker,/contentScript/);
+  assert.match(worker,/forwardedEventCount/);
+  assert.match(worker,/pendingEventCount/);
+  assert.match(worker,/lastForwardError/);
   assert.match(worker,/learningInput:\s*learningInputStatus\(\)/);
   assert.match(worker,/bodyDaemonAuthToken/);
   assert.match(worker,/storage\.local\.remove\('bodyDaemonAuthToken'\)/);
@@ -89,7 +96,7 @@ test('real Chrome release acceptance is fully manual, multi-Chrome aware, and tr
   assert.match(guide,/brain.*NOT_CONFIGURED/is);
 });
 
-test('Guardian page overlay is passive, periodic, and maps readiness to three compact states',()=>{
+test('Guardian page overlay is passive, periodic, maps readiness, and exposes learning receive/forward health',()=>{
   const source=fs.readFileSync(path.join(root,'src','guardian_status_overlay.js'),'utf8');
   const content=fs.readFileSync(path.join(root,'src','virtual_cursor_content.js'),'utf8');
   assert.equal(POLL_MS,1500);
@@ -97,8 +104,10 @@ test('Guardian page overlay is passive, periodic, and maps readiness to three co
   assert.deepEqual(displayState({connected:true,readiness:{state:'CHECKING',reason:'bot_check_pending'}}).state,'CHECKING');
   assert.deepEqual(displayState({connected:true,readiness:{state:'BLOCKED',reason:'BOT_BEHAVIOR_HIGH_CONFIDENCE'}}).state,'BLOCKED');
   assert.deepEqual(displayState({connected:false}).state,'BLOCKED');
+  assert.match(displayState({connected:true,readiness:{state:'READY'},learningInput:{eventCount:12,forwardedEventCount:11,pendingEventCount:1}}).detail,/Học 12\/11 · chờ 1/);
   assert.match(source,/pointerEvents:'none'/);
   assert.match(source,/body\.pairingStatus/);
+  assert.match(source,/learningSuffix/);
   assert.match(content,/installGuardianStatusOverlay/);
 });
 
