@@ -141,12 +141,14 @@ class DesktopHostContractTest(unittest.TestCase):
         self.assertIn('body=base / "body"', paths)
         self.assertNotIn('brain=base / "brain"', paths)
 
-    def test_windows_launcher_preserves_python_exit_code(self):
-        launcher = (ROOT / "bodybrain.cmd").read_text(encoding="utf-8").lower()
-        self.assertNotIn("if %errorlevel%", launcher)
-        self.assertIn("goto use_py", launcher)
-        self.assertIn("goto use_python", launcher)
-        self.assertGreaterEqual(launcher.count("exit /b %errorlevel%"), 2)
+    def test_production_entrypoint_is_one_file_exe_without_markdown_or_cmd_wrappers(self):
+        builder = (ROOT / "tools" / "build_bodybrain_release.py").read_text(encoding="utf-8")
+        self.assertEqual(list(ROOT.rglob("*.md")), [])
+        self.assertEqual(list(ROOT.rglob("*.cmd")), [])
+        self.assertIn('"--onefile"', builder)
+        self.assertIn('"--name","BodyBrain"', builder)
+        self.assertIn('str(ROOT / "desktop" / "main.py")', builder)
+        self.assertIn('executable=ARTIFACTS / "BodyBrain.exe"', builder)
 
     def test_packaged_autostart_runs_same_executable_in_background(self):
         command = autostart_command(Path("C:/Program Files/BodyBrain/BodyBrain.exe"))
