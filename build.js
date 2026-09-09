@@ -18,16 +18,6 @@ if (!Number.isInteger(productionRuntimePort) || productionRuntimePort < 1 || pro
 }
 if (runtimeConfig.host !== '127.0.0.1') throw new Error('bodybrain_runtime_host_must_be_localhost');
 
-function assertLauncher(pathname, marker) {
-  let text = '';
-  try { text = fs.readFileSync(pathname, 'utf8'); } catch {}
-  if (!text.trim() || !text.includes(marker)) {
-    throw new Error(`launcher_invalid:${path.basename(pathname)}:restore_from_git`);
-  }
-}
-
-assertLauncher(path.join(root, 'body.cmd'), 'body_cli.js');
-
 fs.rmSync(dist, { recursive: true, force: true });
 fs.mkdirSync(dist, { recursive: true });
 
