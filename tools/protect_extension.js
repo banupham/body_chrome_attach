@@ -14,6 +14,7 @@ const packageJson = require('../package.json');
 
 const RUNTIME_FILES = EXPECTED_ENTRIES;
 const JS_FILES = Object.freeze(RUNTIME_FILES.filter(name => name.endsWith('.js')));
+const RUNTIME_SAFE_JS = new Set(['service_worker.js']);
 const REINJECTION_SAFE_JS = new Set(['virtual_cursor_content.js']);
 const OUTPUT_NAME = `BodyChromeAttach-v${packageJson.version}.zip`;
 
@@ -29,40 +30,48 @@ function deterministicSeed() {
   return digest.readUInt32LE(0);
 }
 
+function protectionProfile(fileName) {
+  const name = String(fileName || '');
+  if (RUNTIME_SAFE_JS.has(name)) return 'runtime-safe';
+  if (REINJECTION_SAFE_JS.has(name)) return 'reinjection-safe';
+  return 'strong';
+}
+
 function obfuscatorOptions(fileName) {
-  const reinjectionSafe = REINJECTION_SAFE_JS.has(String(fileName));
+  const profile = protectionProfile(fileName);
+  const structuralSafe = profile !== 'strong';
   return {
     compact: true,
-    controlFlowFlattening: !reinjectionSafe,
-    controlFlowFlatteningThreshold: reinjectionSafe ? 0 : 0.75,
-    deadCodeInjection: !reinjectionSafe,
-    deadCodeInjectionThreshold: reinjectionSafe ? 0 : 0.2,
+    controlFlowFlattening: !structuralSafe,
+    controlFlowFlatteningThreshold: structuralSafe ? 0 : 0.75,
+    deadCodeInjection: !structuralSafe,
+    deadCodeInjectionThreshold: structuralSafe ? 0 : 0.2,
     debugProtection: false,
     disableConsoleOutput: false,
     identifierNamesGenerator: 'hexadecimal',
     identifiersPrefix: `_body_${path.basename(fileName, '.js').replace(/[^a-z0-9_]/gi, '_')}_`,
     log: false,
-    numbersToExpressions: !reinjectionSafe,
+    numbersToExpressions: !structuralSafe,
     renameGlobals: false,
-    selfDefending: !reinjectionSafe,
-    simplify: true,
+    selfDefending: !structuralSafe,
+    simplify: !structuralSafe,
     sourceMap: false,
     splitStrings: true,
     splitStringsChunkLength: 6,
     stringArray: true,
-    stringArrayCallsTransform: !reinjectionSafe,
-    stringArrayCallsTransformThreshold: reinjectionSafe ? 0 : 0.75,
+    stringArrayCallsTransform: !structuralSafe,
+    stringArrayCallsTransformThreshold: structuralSafe ? 0 : 0.75,
     stringArrayEncoding: ['base64'],
     stringArrayIndexesType: ['hexadecimal-number'],
-    stringArrayRotate: true,
+    stringArrayRotate: !structuralSafe,
     stringArrayShuffle: true,
-    stringArrayWrappersChainedCalls: !reinjectionSafe,
-    stringArrayWrappersCount: reinjectionSafe ? 1 : 2,
-    stringArrayWrappersParametersMaxCount: reinjectionSafe ? 2 : 4,
+    stringArrayWrappersChainedCalls: !structuralSafe,
+    stringArrayWrappersCount: structuralSafe ? 1 : 2,
+    stringArrayWrappersParametersMaxCount: structuralSafe ? 2 : 4,
     stringArrayWrappersType: 'function',
     stringArrayThreshold: 1,
     target: 'browser-no-eval',
-    transformObjectKeys: !reinjectionSafe,
+    transformObjectKeys: !structuralSafe,
     unicodeEscapeSequence: false,
     seed: deterministicSeed()
   };
@@ -81,7 +90,7 @@ function protectJavaScript(name) {
     entry: { name, data: Buffer.from(protectedSource, 'utf8') },
     metadata: {
       file: name,
-      profile: REINJECTION_SAFE_JS.has(name) ? 'reinjection-safe' : 'strong',
+      profile: protectionProfile(name),
       sourceSha256: sha256(Buffer.from(source)),
       protectedSha256: sha256(Buffer.from(protectedSource)),
       sourceBytes: Buffer.byteLength(source),
@@ -157,9 +166,11 @@ if (require.main === module) {
 module.exports = {
   RUNTIME_FILES,
   JS_FILES,
+  RUNTIME_SAFE_JS,
   REINJECTION_SAFE_JS,
   OUTPUT_NAME,
   deterministicSeed,
+  protectionProfile,
   obfuscatorOptions,
   buildProtectedExtension
 };
