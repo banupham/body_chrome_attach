@@ -42,7 +42,18 @@ function setHint(text,state){
   hint.textContent=`${text} ${diagnosticText(state)}`;
 }
 
+function extensionErrorText(error){
+  const text=String(error?.message||error||'extension_unreachable').replace(/\s+/g,' ').trim();
+  return text.length>80?`${text.slice(0,77)}...`:text;
+}
+
 function render(state){
+  if(state?.extensionHealth?.state==='ERROR'){
+    reset.hidden=true;
+    setStatus('LỖI EXTENSION','blocked');
+    setHint(`Service worker lỗi: ${String(state.extensionHealth.reason||'không xác định')}.`,state);
+    return;
+  }
   if(!state?.connected){
     reset.hidden=!state?.paired;
     setStatus('BỊ CHẶN','blocked');
@@ -78,8 +89,8 @@ async function refresh(){
     return state;
   }catch(error){
     reset.hidden=true;
-    setStatus('BỊ CHẶN','blocked');
-    hint.textContent='Không đọc được trạng thái Extension.';
+    setStatus('LỖI EXTENSION','blocked');
+    hint.textContent=`Service worker không phản hồi: ${extensionErrorText(error)}`;
     return null;
   }
 }
@@ -93,8 +104,8 @@ reset.addEventListener('click',async()=>{
     hint.textContent='Đang tự kết nối lại.';
     await refresh();
   }catch(error){
-    setStatus('BỊ CHẶN','blocked');
-    hint.textContent='Không thể đặt lại kết nối.';
+    setStatus('LỖI EXTENSION','blocked');
+    hint.textContent=`Không thể đặt lại kết nối: ${extensionErrorText(error)}`;
   }finally{
     reset.disabled=false;
   }
