@@ -14,12 +14,21 @@ const REASONS={
   CONTROLLER_BEHAVIOR_CORRELATED:'Phát hiện controller + hành vi tự động'
 };
 
+function learningSuffix(state){
+  const learning=state?.learningInput||{};
+  const observed=Math.max(0,Number(learning.eventCount)||0);
+  const forwarded=Math.max(0,Number(learning.forwardedEventCount)||0);
+  const pending=Math.max(0,Number(learning.pendingEventCount)||0);
+  return `Học ${observed}/${forwarded}${pending?` · chờ ${pending}`:''}`;
+}
+
 function displayState(state){
-  if(!state?.connected)return {state:'BLOCKED',label:'BỊ CHẶN',detail:'Daemon chưa kết nối'};
+  const learning=learningSuffix(state);
+  if(!state?.connected)return {state:'BLOCKED',label:'BỊ CHẶN',detail:`Daemon chưa kết nối · ${learning}`};
   const readiness=state.readiness||null;
-  if(readiness?.state==='READY')return {state:'READY',label:'SẴN SÀNG',detail:'Environment + bot check đạt'};
-  if(readiness?.state==='BLOCKED')return {state:'BLOCKED',label:'BỊ CHẶN',detail:REASONS[String(readiness.reason||'')]||'Không đủ điều kiện hoạt động'};
-  return {state:'CHECKING',label:'ĐANG KIỂM TRA',detail:REASONS[String(readiness?.reason||'')]||'Đang lấy trạng thái Guardian'};
+  if(readiness?.state==='READY')return {state:'READY',label:'SẴN SÀNG',detail:`Environment + bot check đạt · ${learning}`};
+  if(readiness?.state==='BLOCKED')return {state:'BLOCKED',label:'BỊ CHẶN',detail:`${REASONS[String(readiness.reason||'')]||'Không đủ điều kiện hoạt động'} · ${learning}`};
+  return {state:'CHECKING',label:'ĐANG KIỂM TRA',detail:`${REASONS[String(readiness?.reason||'')]||'Đang lấy trạng thái Guardian'} · ${learning}`};
 }
 
 function installGuardianStatusOverlay({chromeApi=chrome,documentRef=document,setIntervalImpl=setInterval,clearIntervalImpl=clearInterval}={}){
@@ -36,7 +45,7 @@ function installGuardianStatusOverlay({chromeApi=chrome,documentRef=document,set
   const style=documentRef.createElement('style');
   style.textContent=`
     :host{all:initial}
-    div{box-sizing:border-box;display:grid;grid-template-columns:7px auto;grid-template-areas:"dot label" ". detail";column-gap:5px;row-gap:1px;min-width:118px;max-width:165px;padding:5px 7px;border:1px solid rgba(255,255,255,.12);border-radius:7px;background:rgba(17,24,39,.30);box-shadow:0 3px 9px rgba(0,0,0,.14);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:rgba(249,250,251,.94);backdrop-filter:blur(3px)}
+    div{box-sizing:border-box;display:grid;grid-template-columns:7px auto;grid-template-areas:"dot label" ". detail";column-gap:5px;row-gap:1px;min-width:132px;max-width:190px;padding:5px 7px;border:1px solid rgba(255,255,255,.12);border-radius:7px;background:rgba(17,24,39,.30);box-shadow:0 3px 9px rgba(0,0,0,.14);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:rgba(249,250,251,.94);backdrop-filter:blur(3px)}
     .dot{grid-area:dot;width:6px;height:6px;margin-top:3px;border-radius:999px;background:#f59e0b;box-shadow:0 0 0 2px rgba(245,158,11,.10)}
     .label{grid-area:label;font-size:10px;font-weight:800;line-height:12px;letter-spacing:.025em;white-space:nowrap}
     .detail{grid-area:detail;font-size:8px;line-height:10px;color:rgba(203,213,225,.82);white-space:normal}
@@ -65,4 +74,4 @@ function installGuardianStatusOverlay({chromeApi=chrome,documentRef=document,set
   return {installed:true,refresh,status:()=>({state:wrap.dataset.state||'CHECKING'}),uninstall(){stopped=true;if(timer)clearIntervalImpl(timer);host.remove();}};
 }
 
-module.exports={POLL_MS,ROOT_ID,REASONS,displayState,installGuardianStatusOverlay};
+module.exports={POLL_MS,ROOT_ID,REASONS,learningSuffix,displayState,installGuardianStatusOverlay};
