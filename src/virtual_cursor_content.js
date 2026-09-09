@@ -5,10 +5,15 @@ const { installInputTrustAudit } = require('./input_trust_audit');
 const { installGuardianStatusOverlay } = require('./guardian_status_overlay');
 const { youtubeSemanticObservation } = require('./youtube_semantic_observer');
 
+const CONTENT_OWNER_KEY='__bodyChromeAttachContentOwnerV1__';
+const contentWindow=document.defaultView||window;
+try{contentWindow?.[CONTENT_OWNER_KEY]?.uninstall?.();}catch{}
+
 let overlay = installVirtualCursorOverlay({ chromeApi: chrome, documentRef: document });
 const inputTrustAudit = installInputTrustAudit({ chromeApi: chrome, documentRef: document });
 const guardianStatusOverlay = installGuardianStatusOverlay({ chromeApi: chrome, documentRef: document });
 let enabled = true;
+let stopped = false;
 
 function describeTarget(el) {
   const node = el?.nodeType === 1 ? el : null;
@@ -58,20 +63,20 @@ function pageContext(){
 }
 
 function emitPageContext(){
+  if(stopped)return;
   try{
     const pending=chrome.runtime.sendMessage({action:'body.pageContext',context:pageContext()});
     pending?.catch?.(()=>{});
   }catch{}
 }
 
-emitPageContext();
-window.addEventListener('pageshow',emitPageContext,{passive:true});
-window.addEventListener('popstate',emitPageContext,{passive:true});
-window.addEventListener('hashchange',emitPageContext,{passive:true});
-document.addEventListener('readystatechange',emitPageContext,{passive:true});
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')emitPageContext();},{passive:true});
+function onPageShow(){emitPageContext();}
+function onPopState(){emitPageContext();}
+function onHashChange(){emitPageContext();}
+function onReadyState(){emitPageContext();}
+function onVisibilityChange(){if(document.visibilityState==='visible')emitPageContext();}
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+function messageListener(message, _sender, sendResponse) {
   if (message?.action === 'body.virtualCursorSet') {const next=message.enabled!==false;if(next&&!enabled)overlay=installVirtualCursorOverlay({chromeApi:chrome,documentRef:document});if(!next&&enabled)overlay.uninstall();enabled=next;sendResponse({ok:true,result:{enabled,...(enabled?overlay.status():{installed:false,visible:false}),inputTrustAudit:inputTrustAudit.status(),guardianStatusOverlay:guardianStatusOverlay.status?.()||null}});return false;}
   if (message?.action === 'body.targetContextAt') {const x=Number(message.x),y=Number(message.y),target=Number.isFinite(x)&&Number.isFinite(y)?document.elementFromPoint(x,y):document.activeElement;sendResponse({ok:true,result:describeTarget(target)});return false;}
   if (message?.action === 'body.pageObservation') {sendResponse({ok:true,result:pageObservation()});return false;}
@@ -79,6 +84,34 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.action === 'body.semanticObservation') {sendResponse({ok:true,result:semanticObservation()});return false;}
   if (message?.action !== 'body.virtualCursorPing') return false;
   sendResponse({ok:true,result:{enabled,...(enabled?overlay.status():{installed:false,visible:false}),inputTrustAudit:inputTrustAudit.status(),guardianStatusOverlay:guardianStatusOverlay.status?.()||null}});return false;
-});
+}
 
-module.exports={describeTarget,pageObservation,environmentObservation,semanticObservation,pageContext,emitPageContext};
+emitPageContext();
+window.addEventListener('pageshow',onPageShow,{passive:true});
+window.addEventListener('popstate',onPopState,{passive:true});
+window.addEventListener('hashchange',onHashChange,{passive:true});
+document.addEventListener('readystatechange',onReadyState,{passive:true});
+document.addEventListener('visibilitychange',onVisibilityChange,{passive:true});
+chrome.runtime.onMessage.addListener(messageListener);
+
+const owner={
+  installed:true,
+  uninstall(){
+    if(stopped)return;
+    stopped=true;
+    window.removeEventListener('pageshow',onPageShow);
+    window.removeEventListener('popstate',onPopState);
+    window.removeEventListener('hashchange',onHashChange);
+    document.removeEventListener('readystatechange',onReadyState);
+    document.removeEventListener('visibilitychange',onVisibilityChange);
+    chrome.runtime.onMessage.removeListener?.(messageListener);
+    try{overlay?.uninstall?.();}catch{}
+    try{inputTrustAudit?.uninstall?.();}catch{}
+    try{guardianStatusOverlay?.uninstall?.();}catch{}
+    enabled=false;
+    try{if(contentWindow?.[CONTENT_OWNER_KEY]===owner)delete contentWindow[CONTENT_OWNER_KEY];}catch{}
+  }
+};
+try{if(contentWindow)contentWindow[CONTENT_OWNER_KEY]=owner;}catch{}
+
+module.exports={CONTENT_OWNER_KEY,describeTarget,pageObservation,environmentObservation,semanticObservation,pageContext,emitPageContext};
