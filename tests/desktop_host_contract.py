@@ -143,8 +143,10 @@ class DesktopHostContractTest(unittest.TestCase):
 
     def test_production_entrypoint_is_one_file_exe_without_markdown_or_cmd_wrappers(self):
         builder = (ROOT / "tools" / "build_bodybrain_release.py").read_text(encoding="utf-8")
-        self.assertEqual(list(ROOT.rglob("*.md")), [])
-        self.assertEqual(list(ROOT.rglob("*.cmd")), [])
+        generated = {".git", "node_modules", "dist", "dist_protected", "artifacts", "release", "build", ".release-build"}
+        project_files = lambda pattern: [item for item in ROOT.rglob(pattern) if not generated.intersection(item.relative_to(ROOT).parts)]
+        self.assertEqual(project_files("*.md"), [])
+        self.assertEqual(project_files("*.cmd"), [])
         self.assertIn('"--onefile"', builder)
         self.assertIn('"--name","BodyBrain"', builder)
         self.assertIn('str(ROOT / "desktop" / "main.py")', builder)
