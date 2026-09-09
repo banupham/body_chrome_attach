@@ -21,6 +21,9 @@ const DAEMON_WAKE_ALARM = 'body-daemon-wake';
 const DAEMON_WAKE_PERIOD_MINUTES = 0.5;
 let pageContextRetryTimer = null;
 let pageContextRetryStartedAt = 0;
+let forwardedUserMotorCount = 0;
+let lastForwardedUserMotorAt = null;
+let lastUserMotorForwardError = null;
 
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
@@ -68,10 +71,6 @@ async function ensureContentScript(tabId, tabHint = null) {
     if (!webTab(tab)) return { ready: false, injected: false, reason: 'non_web_tab' };
     if (await contentScriptReady(id)) return { ready: true, injected: false, reason: null };
 
-    // A freshly loaded/unpacked Extension does not retroactively inject its
-    // manifest content script into tabs that were already open. Give Chrome's
-    // normal document_start injection a short chance to finish, then repair the
-    // tab from the packaged local file. This is per-profile and per-tab.
     await delay(80);
     if (await contentScriptReady(id)) return { ready: true, injected: false, reason: null };
     if (!chrome.scripting?.executeScript) return { ready: false, injected: false, reason: 'scripting_unavailable' };
@@ -137,6 +136,12 @@ async function syncFocusedTabContext(windowId = null) {
   });
 }
 
+function pendingUserMotorCount() {
+  let total = 0;
+  for (const rows of pendingUserMotorByTab.values()) total += rows.length;
+  return total;
+}
+
 function learningInputStatus() {
   let events = 0;
   let lastEventAt = null;
@@ -153,9 +158,19 @@ function learningInputStatus() {
   return {
     observedTabs: [...observedUserMotorByTab.keys()],
     eventCount: events,
+    forwardedEventCount: forwardedUserMotorCount,
+    pendingEventCount: pendingUserMotorCount(),
     lastEventAt,
+    lastForwardedAt: lastForwardedUserMotorAt,
+    lastForwardError: lastUserMotorForwardError,
     pendingTabs: [...pendingUserMotorByTab.keys()]
   };
+}
+
+function markUserMotorForwarded(payload) {
+  forwardedUserMotorCount += 1;
+  lastForwardedUserMotorAt = Number(payload?.at || payload?.event?.at || Date.now());
+  lastUserMotorForwardError = null;
 }
 
 function queueUserMotor(tabId, payload) {
@@ -180,8 +195,18 @@ async function flushPendingUserMotor() {
   for (const [tabId, rows] of [...pendingUserMotorByTab.entries()]) {
     while (rows.length && daemon.socket?.readyState === 1) {
       const payload = rows[0];
-      const sent = await daemon.forwardUserMotor(tabId, payload).catch(() => false);
-      if (!sent && daemon.socket?.readyState !== 1) return false;
+      let sent = false;
+      try {
+        sent = await daemon.forwardUserMotor(tabId, payload);
+      } catch (error) {
+        lastUserMotorForwardError = String(error?.message || error);
+        sent = false;
+      }
+      if (!sent) {
+        if (daemon.socket?.readyState !== 1) return false;
+        break;
+      }
+      markUserMotorForwarded(payload);
       rows.shift();
     }
     if (!rows.length) pendingUserMotorByTab.delete(tabId);
@@ -190,21 +215,32 @@ async function flushPendingUserMotor() {
 }
 
 async function forwardUserMotorReliable(tabId, payload) {
+  if (daemon.recordingEnabled !== true) return false;
   if (daemon.socket?.readyState === 1) {
-    const sent = await daemon.forwardUserMotor(tabId, payload).catch(() => false);
-    if (sent || daemon.recordingEnabled !== true || daemon.socket?.readyState === 1) return sent;
+    try {
+      const sent = await daemon.forwardUserMotor(tabId, payload);
+      if (sent) {
+        markUserMotorForwarded(payload);
+        return true;
+      }
+      lastUserMotorForwardError = 'recorder_send_returned_false';
+    } catch (error) {
+      lastUserMotorForwardError = String(error?.message || error);
+    }
   }
   queueUserMotor(tabId, payload);
-  await connectDaemon().catch(() => null);
-  return flushPendingUserMotor();
+  await connectDaemon().catch(error => {
+    lastUserMotorForwardError = String(error?.message || error);
+    return null;
+  });
+  await flushPendingUserMotor();
+  return !pendingUserMotorByTab.has(Number(tabId));
 }
 
 function observeDaemonSocket(socket = daemon.socket) {
   if (!socket || observedDaemonSockets.has(socket) || typeof socket.addEventListener !== 'function') return false;
   observedDaemonSockets.add(socket);
   socket.addEventListener('open', () => {
-    // DaemonBridge sends HELLO from its own onopen handler. Run on the next turn
-    // so focused-tab state and queued Human motor events are scoped after HELLO.
     setTimeout(() => {
       syncFocusedTabContext().catch(() => {});
       flushPendingUserMotor().catch(() => {});
@@ -212,6 +248,7 @@ function observeDaemonSocket(socket = daemon.socket) {
     }, 0);
   });
   socket.addEventListener('error', event => {
+    lastUserMotorForwardError = `websocket_error:${String(event?.type || 'error')}`;
     console.warn('Body daemon WebSocket error', {
       type: String(event?.type || 'error'),
       readyState: Number(socket.readyState)
@@ -324,13 +361,18 @@ async function pairingStatus() {
   const connected = daemon.socket?.readyState === 1;
   if (connected) daemon.send({ type: 'READINESS_POLL', ts: Date.now() });
   const active = await focusedTab().catch(() => null);
+  const activeTabIdValue = Number.isInteger(Number(active?.id)) ? Number(active.id) : null;
+  const contentScript = activeTabIdValue === null
+    ? { ready: false, injected: false, reason: 'active_tab_unavailable' }
+    : await ensureContentScript(activeTabIdValue, active).catch(error => ({ ready: false, injected: false, reason: String(error?.message || error) }));
   return {
     paired: Boolean(saved.bodyDaemonAuthToken),
     connected,
     browserInstanceId: daemon.browserInstanceId,
     extensionInstanceId: daemon.extensionInstanceId,
-    activeTabId: Number.isInteger(Number(active?.id)) ? Number(active.id) : null,
+    activeTabId: activeTabIdValue,
     activeWindowId: Number.isInteger(Number(active?.windowId)) ? Number(active.windowId) : null,
+    contentScript,
     learningInput: learningInputStatus(),
     readiness: daemon.readinessStatus,
     mode: 'automatic_local'
@@ -380,14 +422,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
     rememberUserMotor(tabId, message.payload);
-    if (daemon.socket?.readyState === 1) {
-      daemon.forwardUserMotor(tabId, message.payload).catch(() => {
-        queueUserMotor(tabId, message.payload);
-        connectDaemon().catch(() => {});
-      });
-      return false;
-    }
-    return result(sendResponse, async () => ({ forwarded: await forwardUserMotorReliable(tabId, message.payload) }));
+    forwardUserMotorReliable(tabId, message.payload).catch(error => {
+      lastUserMotorForwardError = String(error?.message || error);
+      queueUserMotor(tabId, message.payload);
+    });
+    return false;
   }
 
   if (message?.action === 'body.pageContext') {
@@ -403,7 +442,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return result(sendResponse, resetLocalPairing);
   }
 
-  // Production runtime API is intentionally read-only. All actions go through the authenticated local daemon transport.
   if (message?.action === 'body.virtualCursorStatus') {
     return result(sendResponse, async () => {
       const tabId = Number.isInteger(Number(message.tabId)) ? Number(message.tabId) : await activeTabId();
@@ -510,6 +548,7 @@ module.exports={
   focusedTab,
   syncFocusedTabContext,
   learningInputStatus,
+  pendingUserMotorCount,
   queueUserMotor,
   flushPendingUserMotor,
   forwardUserMotorReliable,
