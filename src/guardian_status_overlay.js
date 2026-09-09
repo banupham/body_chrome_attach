@@ -8,6 +8,7 @@ const REASONS={
   protection_starting:'Đang khởi tạo kiểm tra',
   environment_pending:'Đang kiểm tra môi trường',
   bot_check_pending:'Đang kiểm tra bot/controller',
+  controller_probe_unavailable:'Không xác minh được controller; sẽ tự kiểm tra lại',
   browser_offline:'Daemon/Browser chưa kết nối',
   browser_not_found:'Không tìm thấy Browser Runtime',
   EXTERNAL_CONTROLLER_CONFLICT:'Phát hiện controller bên ngoài BODY',
