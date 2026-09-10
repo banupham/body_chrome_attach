@@ -146,7 +146,7 @@ class LocalWebSocket:
 
 
 class BodyStatusClient:
-    """Read-only Desktop Host control-plane client; it cannot request physical actions."""
+    """Read-only Desktop Host control-plane client; it never owns Brain control."""
 
     def __init__(self, config: RuntimeConfig, token: str, controller_id: str = "bodybrain-desktop-status"):
         self.config = config
@@ -164,14 +164,13 @@ class BodyStatusClient:
 
     def connect(self) -> dict[str, Any]:
         self.transport.connect()
-        # Protocol v7 currently names the authenticated local controller role `brain`.
-        # This production client exposes status/readiness only; no Brain logic is shipped.
-        self.transport.send_text(json.dumps({"type":"HELLO","role":"brain","protocolVersion":self.config.control_protocol_version,"controllerId":self.controller_id,"token":self.token}, separators=(",", ":")))
+        self.transport.send_text(json.dumps({"type":"HELLO","role":"status_client","protocolVersion":self.config.control_protocol_version,"controllerId":self.controller_id,"token":self.token}, separators=(",", ":")))
         while True:
             message = self._recv_json()
             kind = message.get("type")
             if kind == "AUTH_ERROR": raise BodyStatusClientError(f"controller_auth_failed:{message.get('error', 'unknown')}")
             if kind != "HELLO_ACK": continue
+            if str(message.get("role") or "") != "status_client": raise BodyStatusClientError("status_client_role_mismatch")
             if int(message.get("protocolVersion", -1)) != self.config.control_protocol_version: raise BodyStatusClientError("control_protocol_version_mismatch")
             if str(message.get("bodyContractVersion", "")) != self.config.body_contract_version: raise BodyStatusClientError("body_contract_version_mismatch")
             self.connected = True; return message
@@ -184,7 +183,7 @@ class BodyStatusClient:
         while True:
             message = self._recv_json()
             if message.get("requestId") != request_id: continue
-            if message.get("type") == "BRAIN_ERROR" or message.get("ok") is False: raise BodyStatusClientError(str(message.get("error") or "body_status_failed"))
+            if message.get("type") == "STATUS_ERROR" or message.get("ok") is False: raise BodyStatusClientError(str(message.get("error") or "body_status_failed"))
             return dict(message.get("result") or {})
 
     @staticmethod
