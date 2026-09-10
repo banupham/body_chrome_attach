@@ -113,16 +113,16 @@ test('release path is protected offline ZIP only and contains no legacy CRX mate
 test('release acceptance is code-enforced without Markdown or automated real-Chrome E2E',()=>{
   const workflow=fs.readFileSync(path.join(root,'.github','workflows','verify.yml'),'utf8');
   const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
-  const releaseContract=fs.readFileSync(path.join(root,'tests','bodybrain_release_manifest_contract.py'),'utf8');
+  const releaseContract=fs.readFileSync(path.join(root,'tests','body_release_manifest_contract.py'),'utf8');
   assert.doesNotMatch(workflow,/body_chrome_real_e2e\.js|puppeteer/i);
   assert.match(workflow,/Build and verify protected Chrome BODY Extension/);
-  assert.match(workflow,/Build one-file BodyBrain\.exe/);
+  assert.match(workflow,/Build one-file BODY\.exe/);
   assert.match(workflow,/Verify exact three-file release/);
-  assert.match(workflow,/artifacts\/BodyBrain\.exe/);
+  assert.match(workflow,/artifacts\/BODY\.exe/);
   assert.match(workflow,/artifacts\/BodyChromeAttach-v\*\.zip/);
   assert.equal(pkg.scripts['extension:protected:test'],'npm run extension:protected && node tests/protected_extension_contract.js');
   assert.match(releaseContract,/release directory must contain exactly/);
-  assert.match(releaseContract,/BodyBrain\.exe/);
+  assert.match(releaseContract,/BODY\.exe/);
   assert.match(releaseContract,/BodyChromeAttach-v/);
   assert.match(releaseContract,/NOT_CONFIGURED/);
 });

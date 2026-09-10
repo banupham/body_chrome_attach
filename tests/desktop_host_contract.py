@@ -141,19 +141,19 @@ class DesktopHostContractTest(unittest.TestCase):
         self.assertIn('body=base / "body"', paths)
         self.assertNotIn('brain=base / "brain"', paths)
 
-    def test_production_entrypoint_is_one_file_exe_without_markdown_or_cmd_wrappers(self):
-        builder = (ROOT / "tools" / "build_bodybrain_release.py").read_text(encoding="utf-8")
+    def test_production_entrypoint_is_one_file_body_exe_without_markdown_or_cmd_wrappers(self):
+        builder = (ROOT / "tools" / "build_body_release.py").read_text(encoding="utf-8")
         generated = {".git", "node_modules", "dist", "dist_protected", "artifacts", "release", "build", ".release-build"}
         project_files = lambda pattern: [item for item in ROOT.rglob(pattern) if not generated.intersection(item.relative_to(ROOT).parts)]
         self.assertEqual(project_files("*.md"), [])
         self.assertEqual(project_files("*.cmd"), [])
         self.assertIn('"--onefile"', builder)
-        self.assertIn('"--name","BodyBrain"', builder)
+        self.assertIn('"--name", "BODY"', builder)
         self.assertIn('str(ROOT / "desktop" / "main.py")', builder)
-        self.assertIn('executable=ARTIFACTS / "BodyBrain.exe"', builder)
+        self.assertIn('ARTIFACTS / "BODY.exe"', builder)
 
     def test_packaged_autostart_runs_same_executable_in_background(self):
-        command = autostart_command(Path("C:/Program Files/BodyBrain/BodyBrain.exe"))
+        command = autostart_command(Path("C:/Program Files/BODY/BODY.exe"))
         self.assertTrue(command.startswith('"'))
         self.assertTrue(command.endswith('" --background'))
         main = (ROOT / "desktop" / "main.py").read_text(encoding="utf-8")
@@ -161,11 +161,11 @@ class DesktopHostContractTest(unittest.TestCase):
         self.assertIn("--install-autostart", main)
         self.assertIn("--remove-autostart", main)
 
-    def test_bodybrain_release_is_windowed_but_diagnostic_output_is_restored(self):
-        builder = (ROOT / "tools" / "build_bodybrain_release.py").read_text(encoding="utf-8")
+    def test_body_release_is_windowed_but_diagnostic_output_is_restored(self):
+        builder = (ROOT / "tools" / "build_body_release.py").read_text(encoding="utf-8")
         main = (ROOT / "desktop" / "main.py").read_text(encoding="utf-8")
-        helper_section = builder[builder.index("def build_native_helper"):builder.index("def build_bodybrain")]
-        body_section = builder[builder.index("def build_bodybrain"):builder.index("def write_release_manifest")]
+        helper_section = builder[builder.index("def build_native_helper"):builder.index("def build_body")]
+        body_section = builder[builder.index("def build_body"):builder.index("def write_release_manifest")]
         self.assertIn('"--console"', helper_section)
         self.assertIn('"--windowed"', body_section)
         self.assertNotIn('"--console"', body_section)
@@ -177,7 +177,8 @@ class DesktopHostContractTest(unittest.TestCase):
         main = (ROOT / "desktop" / "main.py").read_text(encoding="utf-8")
         self.assertIn("Shell_NotifyIconW(NIM_ADD", tray)
         self.assertIn("WM_RBUTTONUP", tray)
-        self.assertIn('"Quit BodyBrain"', tray)
+        self.assertIn('"Quit BODY"', tray)
+        self.assertNotIn('"Quit BodyBrain"', tray)
         self.assertIn("ES_READONLY", tray)
         self.assertIn("SPI_GETWORKAREA", tray)
         self.assertIn("WS_EX_TOPMOST", tray)
@@ -207,7 +208,7 @@ class DesktopHostContractTest(unittest.TestCase):
             tray = None
             with patch.object(tray_module, "shell32", ShellStub()):
                 try:
-                    tray = tray_module.BodyBrainTray(log_path, on_quit=lambda: quit_calls.append("quit"))
+                    tray = tray_module.BodyTray(log_path, on_quit=lambda: quit_calls.append("quit"))
                     tray.start()
                     self.assertIsNotNone(tray._thread)
                     self.assertTrue(tray._thread.is_alive())

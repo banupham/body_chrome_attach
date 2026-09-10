@@ -7,7 +7,8 @@ from pathlib import Path
 
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-RUN_VALUE = "BodyBrain"
+RUN_VALUE = "BODY"
+LEGACY_RUN_VALUE = "BodyBrain"
 
 
 class AutostartError(RuntimeError):
@@ -27,14 +28,26 @@ def _require_windows_packaged() -> None:
         raise AutostartError("autostart_requires_packaged_executable")
 
 
+def _delete_value(key, name: str) -> bool:
+    import winreg
+
+    try:
+        winreg.DeleteValue(key, name)
+        return True
+    except FileNotFoundError:
+        return False
+
+
 def install_autostart() -> dict[str, object]:
     _require_windows_packaged()
     import winreg
 
     command = autostart_command(sys.executable)
+    legacy_removed = False
     with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
         winreg.SetValueEx(key, RUN_VALUE, 0, winreg.REG_SZ, command)
-    return {"installed": True, "command": command}
+        legacy_removed = _delete_value(key, LEGACY_RUN_VALUE)
+    return {"installed": True, "command": command, "legacyRemoved": legacy_removed}
 
 
 def remove_autostart() -> dict[str, object]:
@@ -42,13 +55,14 @@ def remove_autostart() -> dict[str, object]:
     import winreg
 
     removed = False
+    legacy_removed = False
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
-            winreg.DeleteValue(key, RUN_VALUE)
-            removed = True
+            removed = _delete_value(key, RUN_VALUE)
+            legacy_removed = _delete_value(key, LEGACY_RUN_VALUE)
     except FileNotFoundError:
         pass
-    return {"installed": False, "removed": removed}
+    return {"installed": False, "removed": removed, "legacyRemoved": legacy_removed}
 
 
 def autostart_status() -> dict[str, object]:
@@ -57,18 +71,21 @@ def autostart_status() -> dict[str, object]:
 
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_QUERY_VALUE) as key:
-            command, _kind = winreg.QueryValueEx(key, RUN_VALUE)
-            return {"installed": True, "command": str(command)}
+            try:
+                command, _kind = winreg.QueryValueEx(key, RUN_VALUE)
+                return {"installed": True, "command": str(command), "legacy": False}
+            except FileNotFoundError:
+                try:
+                    command, _kind = winreg.QueryValueEx(key, LEGACY_RUN_VALUE)
+                    return {"installed": True, "command": str(command), "legacy": True}
+                except FileNotFoundError:
+                    return {"installed": False, "command": None, "legacy": False}
     except FileNotFoundError:
-        return {"installed": False, "command": None}
+        return {"installed": False, "command": None, "legacy": False}
 
 
 def hide_console_window() -> bool:
-    """Hide the console for background startup while retaining one console EXE.
-
-    A console build is kept so `--check` and CI can capture diagnostics. Normal
-    packaged background operation hides the console immediately on Windows.
-    """
+    """Hide the console for background startup while retaining CLI diagnostics."""
     if os.name != "nt":
         return False
     try:

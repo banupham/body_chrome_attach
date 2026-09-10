@@ -15,7 +15,7 @@ def main() -> int:
     lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     if not lines: raise AssertionError(f"desktop smoke produced no status; stderr={result.stderr!r}")
     payload = json.loads(lines[-1])
-    if payload.get("product") != "BodyBrain" or payload.get("desktop") != "RUNNING" or payload.get("bodyRuntime") != "CONNECTED": raise AssertionError(f"unexpected desktop status: {payload}")
+    if payload.get("product") != "BODY" or payload.get("desktop") != "RUNNING" or payload.get("bodyRuntime") != "CONNECTED": raise AssertionError(f"unexpected desktop status: {payload}")
     if payload.get("brain") != "NOT_CONFIGURED": raise AssertionError(f"Brain must be absent from production: {payload}")
     health = payload.get("health") or {}
     if (health.get("brain") or {}).get("state") != "NOT_CONFIGURED": raise AssertionError(f"health must show Brain NOT_CONFIGURED: {health}")

@@ -128,7 +128,6 @@ if os.name == "nt":
             ("dwStateMask", wintypes.DWORD),
             ("szInfo", wintypes.WCHAR * 256),
             ("uTimeoutOrVersion", wintypes.UINT),
-            ("szInfoTitle", wintypes.WCHAR * 64),
             ("dwInfoFlags", wintypes.DWORD),
             ("guidItem", GUID),
             ("hBalloonIcon", HICON),
@@ -256,7 +255,7 @@ if os.name == "nt":
         return int(raw or 0)
 
 
-class BodyBrainTray:
+class BodyTray:
     """Native Windows tray + read-only daemon log viewer.
 
     The log window's close button only hides the window. Normal application
@@ -268,7 +267,7 @@ class BodyBrainTray:
         log_path: Path | str,
         on_quit: Callable[[], None],
         *,
-        title: str = "BodyBrain - Daemon Logs (read-only)",
+        title: str = "BODY - Daemon Logs (read-only)",
         max_log_bytes: int = 256 * 1024,
         max_log_lines: int = 500,
     ):
@@ -293,7 +292,7 @@ class BodyBrainTray:
         self._icon = None
         self._instance = None
         self._taskbar_created = 0
-        self._class_name = f"BodyBrainTrayWindow_{os.getpid()}_{id(self)}"
+        self._class_name = f"BODYTrayWindow_{os.getpid()}_{id(self)}"
 
     @staticmethod
     def supported() -> bool:
@@ -304,7 +303,7 @@ class BodyBrainTray:
             raise TrayUiError("windows_tray_ui_unavailable")
         if self._thread and self._thread.is_alive():
             return
-        self._thread = threading.Thread(target=self._run, name="BodyBrainTrayUI", daemon=False)
+        self._thread = threading.Thread(target=self._run, name="BODYTrayUI", daemon=False)
         self._thread.start()
         if not self._started.wait(5.0):
             raise TrayUiError("windows_tray_ui_start_timeout")
@@ -343,7 +342,7 @@ class BodyBrainTray:
     def _read_log_tail(self) -> str:
         path = self.log_path
         if not path.exists():
-            return "[BodyBrain] Waiting for daemon log..."
+            return "[BODY] Waiting for daemon log..."
         try:
             with path.open("rb") as handle:
                 handle.seek(0, 2)
@@ -355,15 +354,15 @@ class BodyBrainTray:
             lines = text.splitlines()
             if start > 0 and lines:
                 lines = lines[1:]
-            return "\r\n".join(lines[-self.max_log_lines:]) or "[BodyBrain] Daemon log is empty."
+            return "\r\n".join(lines[-self.max_log_lines:]) or "[BODY] Daemon log is empty."
         except OSError as exc:
-            return f"[BodyBrain] Unable to read daemon log: {type(exc).__name__}"
+            return f"[BODY] Unable to read daemon log: {type(exc).__name__}"
 
     def _display_text(self) -> str:
         with self._notice_lock:
             notice = self._notice
         log_text = self._read_log_tail()
-        return f"[BodyBrain] {notice}\r\n\r\n{log_text}" if notice else log_text
+        return f"[BODY] {notice}\r\n\r\n{log_text}" if notice else log_text
 
     if os.name == "nt":
         def _set_stage(self, stage: str) -> None:
@@ -478,7 +477,7 @@ class BodyBrainTray:
                 self._nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP
                 self._nid.uCallbackMessage = WM_TRAY
                 self._nid.hIcon = self._icon
-                self._nid.szTip = "BodyBrain - right-click for menu"
+                self._nid.szTip = "BODY - right-click for menu"
                 self._taskbar_created = int(user32.RegisterWindowMessageW("TaskbarCreated") or 0)
 
                 self._set_stage("tray_add")
@@ -585,7 +584,7 @@ class BodyBrainTray:
                 user32.AppendMenuW(menu, MF_STRING, MENU_SHOW, "Show daemon logs")
                 user32.AppendMenuW(menu, MF_STRING, MENU_HIDE, "Hide daemon logs")
                 user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
-                user32.AppendMenuW(menu, MF_STRING, MENU_QUIT, "Quit BodyBrain")
+                user32.AppendMenuW(menu, MF_STRING, MENU_QUIT, "Quit BODY")
                 point = wintypes.POINT()
                 user32.GetCursorPos(ctypes.byref(point))
                 user32.SetForegroundWindow(self._hwnd)
@@ -632,7 +631,7 @@ class BodyBrainTray:
                 self._resize_edit()
                 return 0
             elif message == WM_CLOSE:
-                # Closing the log box only hides it; it never terminates BodyBrain.
+                # Closing the log box only hides it; it never terminates BODY.
                 self._hide_logs()
                 return 0
             elif message == WM_UI_SHOW:
