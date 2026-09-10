@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 import unittest
 from pathlib import Path
@@ -66,11 +65,14 @@ class DesktopStatusClientContractTest(unittest.TestCase):
         brain_end = server.index(status_branch, brain_start)
         self.assertIn("controller.attachBrain", server[brain_start:brain_end])
 
-    def test_debug_cli_defaults_to_bodybrain_production_runtime_on_windows(self):
+    def test_debug_cli_preserves_legacy_body_data_root_for_learned_model_continuity(self):
         cli = (ROOT / "body_cli.js").read_text(encoding="utf-8")
         self.assertIn("BODY_RUNTIME_DATA_DIR", cli)
         self.assertIn("LOCALAPPDATA", cli)
+        # This historical directory name is data compatibility only; the
+        # production executable and user-facing product are now named BODY.
         self.assertIn("'BodyBrain','body'", cli)
+        self.assertNotIn("BodyBrain.exe", cli)
         self.assertNotIn("daemon.cmd", cli)
 
 
