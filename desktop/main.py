@@ -16,7 +16,7 @@ from desktop.body_status_client import BodyStatusClient, BodyStatusClientError
 from desktop.config import load_runtime_config
 from desktop.health import HealthModel
 from desktop.supervisor import BodyRuntimeSupervisor, SupervisorError
-from desktop.tray_ui import BodyTray, TrayUiError
+from desktop.tray_ui import BodyBrainTray, TrayUiError
 
 
 class StopRequested:
@@ -32,7 +32,7 @@ def _request_stop(reason: str) -> None:
 def _restore_windows_cli_streams() -> None:
     """Restore stdout/stderr for a frozen GUI-subsystem diagnostic invocation.
 
-    PyInstaller windowed mode intentionally gives normal BODY launches no
+    PyInstaller windowed mode intentionally gives normal BodyBrain launches no
     console. For --check and maintenance commands we reuse inherited pipe/console
     handles when present, or attach to the parent CMD/PowerShell console.
     """
@@ -92,7 +92,7 @@ def _install_signal_handlers(*, tray_mode: bool) -> None:
     def stop(_signum, _frame):
         _request_stop("process_signal")
 
-    # A normal Windows BODY session is tray-owned. Ctrl+C must not become a
+    # A normal Windows BodyBrain session is tray-owned. Ctrl+C must not become a
     # competing user-facing Quit path; system termination signals are still
     # honored so Windows can shut the process down.
     if tray_mode and hasattr(signal, "SIGINT"):
@@ -116,10 +116,10 @@ def _print(payload, as_json: bool = False) -> None:
 
 
 def parser() -> argparse.ArgumentParser:
-    value = argparse.ArgumentParser(description="BODY production host: Guardian + BODY Core + Chrome BODY Extension")
+    value = argparse.ArgumentParser(description="BodyBrain production host: Guardian + BODY Core + Chrome BODY Extension")
     mode = value.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true", help="start BODY, report readiness, then exit")
-    mode.add_argument("--install-autostart", action="store_true", help="start BODY in the background at Windows sign-in")
+    mode.add_argument("--install-autostart", action="store_true", help="start BodyBrain in the background at Windows sign-in")
     mode.add_argument("--remove-autostart", action="store_true", help="remove the per-user Windows autostart entry")
     mode.add_argument("--autostart-status", action="store_true", help="report the per-user Windows autostart state")
     value.add_argument("--background", action="store_true", help="hide the console and run the tray-owned readiness monitor")
@@ -130,11 +130,11 @@ def parser() -> argparse.ArgumentParser:
 
 def _handle_autostart(args: argparse.Namespace) -> int | None:
     try:
-        if args.install_autostart: _print({"product":"BODY","autostart":install_autostart()}, args.json); return 0
-        if args.remove_autostart: _print({"product":"BODY","autostart":remove_autostart()}, args.json); return 0
-        if args.autostart_status: _print({"product":"BODY","autostart":autostart_status()}, args.json); return 0
+        if args.install_autostart: _print({"product":"BodyBrain","autostart":install_autostart()}, args.json); return 0
+        if args.remove_autostart: _print({"product":"BodyBrain","autostart":remove_autostart()}, args.json); return 0
+        if args.autostart_status: _print({"product":"BodyBrain","autostart":autostart_status()}, args.json); return 0
     except AutostartError as exc:
-        _print({"product":"BODY","state":"ERROR","error":str(exc)}, args.json); return 1
+        _print({"product":"BodyBrain","state":"ERROR","error":str(exc)}, args.json); return 1
     return None
 
 
@@ -168,11 +168,11 @@ def _apply_readiness(health: HealthModel, readiness: dict) -> None:
 
 
 def _status(health: HealthModel, hello: dict, readiness: dict) -> dict:
-    return {"product":"BODY","desktop":"RUNNING","bodyRuntime":"CONNECTED","brain":"NOT_CONFIGURED","bodyContractVersion":hello.get("bodyContractVersion"),"controlProtocolVersion":hello.get("protocolVersion"),"guardianReadiness":readiness,"health":health.snapshot()}
+    return {"product":"BodyBrain","desktop":"RUNNING","bodyRuntime":"CONNECTED","brain":"NOT_CONFIGURED","bodyContractVersion":hello.get("bodyContractVersion"),"controlProtocolVersion":hello.get("protocolVersion"),"guardianReadiness":readiness,"health":health.snapshot()}
 
 
-def _hold_error_for_tray(tray: BodyTray, message: str) -> None:
-    tray.set_notice(f"ERROR: {message} - right-click the tray icon and choose Quit BODY to stop.")
+def _hold_error_for_tray(tray: BodyBrainTray, message: str) -> None:
+    tray.set_notice(f"ERROR: {message} - right-click the tray icon and choose Quit BodyBrain to stop.")
     tray.show()
     while not StopRequested.value:
         time.sleep(0.2)
@@ -202,12 +202,12 @@ def run(argv: list[str] | None = None) -> int:
     health.set_subsystem("guardian", "WAITING", "runtime_starting")
     supervisor = BodyRuntimeSupervisor(config)
     client: BodyStatusClient | None = None
-    tray: BodyTray | None = None
+    tray: BodyBrainTray | None = None
     tray_started = False
 
     try:
         if tray_mode:
-            tray = BodyTray(
+            tray = BodyBrainTray(
                 supervisor.paths["logs"] / "body-runtime.log",
                 on_quit=lambda: _request_stop("tray_quit"),
             )
@@ -261,7 +261,7 @@ def run(argv: list[str] | None = None) -> int:
         return 0
     except (SupervisorError, BodyStatusClientError, TrayUiError, OSError, ValueError) as exc:
         health.set_desktop("ERROR", type(exc).__name__)
-        _print({"product":"BODY","state":"ERROR","error":str(exc),"health":health.snapshot()}, args.json)
+        _print({"product":"BodyBrain","state":"ERROR","error":str(exc),"health":health.snapshot()}, args.json)
         if tray is not None and tray_started and not args.check:
             _hold_error_for_tray(tray, str(exc))
         return 1

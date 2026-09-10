@@ -148,7 +148,7 @@ class LocalWebSocket:
 class BodyStatusClient:
     """Read-only Desktop Host control-plane client; it never owns Brain control."""
 
-    def __init__(self, config: RuntimeConfig, token: str, controller_id: str = "body-desktop-status"):
+    def __init__(self, config: RuntimeConfig, token: str, controller_id: str = "bodybrain-desktop-status"):
         self.config = config
         self.token = str(token).strip()
         if not self.token: raise BodyStatusClientError("controller_token_required")
