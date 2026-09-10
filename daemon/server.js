@@ -31,6 +31,22 @@ function sendReadiness(ws,browserInstanceId){
   }catch(error){status={state:'BLOCKED',reason:String(error?.message||error),browserState:'UNKNOWN',environment:'UNKNOWN',botCheck:'UNKNOWN'};}
   runtime.send(ws,{type:'READINESS_STATUS',status,ts:Date.now()});return status;
 }
+function bodyStatusResult(){
+  return {
+    bodyContract:{version:BODY_CONTRACT_VERSION,gateway:bodyGateway.status()},
+    identity:runtime.identity.snapshot(),
+    controller:controller.status(),
+    browsers:runtime.browsers.list(),
+    tasks:runtime.tasks.list(),
+    environment:runtime.guardian.status(),
+    extensions:runtime.registry.list(),
+    recordingEnabled:runtime.recordingEnabled,
+    learningEnabled:runtime.learningEnabled,
+    execution:runtime.execution.status(),
+    evidence:runtime.evidence.status(),
+    evidenceStore:runtime.evidenceStore.stats()
+  };
+}
 
 wss.once('listening',()=>{
   try{
@@ -58,7 +74,7 @@ async function handleBrainMessage(ws,msg){
     return true;
   }
   let result,type;
-  if(msg.type==='BODY_STATUS'){result={bodyContract:{version:BODY_CONTRACT_VERSION,gateway:bodyGateway.status()},identity:runtime.identity.snapshot(),controller:controller.status(),browsers:runtime.browsers.list(),tasks:runtime.tasks.list(),environment:runtime.guardian.status(),extensions:runtime.registry.list(),recordingEnabled:runtime.recordingEnabled,learningEnabled:runtime.learningEnabled,execution:runtime.execution.status(),evidence:runtime.evidence.status(),evidenceStore:runtime.evidenceStore.stats()};type='BODY_STATUS_RESULT';}
+  if(msg.type==='BODY_STATUS'){result=bodyStatusResult();type='BODY_STATUS_RESULT';}
   else if(msg.type==='EXTENSIONS_LIST'){result=runtime.registry.list();type='EXTENSIONS_LIST_RESULT';}
   else if(msg.type==='BROWSERS_LIST'){result=runtime.browsers.list();type='BROWSERS_LIST_RESULT';}
   else if(msg.type==='ENVIRONMENT_STATUS'){result=runtime.guardian.status();type='ENVIRONMENT_STATUS_RESULT';}
@@ -75,6 +91,14 @@ async function handleBrainMessage(ws,msg){
   else if(msg.type==='TASK_CANCEL'){result=runtime.tasks.finish(msg.taskId,'CANCELLED',msg.reason??'cancelled');type='TASK_RESULT';}
   else return false;
   runtime.send(ws,{type,requestId:msg.requestId||null,ok:true,result});return true;
+}
+function handleStatusClientMessage(ws,msg){
+  if(msg.type!=='BODY_STATUS'){
+    runtime.send(ws,{type:'STATUS_ERROR',requestId:msg.requestId||null,ok:false,error:'status_client_read_only'});
+    return true;
+  }
+  runtime.send(ws,{type:'BODY_STATUS_RESULT',requestId:msg.requestId||null,ok:true,result:bodyStatusResult()});
+  return true;
 }
 
 wss.on('connection',(ws,request)=>{
@@ -93,6 +117,7 @@ wss.on('connection',(ws,request)=>{
         runtime.probeEnvironment(browserInstanceId).then(environment=>{const readiness=sendReadiness(ws,browserInstanceId);printAsync(`[GUARDIAN] browser=${browserInstanceId} env=${guardianOutcomeLabel(environment)} readiness=${readiness.state} reason=${readiness.reason||'none'} reasons=${environment.reasons.join(',')||'none'}`);brainSend('BODY_EVENT',{event:{eventType:'environmentResult',browserInstanceId,environment,ts:Date.now()}});updatePrompt();}).catch(error=>{const readiness=sendReadiness(ws,browserInstanceId);printAsync(`[GUARDIAN] browser=${browserInstanceId} ERROR ${String(error?.message||error)} readiness=${readiness.state} reason=${readiness.reason||'none'}`);brainSend('BODY_EVENT',{event:{eventType:'environmentError',browserInstanceId,error:String(error?.message||error),ts:Date.now()}});});return;
       }
       if(requestedRole==='brain'){if(!auth.authenticateBrain(msg.token)){rejectAuth(ws,'brain_token_invalid');return;}try{controller.attachBrain(ws,{controllerId:msg.controllerId||'brain'});}catch(error){rejectAuth(ws,String(error?.message||error));return;}role='brain';runtime.send(ws,{type:'HELLO_ACK',role:'brain',protocolVersion:CONTROL_PROTOCOL_VERSION,bodyContractVersion:BODY_CONTRACT_VERSION,authenticated:true,identity:runtime.identity.snapshot(),controller:controller.status()});printAsync('[BRAIN] controller attached');return;}
+      if(requestedRole==='status_client'){if(!auth.authenticateBrain(msg.token)){rejectAuth(ws,'status_client_token_invalid');return;}role='status_client';runtime.send(ws,{type:'HELLO_ACK',role:'status_client',protocolVersion:CONTROL_PROTOCOL_VERSION,bodyContractVersion:BODY_CONTRACT_VERSION,authenticated:true,identity:runtime.identity.snapshot(),controller:controller.status()});return;}
       if(requestedRole==='debug_client'){if(!auth.authenticateDebugClient(msg.token)){rejectAuth(ws,'debug_client_token_invalid');return;}role='debug_client';debugClients.add(ws);runtime.send(ws,{type:'HELLO_ACK',role:'debug_client',protocolVersion:CONTROL_PROTOCOL_VERSION,bodyContractVersion:BODY_CONTRACT_VERSION,authenticated:true,identity:runtime.identity.snapshot(),controller:controller.status()});return;}
       rejectAuth(ws,'unsupported_role');return;
     }
@@ -111,6 +136,7 @@ wss.on('connection',(ws,request)=>{
       return;
     }
     if(role==='brain'){try{const handled=await handleBrainMessage(ws,msg);if(!handled)runtime.send(ws,{type:'BRAIN_ERROR',requestId:msg.requestId||null,ok:false,error:'unsupported_brain_message'});}catch(error){runtime.send(ws,{type:'BRAIN_ERROR',requestId:msg.requestId||null,ok:false,error:String(error?.message||error)});}return;}
+    if(role==='status_client'){try{handleStatusClientMessage(ws,msg);}catch(error){runtime.send(ws,{type:'STATUS_ERROR',requestId:msg.requestId||null,ok:false,error:String(error?.message||error)});}return;}
     if(role==='debug_client'){if(msg.type!=='COMMAND')return;try{const result=await debugAdapter.run(msg.command,{assertControl:()=>controller.assertDebugControlAllowed()});runtime.send(ws,{type:'COMMAND_RESULT',requestId:msg.requestId||null,ok:true,result});}catch(error){runtime.send(ws,{type:'CLIENT_ERROR',requestId:msg.requestId||null,ok:false,error:String(error?.message||error)});}}
   });
   ws.on('close',()=>{const extId=runtime.registry.unregisterSocket(ws);if(extId){const identity=runtime.identityForExtension(extId);bodyGateway.clearBrowser(identity.browserInstanceId);const cleanup=runtime.extensionOffline(extId);printAsync(`[OFFLINE] browser=${identity.browserInstanceId||'unknown'} extension=${extId} rejectedPending=${cleanup.rejectedPending}`);updatePrompt();brainSend('BODY_EVENT',{event:{eventType:'browserOffline',identity,browserInstanceId:identity.browserInstanceId,ts:Date.now()}});}if(controller.detachSocket(ws))printAsync('[BRAIN] controller detached; Body continues observing/learning.');debugClients.delete(ws);});
@@ -123,4 +149,4 @@ function shutdown(){flushStores();clearEndpoint();process.exit(0);}
 process.once('SIGINT',shutdown);process.once('SIGTERM',shutdown);process.once('exit',()=>{flushStores();clearEndpoint();});
 const localIdentity=runtime.identity.snapshot();console.log(`Company runtime identity: company=${localIdentity.companyId} device=${localIdentity.deviceId}`);console.log('Body runtime transport: requesting an available localhost port from Windows...');console.log(`BODY Contract: v${BODY_CONTRACT_VERSION} — Brain physical boundary is BODY_STEP only.`);console.log(`Environment policy: ${JSON.stringify(runtime.guardian.status().policy)}`);console.log(`Brain auth token: ${auth.status().brainTokenPath}`);console.log(`Debug client token: ${auth.status().debugClientTokenPath}`);console.log('Extension authentication is automatic and bound to Extension/Browser/Runtime/Origin. Local console: pair status | pair list | pair forget <extensionId>');console.log('Company Runtime validates Browser eligibility before Task assignment. Guardian is read-only: observe/report/quarantine only.');
 rl=readline.createInterface({input:process.stdin,output:process.stdout,prompt:prompt()});rl.prompt();rl.on('line',async line=>{try{if(!localAccumulator.waiting){const pairing=pairingConsoleCommand(auth,line,{disconnectExtension:disconnectExtensionForRevocation});if(pairing.handled){if(pairing.result!==null)console.log(typeof pairing.result==='string'?pairing.result:JSON.stringify(pairing.result,null,2));updatePrompt();rl.prompt();return;}}const accumulated=localAccumulator.feed(line);if(!accumulated.ready){rl.setPrompt('... ');rl.prompt();return;}const out=await debugAdapter.run(accumulated.command,{assertControl:()=>controller.assertDebugControlAllowed()});if(out!==null)console.log(typeof out==='string'?out:JSON.stringify(out,null,2));}catch(error){localAccumulator.reset();console.log('[LỖI]',String(error?.message||error));}updatePrompt();rl.prompt();});
-module.exports={runtime,bodyGateway,router,debugAdapter,wss,auth,controller,runtimeLock,handleBrainMessage,CONTROL_PROTOCOL_VERSION,BODY_CONTRACT_VERSION,EXTENSION_PROTOCOL_VERSIONS,protocolAllowed,browserIdFromHello,requireBrowserId,guardianOutcomeLabel,loggableInputEvent,sendReadiness,disconnectExtensionForRevocation,flushStores,clearEndpoint};
+module.exports={runtime,bodyGateway,router,debugAdapter,wss,auth,controller,runtimeLock,handleBrainMessage,handleStatusClientMessage,bodyStatusResult,CONTROL_PROTOCOL_VERSION,BODY_CONTRACT_VERSION,EXTENSION_PROTOCOL_VERSIONS,protocolAllowed,browserIdFromHello,requireBrowserId,guardianOutcomeLabel,loggableInputEvent,sendReadiness,disconnectExtensionForRevocation,flushStores,clearEndpoint};
