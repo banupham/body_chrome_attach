@@ -104,7 +104,7 @@ def maybe_sign(executable: Path) -> str:
             "-ExecutionPolicy",
             "Bypass",
             "-File",
-            str(ROOT / "tools" / "sign_bodybrain.ps1"),
+            str(ROOT / "tools" / "sign_body.ps1"),
             "-PfxPath",
             str(pfx_path),
             "-Executable",
