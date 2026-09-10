@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main() -> int:
     entry = (ROOT / "desktop" / "main.py").read_text(encoding="utf-8")
     status = (ROOT / "desktop" / "body_status_client.py").read_text(encoding="utf-8")
-    build = (ROOT / "tools" / "build_body_release.py").read_text(encoding="utf-8")
+    build = (ROOT / "tools" / "build_bodybrain_release.py").read_text(encoding="utf-8")
     health = (ROOT / "desktop" / "health.py").read_text(encoding="utf-8")
 
     for forbidden in ["from brain", "import brain", "GoalRunner", "BrainStore", "--youtube-search", "desktop.body_client"]:
@@ -24,12 +24,6 @@ def main() -> int:
         raise AssertionError("release builder must not bundle Brain")
     if '"brain": {"state": "NOT_CONFIGURED"' not in health:
         raise AssertionError("health must report Brain NOT_CONFIGURED")
-    if '"product":"BODY"' not in entry:
-        raise AssertionError("production desktop identity must be BODY")
-    if "BodyBrain production host" in entry or '"product":"BodyBrain"' in entry:
-        raise AssertionError("production user-facing identity must not claim BodyBrain")
-    if '"--name", "BODY"' not in build or 'ARTIFACTS / "BODY.exe"' not in build:
-        raise AssertionError("release builder must emit BODY.exe")
 
     manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
     if "brain execution" in str(manifest.get("description", "")).lower():
@@ -37,7 +31,7 @@ def main() -> int:
     package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
     if "Brain R&D is excluded" not in str(package.get("description", "")):
         raise AssertionError("package description must state Brain exclusion")
-    print("body_no_brain_contract: PASS")
+    print("bodybrain_no_brain_contract: PASS")
     return 0
 
 

@@ -7,7 +7,7 @@ const tests = [
   path.join(root, 'tests', 'desktop_host_contract.py'),
   path.join(root, 'tests', 'desktop_host_foundation_contract.py'),
   path.join(root, 'tests', 'desktop_status_client_contract.py'),
-  path.join(root, 'tests', 'body_no_brain_contract.py')
+  path.join(root, 'tests', 'bodybrain_no_brain_contract.py')
 ];
 const candidates = process.platform === 'win32'
   ? [{command:'py',prefix:['-3']},{command:'python',prefix:[]},{command:'python3',prefix:[]}]
