@@ -51,6 +51,8 @@ jobs:
   release-windows:
     needs: [verify, windows-native-input]
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -86,3 +88,34 @@ jobs:
             artifacts/bodybrain-release-v*.json
           if-no-files-found: error
           retention-days: 14
+      - name: Publish GitHub Release v0.8.0-hotfix.1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Release BodyBrain v0.8.0-hotfix.1')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = 'v0.8.0-hotfix.1'
+          $extension = Get-ChildItem 'artifacts/BodyChromeAttach-v*.zip' | Select-Object -First 1
+          $manifest = Get-ChildItem 'artifacts/bodybrain-release-v*.json' | Select-Object -First 1
+          if (-not $extension) { throw 'protected_extension_release_missing' }
+          if (-not $manifest) { throw 'release_manifest_missing' }
+          $assets = @(
+            (Resolve-Path 'artifacts/BodyBrain.exe').Path,
+            $extension.FullName,
+            $manifest.FullName
+          )
+          $notes = @'
+          BODY-only production hotfix. Brain remains NOT_CONFIGURED and is not included in this release.
+
+          Fixes:
+          - Prevent ambiguous CDP DOM echoes from being reclassified as USER input.
+          - Prevent human-labelled recorder events from reaching learning while BODY HUMAN_MOTOR execution is active.
+          - Preserve the stable CDP gateway, MotorPlanner, OnlineBehaviorModel, Guardian, and existing learned BODY data.
+          '@
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @assets --clobber
+          } else {
+            gh release create $tag @assets --target $env:GITHUB_SHA --title 'BodyBrain v0.8.0 Hotfix 1' --notes $notes
+          }
