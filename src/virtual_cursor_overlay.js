@@ -4,6 +4,7 @@ const { VIRTUAL_CURSOR_SCOPE, MESSAGE_TYPES, SOURCES } = require('./virtual_curs
 
 const HOST_TAG = 'body-chrome-attach-virtual-cursor';
 const POSITION_KEY = '__bodyChromeAttachVirtualCursorPosition';
+const CDP_DOM_ECHO_GUARD_MS = 650;
 const DOM_POINTER_TO_CDP = Object.freeze({
   mousemove: 'mouseMoved',
   mousedown: 'mousePressed',
@@ -27,6 +28,8 @@ function installVirtualCursorOverlay({ chromeApi, documentRef } = {}) {
   let cdpEvents = 0;
   let cdpFailures = 0;
   let suppressedDomEvents = 0;
+  let ambiguousDomEvents = 0;
+  let cdpDomGuardUntil = 0;
   const expectedPointers = [];
   const expectedKeys = [];
 
@@ -153,16 +156,33 @@ function installVirtualCursorOverlay({ chromeApi, documentRef } = {}) {
     while (expectedKeys.length && expectedKeys[0].expiresAt < now) expectedKeys.shift();
   }
 
+  function markCdpDomGuard() {
+    cdpDomGuardUntil = Math.max(cdpDomGuardUntil, clock() + CDP_DOM_ECHO_GUARD_MS);
+  }
+
+  function cdpDomGuardActive() {
+    return clock() <= cdpDomGuardUntil;
+  }
+
+  function suppressAmbiguousDomEcho() {
+    if (!cdpDomGuardActive()) return false;
+    suppressedDomEvents += 1;
+    ambiguousDomEvents += 1;
+    return true;
+  }
+
   function expectPointer(event) {
     pruneExpected();
-    expectedPointers.push({ ...event, expiresAt: clock() + 260 });
+    markCdpDomGuard();
+    expectedPointers.push({ ...event, expiresAt: clock() + CDP_DOM_ECHO_GUARD_MS });
     if (expectedPointers.length > 96) expectedPointers.splice(0, expectedPointers.length - 96);
     applyPointer(event, SOURCES.CDP);
   }
 
   function expectKey(event) {
     pruneExpected();
-    expectedKeys.push({ ...event, expiresAt: clock() + 320 });
+    markCdpDomGuard();
+    expectedKeys.push({ ...event, expiresAt: clock() + CDP_DOM_ECHO_GUARD_MS });
     if (expectedKeys.length > 96) expectedKeys.splice(0, expectedKeys.length - 96);
     applyKey(event, SOURCES.CDP);
   }
@@ -272,6 +292,7 @@ function installVirtualCursorOverlay({ chromeApi, documentRef } = {}) {
       suppressedDomEvents += 1;
       return;
     }
+    if (suppressAmbiguousDomEcho()) return;
 
     applyPointer(normalized, SOURCES.USER);
     const now = clock();
@@ -287,6 +308,7 @@ function installVirtualCursorOverlay({ chromeApi, documentRef } = {}) {
       suppressedDomEvents += 1;
       return;
     }
+    if (suppressAmbiguousDomEcho()) return;
     const normalized = {
       type: event.type,
       key: String(event.key || ''),
@@ -318,6 +340,8 @@ function installVirtualCursorOverlay({ chromeApi, documentRef } = {}) {
       cdpEvents,
       cdpFailures,
       suppressedDomEvents,
+      ambiguousDomEvents,
+      cdpDomGuardActive: cdpDomGuardActive(),
       expectedPointerCount: expectedPointers.length,
       expectedKeyCount: expectedKeys.length
     };
@@ -349,4 +373,4 @@ function installVirtualCursorOverlay({ chromeApi, documentRef } = {}) {
   };
 }
 
-module.exports = { HOST_TAG, POSITION_KEY, installVirtualCursorOverlay };
+module.exports = { HOST_TAG, POSITION_KEY, CDP_DOM_ECHO_GUARD_MS, installVirtualCursorOverlay };
