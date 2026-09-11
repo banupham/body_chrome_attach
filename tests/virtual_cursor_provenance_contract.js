@@ -71,6 +71,7 @@ function pointerDom(x,y,type='mousemove'){
 {
   const f=fixture();
   const dispatch=f.runtimeListeners[0];
+  dispatch({scope:VIRTUAL_CURSOR_SCOPE,type:MESSAGE_TYPES.CDP_POINTER_EXPECTED,event:{eventId:'p0',type:'mouseMoved',x:20,y:20,button:'none',buttons:0,clickCount:0,deltaX:0,deltaY:0}},null,()=>{});
   dispatch({scope:VIRTUAL_CURSOR_SCOPE,type:MESSAGE_TYPES.CDP_KEY_EXPECTED,event:{eventId:'k1',type:'rawKeyDown',key:'a',code:'KeyA'}},null,()=>{});
   const before=f.sent.length;
   f.domListeners.get('keydown')({type:'keydown',key:'b',code:'KeyB',repeat:false,target:null});
