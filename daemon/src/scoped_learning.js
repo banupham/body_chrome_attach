@@ -52,6 +52,12 @@ class CascadingMotorModel {
   sampleScroll(action,amount) {
     return this.primary?.sampleScroll(action,amount) || this.fallback?.sampleScroll(action,amount) || null;
   }
+  samplePressKey(key) {
+    return this.primary?.samplePressKey(key) || this.fallback?.samplePressKey(key) || null;
+  }
+  sampleKeyCombo(args) {
+    return this.primary?.sampleKeyCombo(args) || this.fallback?.sampleKeyCombo(args) || null;
+  }
 }
 
 class CascadingHabitModel {

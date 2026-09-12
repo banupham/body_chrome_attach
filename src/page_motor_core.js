@@ -79,6 +79,18 @@ function printableVk(ch){
   if(SHIFTED_DIGITS[ch]) return SHIFTED_DIGITS[ch].charCodeAt(0);
   return PUNCTUATION[ch]?.[1]||0;
 }
+function keyClassForName(value){
+  const key=normalizeKeyName(value);
+  if(key.length===1){if(/\s/.test(key))return 'space';if(/[A-Za-zÀ-ỹ]/u.test(key))return 'alpha';if(/[0-9]/.test(key))return 'digit';return 'punct';}
+  return key||'special';
+}
+function comboDescriptor(combo){
+  const parts=String(combo||'').split('+').map(normalizeKeyName).filter(Boolean);
+  const modifiers=parts.filter(x=>MODIFIER_BITS[x]);
+  const keys=parts.filter(x=>!MODIFIER_BITS[x]);
+  if(!modifiers.length||!keys.length) throw new Error('key_combo_requires_modifier_and_key');
+  return {parts,modifiers,keys,keyClass:keyClassForName(keys[0])};
+}
 function characterParams(ch,type='rawKeyDown',extraModifiers=0){
   const modifiers=Number(extraModifiers||0)|(SHIFTED_PRINTABLES.has(ch)?MODIFIER_BITS.Shift:0);
   const vk=printableVk(ch);
@@ -101,15 +113,26 @@ function keyStep(name,type,modifiers=0,delayMs=0){
   if(s.vk){ params.windowsVirtualKeyCode=s.vk; params.nativeVirtualKeyCode=s.vk; }
   return {delayMs,method:'Input.dispatchKeyEvent',params};
 }
-function comboSteps(combo){
-  const parts=String(combo||'').split('+').map(normalizeKeyName).filter(Boolean);
-  const modifiers=parts.filter(x=>MODIFIER_BITS[x]);
-  const keys=parts.filter(x=>!MODIFIER_BITS[x]);
-  if(!modifiers.length||!keys.length) throw new Error('key_combo_requires_modifier_and_key');
+function comboSteps(combo,timing=null){
+  const descriptor=comboDescriptor(combo),{modifiers,keys}=descriptor;
+  const learned=timing&&typeof timing==='object'?timing:null;
+  const downGaps=Array.isArray(learned?.modifierDownGaps)?learned.modifierDownGaps:[];
+  const releaseGaps=Array.isArray(learned?.modifierReleaseGaps)?learned.modifierReleaseGaps:[];
+  const keyDownDelay=learned?clamp(Number(learned.keyDownDelayMs??28),0,2000):28;
+  const keyHold=learned?clamp(Number(learned.keyHoldMs??45),5,4000):45;
   let mask=0; const out=[];
-  for(const m of modifiers){ mask|=MODIFIER_BITS[m]; out.push(keyStep(m,'rawKeyDown',mask,0)); }
-  for(const k of keys){ out.push(keyStep(k,'rawKeyDown',mask,28)); out.push(keyStep(k,'keyUp',mask,45)); }
-  for(const m of [...modifiers].reverse()){ mask&=~MODIFIER_BITS[m]; out.push(keyStep(m,'keyUp',mask,24)); }
+  for(let i=0;i<modifiers.length;i++){
+    const m=modifiers[i];mask|=MODIFIER_BITS[m];
+    const delayMs=i===0?0:(learned?clamp(Number(downGaps[Math.min(i-1,downGaps.length-1)]??0),0,2000):0);
+    out.push(keyStep(m,'rawKeyDown',mask,delayMs));
+  }
+  for(const k of keys){out.push(keyStep(k,'rawKeyDown',mask,keyDownDelay));out.push(keyStep(k,'keyUp',mask,keyHold));}
+  let releaseIndex=0;
+  for(const m of [...modifiers].reverse()){
+    mask&=~MODIFIER_BITS[m];
+    const delayMs=learned?clamp(Number(releaseGaps[Math.min(releaseIndex,releaseGaps.length-1)]??24),0,2000):24;
+    out.push(keyStep(m,'keyUp',mask,delayMs));releaseIndex++;
+  }
   return out;
 }
 function charSteps(ch,holdMs,delayBefore){
@@ -142,6 +165,13 @@ class MotorPlanner {
     if(action==='forward') return this._combo({key:'Alt+ArrowRight'});
     if(action==='reload') return this._combo({key:'Control+r'});
     throw new Error(`unsupported_intent:${action}`);
+  }
+
+  _modelSample(method,...args){
+    if(typeof this.model?.[method]==='function')return this.model[method](...args);
+    const primary=typeof this.model?.primary?.[method]==='function'?this.model.primary[method](...args):null;
+    if(primary)return primary;
+    return typeof this.model?.fallback?.[method]==='function'?this.model.fallback[method](...args):null;
   }
 
   _targetRect(intent) {
@@ -241,15 +271,21 @@ class MotorPlanner {
   }
 
   _pressKey(intent) {
-    const k=intent.key;
-    return this._wrap('pressKey',[keyStep(k,'rawKeyDown',0,0),keyStep(k,'keyUp',0,45)],'bootstrap',null);
+    const k=normalizeKeyName(intent.key);
+    const learned=this._modelSample('samplePressKey',k);
+    const holdMs=learned?clamp(Number(learned.template?.holdMs??45),5,4000):45;
+    return this._wrap('pressKey',[keyStep(k,'rawKeyDown',0,0),keyStep(k,'keyUp',0,holdMs)],learned?'learned':'bootstrap',learned);
   }
 
-  _combo(intent) { return this._wrap('keyCombo',comboSteps(intent.key||intent.combo),'bootstrap',null); }
+  _combo(intent) {
+    const combo=intent.key||intent.combo,descriptor=comboDescriptor(combo);
+    const learned=this._modelSample('sampleKeyCombo',{modifiers:descriptor.modifiers,keyClass:descriptor.keyClass});
+    return this._wrap('keyCombo',comboSteps(combo,learned?.template||null),learned?'learned':'bootstrap',learned);
+  }
 
   _wrap(actionType,steps,source,learned) {
     return {source,learnedGroup:learned?.groupKey || null,learnedTemplateCount:learned?.count || 0,learnedSelection:learned?.selection||null,learnedTemplateIndex:Number.isInteger(learned?.index)?learned.index:null,plan:{executionCapability:'HUMAN_MOTOR',actionType,steps}};
   }
 }
 
-module.exports={MotorPlanner,mapTemplatePath,bootstrapMove,comboSteps,requirePointerStart};
+module.exports={MotorPlanner,mapTemplatePath,bootstrapMove,comboSteps,comboDescriptor,keyClassForName,requirePointerStart};

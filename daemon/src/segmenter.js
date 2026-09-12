@@ -1,5 +1,18 @@
 'use strict';
 
+const MODIFIER_ORDER=Object.freeze(['Control','Alt','Shift','Meta']);
+const MODIFIER_SET=new Set(MODIFIER_ORDER);
+const SPECIAL_KEYS=new Set(['Tab','Enter','Escape','Backspace','Delete','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Home','End']);
+const TEXT_KEY_CLASSES=new Set(['alpha','digit','space','punct']);
+
+function keyboardContext(target){
+  return {target_role:target?.role||null,target_tag:target?.tag||null,target_rect:target?.rect||null,target_editable:target?.editable===true};
+}
+function canonicalModifiers(values){
+  const unique=new Set((values||[]).map(String).filter(x=>MODIFIER_SET.has(x)));
+  return MODIFIER_ORDER.filter(x=>unique.has(x));
+}
+
 class HumanActionSegmenter {
   constructor(onSample,{moveIdleMs=450,minMoveDistance=12,minMovePoints=3}={}) {
     this.onSample = onSample;
@@ -11,20 +24,23 @@ class HumanActionSegmenter {
 
   _state(tabId) {
     if (!this.tabs.has(tabId)) {
-      this.tabs.set(tabId, {recentMouse: [],mouseLastTs: 0,mouseTarget:null,moveTimer:null,down: null,typing: null,typingTimer: null,scroll: null,scrollTimer: null});
+      this.tabs.set(tabId, {recentMouse: [],mouseLastTs: 0,mouseTarget:null,moveTimer:null,down: null,typing: null,typingTimer: null,scroll: null,scrollTimer: null,modifiers:new Map(),pressKeys:new Map(),combo:null});
     }
     return this.tabs.get(tabId);
   }
 
   handle(tabId, event) {
     if (event?.source !== 'human') return;
-    if (event?.target?.sensitive) return;
+    if (event?.target?.sensitive) {
+      if(event?.eventType==='keydown'||event?.eventType==='keyup')this._resetKeyboardState(this._state(tabId));
+      return;
+    }
 
     const s = this._state(tabId);
     if (event.eventType === 'mousemove') return this._mouseMove(tabId,s,event);
     if (event.eventType === 'mousedown') return this._mouseDown(tabId, s, event);
     if (event.eventType === 'mouseup') return this._mouseUp(tabId, s, event);
-    if (event.eventType === 'keydown' || event.eventType === 'keyup') {this._flushMove(tabId,s);return this._typing(tabId, s, event);}
+    if (event.eventType === 'keydown' || event.eventType === 'keyup') {this._flushMove(tabId,s);return this._keyboard(tabId, s, event);}
     if (event.eventType === 'wheel') {this._flushMove(tabId,s);this._scroll(tabId, s, event);}
   }
 
@@ -104,19 +120,85 @@ class HumanActionSegmenter {
     s.mouseTarget=e.target||s.mouseTarget;
   }
 
-  _typing(tabId, s, e) {
-    if (e.keyClass === 'redacted') return;
-    const specialKeys=new Set(['Tab','Enter','Escape','Backspace','Delete','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Home','End']);
-    if(e.keyClass==='modifier') return;
+  _keyboard(tabId,s,e){
+    if(e.keyClass==='redacted')return;
+    if(e.keyClass==='modifier')return this._modifierKey(tabId,s,e);
+    if(s.modifiers.size){
+      const active=[...s.modifiers.keys()];
+      if(active.length===1&&active[0]==='Shift'&&TEXT_KEY_CLASSES.has(String(e.keyClass)))return this._typing(tabId,s,e);
+      return this._comboKey(tabId,s,e);
+    }
+    if(SPECIAL_KEYS.has(String(e.keyClass)))return this._pressKey(tabId,s,e);
+    if(TEXT_KEY_CLASSES.has(String(e.keyClass)))return this._typing(tabId,s,e);
+  }
 
-    if(e.eventType==='keydown' && specialKeys.has(String(e.keyClass))) {
-      this._flushTyping(tabId,s);
-      this.onSample({source:'human',action:'pressKey',key:String(e.keyClass),tabId,context:{target_role:e.target?.role || null,target_tag:e.target?.tag || null,target_rect:e.target?.rect || null,target_editable:e.target?.editable === true}});
+  _modifierKey(tabId,s,e){
+    const key=String(e.key||'');
+    if(!MODIFIER_SET.has(key))return;
+    if(e.eventType==='keydown'){
+      if(e.repeat===true)return;
+      if(key!=='Shift')this._flushTyping(tabId,s);
+      if(s.combo?.primaryUp)this._flushCombo(tabId,s,{allowIncompleteRelease:true});
+      s.modifiers.set(key,{ts:Number(e.ts),target:e.target||null});
       return;
     }
+    if(e.eventType!=='keyup')return;
+    if(s.combo&&s.combo.modifiers.includes(key))s.combo.events.push({type:'keyup',t:Math.max(0,Number(e.ts)-s.combo.startedAt),key,keyClass:'modifier'});
+    s.modifiers.delete(key);
+    if(s.combo?.primaryUp&&s.combo.modifiers.every(modifier=>!s.modifiers.has(modifier)))this._flushCombo(tabId,s,{allowIncompleteRelease:true});
+  }
 
-    if(!['alpha','digit','space','punct'].includes(String(e.keyClass))) return;
+  _comboKey(tabId,s,e){
+    this._flushTyping(tabId,s);
+    const keyClass=String(e.keyClass||'special');
+    const printable=TEXT_KEY_CLASSES.has(keyClass);
+    const safeKey=printable?null:(e.key?String(e.key):keyClass);
+    if(e.eventType==='keydown'){
+      if(e.repeat===true)return;
+      if(s.combo)this._flushCombo(tabId,s,{allowIncompleteRelease:true});
+      const modifierEntries=[...s.modifiers.entries()].sort((a,b)=>Number(a[1]?.ts||0)-Number(b[1]?.ts||0));
+      if(!modifierEntries.length)return;
+      const startedAt=Math.min(...modifierEntries.map(([,value])=>Number(value?.ts||e.ts)),Number(e.ts));
+      const modifiers=canonicalModifiers(modifierEntries.map(([name])=>name));
+      const events=modifierEntries.map(([name,value])=>({type:'keydown',t:Math.max(0,Number(value?.ts||startedAt)-startedAt),key:name,keyClass:'modifier'}));
+      events.push({type:'keydown',t:Math.max(0,Number(e.ts)-startedAt),key:safeKey,keyClass});
+      s.combo={startedAt,modifiers,keyClass,key:safeKey,target:e.target||modifierEntries.at(-1)?.[1]?.target||null,events,primaryDownTs:Number(e.ts),primaryUpTs:null,primaryUp:false};
+      return;
+    }
+    if(e.eventType!=='keyup'||!s.combo)return;
+    if(String(s.combo.keyClass)!==keyClass)return;
+    s.combo.events.push({type:'keyup',t:Math.max(0,Number(e.ts)-s.combo.startedAt),key:s.combo.key,keyClass});
+    s.combo.primaryUpTs=Number(e.ts);s.combo.primaryUp=true;
+    if(s.combo.modifiers.every(modifier=>!s.modifiers.has(modifier)))this._flushCombo(tabId,s,{allowIncompleteRelease:true});
+  }
 
+  _flushCombo(tabId,s,{allowIncompleteRelease=false}={}){
+    const combo=s.combo;
+    if(!combo)return false;
+    if(!combo.primaryUp&&!allowIncompleteRelease)return false;
+    if(!combo.primaryUp){s.combo=null;return false;}
+    const sample={source:'human',action:'keyCombo',tabId,modifiers:[...combo.modifiers],key:combo.key,key_class:combo.keyClass,hold_ms:Math.max(0,Number(combo.primaryUpTs)-Number(combo.primaryDownTs)),context:keyboardContext(combo.target),key_events:[...combo.events]};
+    s.combo=null;
+    this.onSample(sample);
+    return true;
+  }
+
+  _pressKey(tabId,s,e){
+    const key=String(e.key||e.keyClass||'');
+    if(!key)return;
+    this._flushTyping(tabId,s);
+    if(e.eventType==='keydown'){
+      if(e.repeat===true)return;
+      s.pressKeys.set(key,{ts:Number(e.ts),target:e.target||null,keyClass:String(e.keyClass||key)});
+      return;
+    }
+    if(e.eventType!=='keyup')return;
+    const down=s.pressKeys.get(key);s.pressKeys.delete(key);
+    if(!down)return;
+    this.onSample({source:'human',action:'pressKey',key,tabId,hold_ms:Math.max(0,Number(e.ts)-Number(down.ts)),context:keyboardContext(down.target||e.target),key_events:[{type:'keydown',t:0,key,keyClass:down.keyClass},{type:'keyup',t:Math.max(0,Number(e.ts)-Number(down.ts)),key,keyClass:down.keyClass}]});
+  }
+
+  _typing(tabId, s, e) {
     if (!s.typing || e.ts - s.typing.lastTs > 1200) {
       this._flushTyping(tabId, s);
       s.typing = {startedAt:e.ts,lastTs:e.ts,target:e.target,events:[]};
@@ -136,11 +218,15 @@ class HumanActionSegmenter {
     const downs = s.typing.events.filter(x => x.type === 'keydown');
     let emitted=false;
     if (downs.length >= 2) {
-      this.onSample({source:'human',action:'typeText',tabId,context:{target_role:s.typing.target?.role || null,target_tag:s.typing.target?.tag || null,target_rect:s.typing.target?.rect || null,target_editable:s.typing.target?.editable === true},key_events:s.typing.events});
+      this.onSample({source:'human',action:'typeText',tabId,context:keyboardContext(s.typing.target),key_events:s.typing.events});
       emitted=true;
     }
     s.typing = null;
     return emitted;
+  }
+
+  _resetKeyboardState(s){
+    clearTimeout(s.typingTimer);s.typingTimer=null;s.typing=null;s.modifiers.clear();s.pressKeys.clear();s.combo=null;
   }
 
   _scroll(tabId, s, e) {
@@ -177,6 +263,7 @@ class HumanActionSegmenter {
       const s=this.tabs.get(id);if(!s)continue;
       if(this._flushMove(id,s))emitted++;
       if(this._flushTyping(id,s))emitted++;
+      if(this._flushCombo(id,s,{allowIncompleteRelease:true}))emitted++;
       if(this._flushScroll(id,s))emitted++;
     }
     return {tabs:ids.length,emitted};
@@ -190,16 +277,18 @@ class HumanActionSegmenter {
       if(flush){
         if(this._flushMove(id,s))emitted++;
         if(this._flushTyping(id,s))emitted++;
+        if(this._flushCombo(id,s,{allowIncompleteRelease:true}))emitted++;
         if(this._flushScroll(id,s))emitted++;
       }else{
         clearTimeout(s.moveTimer);clearTimeout(s.typingTimer);clearTimeout(s.scrollTimer);
       }
       s.down=null;
       s.recentMouse=[];
+      this._resetKeyboardState(s);
       this.tabs.delete(id);
     }
     return {tabs:ids.length,emitted};
   }
 }
 
-module.exports = { HumanActionSegmenter };
+module.exports = { HumanActionSegmenter, canonicalModifiers };
