@@ -6,6 +6,7 @@ const os=require('node:os');
 const path=require('node:path');
 const {HumanActionSegmenter}=require('../daemon/src/segmenter');
 const {OnlineBehaviorModel}=require('../daemon/src/online_model');
+const {CascadingMotorModel}=require('../daemon/src/scoped_learning');
 const {MotorPlanner}=require('../src/page_motor_core');
 
 function keyEvent(eventType,ts,{key=null,keyClass='special',repeat=false}={}){
@@ -42,6 +43,25 @@ segmenter.flush(1);
 const typing=samples.find(sample=>sample.action==='typeText');
 assert.ok(typing,'ordinary printable keys must still emit typeText');
 assert.equal(typing.key_events.filter(event=>event.type==='keydown').length,2);
+
+const comboCountBeforeShiftTyping=samples.filter(sample=>sample.action==='keyCombo').length;
+const typingCountBeforeShiftTyping=samples.filter(sample=>sample.action==='typeText').length;
+segmenter.handle(1,keyEvent('keydown',600,{key:'Shift',keyClass:'modifier'}));
+segmenter.handle(1,keyEvent('keydown',620,{key:null,keyClass:'alpha'}));
+segmenter.handle(1,keyEvent('keyup',660,{key:null,keyClass:'alpha'}));
+segmenter.handle(1,keyEvent('keyup',675,{key:'Shift',keyClass:'modifier'}));
+segmenter.handle(1,keyEvent('keydown',720,{key:null,keyClass:'alpha'}));
+segmenter.handle(1,keyEvent('keyup',760,{key:null,keyClass:'alpha'}));
+segmenter.flush(1);
+assert.equal(samples.filter(sample=>sample.action==='keyCombo').length,comboCountBeforeShiftTyping,'Shift + printable must remain typing, not shortcut learning');
+assert.equal(samples.filter(sample=>sample.action==='typeText').length,typingCountBeforeShiftTyping+1,'Shifted printable input must remain part of typeText timing');
+
+segmenter.handle(1,keyEvent('keydown',800,{key:'Shift',keyClass:'modifier'}));
+segmenter.handle(1,keyEvent('keydown',825,{key:'Tab',keyClass:'Tab'}));
+segmenter.handle(1,keyEvent('keyup',875,{key:'Tab',keyClass:'Tab'}));
+segmenter.handle(1,keyEvent('keyup',900,{key:'Shift',keyClass:'modifier'}));
+const shiftTab=samples.find(sample=>sample.action==='keyCombo'&&sample.modifiers.includes('Shift')&&sample.key==='Tab');
+assert.ok(shiftTab,'Shift + special key must be learned as keyCombo');
 
 const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'body-keyboard-learning-'));
 try{
@@ -84,7 +104,7 @@ try{
   assert.equal(comboPlan.plan.steps[3].delayMs,30);
 
   const empty=new OnlineBehaviorModel(path.join(tmp,'empty.json'),{random:()=>0});
-  const cascaded=new MotorPlanner({primary:empty,fallback:model});
+  const cascaded=new MotorPlanner(new CascadingMotorModel(empty,model));
   assert.equal(cascaded.plan({type:'pressKey',key:'Enter'}).source,'learned','keyboard recall must fall back to browser-global model');
   assert.equal(cascaded.plan({type:'keyCombo',key:'Control+c'}).source,'learned','combo recall must fall back to browser-global model');
 
