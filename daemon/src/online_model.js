@@ -219,7 +219,7 @@ class OnlineBehaviorModel {
     const keyHoldMs=clampTiming(primaryUp?Number(primaryUp.t)-Number(primaryDown.t):sample.hold_ms,45,{min:5,max:4000});
     const modifierUps=primaryUp?events.filter(e=>e?.type==='keyup'&&e?.keyClass==='modifier'&&Number(e.t)>=Number(primaryUp.t)).sort((a,b)=>Number(a.t)-Number(b.t)):[];
     const modifierReleaseGaps=[];
-    let previous=Number(primaryUp?.t??primaryDown.t)+keyHoldMs;
+    let previous=Number(primaryUp?.t??primaryDown.t);
     for(const event of modifierUps){modifierReleaseGaps.push(clampTiming(Number(event.t)-previous,24,{min:0,max:2000}));previous=Number(event.t);}
     if(!modifierReleaseGaps.length)modifierReleaseGaps.push(24);
     return {groupKey:keyboardComboGroupKey({modifiers,keyClass}),template:{source:'human',learnedAt:new Date().toISOString(),modifierDownGaps,keyDownDelayMs,keyHoldMs,modifierReleaseGaps}};
