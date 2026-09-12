@@ -123,7 +123,11 @@ class HumanActionSegmenter {
   _keyboard(tabId,s,e){
     if(e.keyClass==='redacted')return;
     if(e.keyClass==='modifier')return this._modifierKey(tabId,s,e);
-    if(s.modifiers.size)return this._comboKey(tabId,s,e);
+    if(s.modifiers.size){
+      const active=[...s.modifiers.keys()];
+      if(active.length===1&&active[0]==='Shift'&&TEXT_KEY_CLASSES.has(String(e.keyClass)))return this._typing(tabId,s,e);
+      return this._comboKey(tabId,s,e);
+    }
     if(SPECIAL_KEYS.has(String(e.keyClass)))return this._pressKey(tabId,s,e);
     if(TEXT_KEY_CLASSES.has(String(e.keyClass)))return this._typing(tabId,s,e);
   }
@@ -131,11 +135,11 @@ class HumanActionSegmenter {
   _modifierKey(tabId,s,e){
     const key=String(e.key||'');
     if(!MODIFIER_SET.has(key))return;
-    this._flushTyping(tabId,s);
     if(e.eventType==='keydown'){
       if(e.repeat===true)return;
+      if(key!=='Shift')this._flushTyping(tabId,s);
       if(s.combo?.primaryUp)this._flushCombo(tabId,s,{allowIncompleteRelease:true});
-      if(!s.modifiers.has(key))s.modifiers.set(key,{ts:Number(e.ts),target:e.target||null});
+      s.modifiers.set(key,{ts:Number(e.ts),target:e.target||null});
       return;
     }
     if(e.eventType!=='keyup')return;
