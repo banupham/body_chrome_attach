@@ -3,6 +3,9 @@
 const fs = require('node:fs');
 const {SafeJsonPersistence}=require('./safe_json_persistence');
 
+const MODIFIER_ORDER=Object.freeze(['Control','Alt','Shift','Meta']);
+const KEY_ALIASES=Object.freeze({esc:'Escape',return:'Enter',ctrl:'Control',control:'Control',cmd:'Meta',command:'Meta'});
+
 function distanceBucket(d) {
   if (!Number.isFinite(Number(d))) return 'unknown';
   if (d < 180) return 'near';
@@ -58,6 +61,10 @@ function usableMouseTemplate(template,{minMovementDurationMs=10,maxNormalizedExc
   }
   return maxExcursion<=maxNormalizedExcursion;
 }
+function normalizeKeyboardKey(value){const raw=String(value??'').trim();return KEY_ALIASES[raw.toLowerCase()]||raw||'unknown';}
+function canonicalModifiers(values){const set=new Set((values||[]).map(normalizeKeyboardKey));return MODIFIER_ORDER.filter(x=>set.has(x));}
+function keyboardComboGroupKey({modifiers=[],keyClass='special'}={}){const signature=canonicalModifiers(modifiers).join('+')||'none';return `keyboard|keyCombo|${signature}|${String(keyClass||'special')}`;}
+function clampTiming(value,fallback,{min=0,max=4000}={}){const n=Number(value);return Number.isFinite(n)?Math.max(min,Math.min(max,n)):fallback;}
 
 class OnlineBehaviorModel {
   constructor(modelPath, {maxTemplatesPerGroup=240,persistenceOptions={},random=Math.random,mouseCandidatePoolSize=4,minMovementDurationMs=10,maxNormalizedExcursion=10}={}) {
@@ -104,6 +111,8 @@ class OnlineBehaviorModel {
     if (['click','drag','movePointer'].includes(sample.action)) item=this._mouseTemplate(sample);
     else if (sample.action==='typeText') item=this._typingTemplate(sample);
     else if (['scrollVertical','scrollHorizontal'].includes(sample.action)) item=this._scrollTemplate(sample);
+    else if (sample.action==='pressKey') item=this._pressKeyTemplate(sample);
+    else if (sample.action==='keyCombo') item=this._keyComboTemplate(sample);
 
     if (!item) return false;
     this._push(item.groupKey,item.template);
@@ -187,6 +196,35 @@ class OnlineBehaviorModel {
     return {groupKey:`scroll|${sample.action}|${Math.abs(total)<=600?'small':'large'}`,template:{source:'human',learnedAt:new Date().toISOString(),ratios,gaps:gaps.length?gaps:[55]}};
   }
 
+  _pressKeyTemplate(sample){
+    const key=normalizeKeyboardKey(sample.key||sample.key_class);
+    if(!key||key==='unknown')return null;
+    const holdMs=clampTiming(sample.hold_ms,45,{min:5,max:4000});
+    return {groupKey:`keyboard|pressKey|${key}`,template:{source:'human',learnedAt:new Date().toISOString(),holdMs}};
+  }
+
+  _keyComboTemplate(sample){
+    const modifiers=canonicalModifiers(sample.modifiers);
+    if(!modifiers.length)return null;
+    const events=Array.isArray(sample.key_events)?sample.key_events:[];
+    const primaryDown=events.find(e=>e?.type==='keydown'&&e?.keyClass!=='modifier');
+    if(!primaryDown)return null;
+    const primaryUp=events.find(e=>e?.type==='keyup'&&e?.keyClass!=='modifier'&&Number(e.t)>=Number(primaryDown.t));
+    const keyClass=String(sample.key_class||primaryDown.keyClass||'special');
+    const modifierDowns=events.filter(e=>e?.type==='keydown'&&e?.keyClass==='modifier').sort((a,b)=>Number(a.t)-Number(b.t));
+    const lastModifierDown=modifierDowns.at(-1);
+    const modifierDownGaps=[];
+    for(let i=1;i<modifierDowns.length;i++)modifierDownGaps.push(clampTiming(Number(modifierDowns[i].t)-Number(modifierDowns[i-1].t),0,{min:0,max:2000}));
+    const keyDownDelayMs=clampTiming(lastModifierDown?Number(primaryDown.t)-Number(lastModifierDown.t):28,28,{min:0,max:2000});
+    const keyHoldMs=clampTiming(primaryUp?Number(primaryUp.t)-Number(primaryDown.t):sample.hold_ms,45,{min:5,max:4000});
+    const modifierUps=primaryUp?events.filter(e=>e?.type==='keyup'&&e?.keyClass==='modifier'&&Number(e.t)>=Number(primaryUp.t)).sort((a,b)=>Number(a.t)-Number(b.t)):[];
+    const modifierReleaseGaps=[];
+    let previous=Number(primaryUp?.t??primaryDown.t)+keyHoldMs;
+    for(const event of modifierUps){modifierReleaseGaps.push(clampTiming(Number(event.t)-previous,24,{min:0,max:2000}));previous=Number(event.t);}
+    if(!modifierReleaseGaps.length)modifierReleaseGaps.push(24);
+    return {groupKey:keyboardComboGroupKey({modifiers,keyClass}),template:{source:'human',learnedAt:new Date().toISOString(),modifierDownGaps,keyDownDelayMs,keyHoldMs,modifierReleaseGaps}};
+  }
+
   _randomIndex(length){
     const raw=Number(this.random());
     const unit=Number.isFinite(raw)?Math.max(0,Math.min(0.999999999999,raw)):0;
@@ -230,6 +268,20 @@ class OnlineBehaviorModel {
     return this._choose([key,...same]);
   }
 
+  samplePressKey(key){
+    const normalized=normalizeKeyboardKey(key);
+    const exact=`keyboard|pressKey|${normalized}`;
+    const same=Object.keys(this.model.groups).filter(k=>k.startsWith('keyboard|pressKey|')).sort();
+    return this._choose([exact,...same]);
+  }
+
+  sampleKeyCombo({modifiers=[],keyClass='special'}={}){
+    const signature=canonicalModifiers(modifiers).join('+')||'none';
+    const exact=keyboardComboGroupKey({modifiers,keyClass});
+    const same=Object.keys(this.model.groups).filter(k=>k.startsWith(`keyboard|keyCombo|${signature}|`)).sort();
+    return this._choose([exact,...same]);
+  }
+
   rebuild(samples) {
     this.model={version:1,revision:0,updatedAt:null,groups:{}};
     for(const sample of samples) {
@@ -238,6 +290,8 @@ class OnlineBehaviorModel {
         if(['click','drag','movePointer'].includes(sample.action)) item=this._mouseTemplate(sample);
         else if(sample.action==='typeText') item=this._typingTemplate(sample);
         else if(['scrollVertical','scrollHorizontal'].includes(sample.action)) item=this._scrollTemplate(sample);
+        else if(sample.action==='pressKey') item=this._pressKeyTemplate(sample);
+        else if(sample.action==='keyCombo') item=this._keyComboTemplate(sample);
         if(item) this._push(item.groupKey,item.template);
       }
     }
@@ -255,4 +309,4 @@ class OnlineBehaviorModel {
   }
 }
 
-module.exports={OnlineBehaviorModel,normalizePath,distanceBucket,sizeBucket,usableMouseTemplate};
+module.exports={OnlineBehaviorModel,normalizePath,distanceBucket,sizeBucket,usableMouseTemplate,normalizeKeyboardKey,canonicalModifiers,keyboardComboGroupKey};
