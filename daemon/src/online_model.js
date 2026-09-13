@@ -271,8 +271,7 @@ class OnlineBehaviorModel {
   samplePressKey(key){
     const normalized=normalizeKeyboardKey(key);
     const exact=`keyboard|pressKey|${normalized}`;
-    const same=Object.keys(this.model.groups).filter(k=>k.startsWith('keyboard|pressKey|')).sort();
-    return this._choose([exact,...same]);
+    return this._choose([exact]);
   }
 
   sampleKeyCombo({modifiers=[],keyClass='special'}={}){
