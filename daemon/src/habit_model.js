@@ -57,17 +57,16 @@ class HabitModel {
 
   observe(sample) {
     if(sample?.source!=='human') return false;
-    const key=tabStateKey(sample.browserInstanceId,sample.tabId),prev=this.state.lastHumanByTab[key] || null;
+    const scopedKey=tabStateKey(sample.browserInstanceId,sample.tabId),legacyKey=String(sample.tabId??'unknown');
+    const prev=this.state.lastHumanByTab[scopedKey] || this.state.lastHumanByTab[legacyKey] || null;
     this._observeNamedHabits(prev,sample);
-    this.state.lastHumanByTab[key]={action:sample.action,key:sample.key||null,context:sample.context||{},source:'human',ts:Date.now(),browserInstanceId:sample.browserInstanceId||null,tabId:sample.tabId??null};
+    const row={action:sample.action,key:sample.key||null,context:sample.context||{},source:'human',ts:Date.now(),browserInstanceId:sample.browserInstanceId||null,tabId:sample.tabId??null};
+    this.state.lastHumanByTab[scopedKey]=row;
+    this.state.lastHumanByTab[legacyKey]=row;
     this.state.revision++;this.state.updatedAt=nowIso();this.save();return true;
   }
 
-  lastHuman(browserInstanceId,tabId){
-    const scoped=this.state.lastHumanByTab[tabStateKey(browserInstanceId,tabId)]||null;
-    if(scoped)return scoped;
-    return this.state.lastHumanByTab[String(tabId??'unknown')]||null;
-  }
+  lastHuman(browserInstanceId,tabId){return this.state.lastHumanByTab[tabStateKey(browserInstanceId,tabId)]||this.state.lastHumanByTab[String(tabId??'unknown')]||null;}
 
   recordExplicit(habitKey,strategyId) {this._habit(String(habitKey),String(strategyId));this.state.revision++;this.state.updatedAt=nowIso();this.save();}
 
@@ -87,9 +86,7 @@ class HabitModel {
     return {habitKey:String(habitKey),totalHabitObservations:Number(h.total||0),transitionKey,selected:scored[0]||null,ranking:scored};
   }
 
-  stats() {
-    return {revision:this.state.revision,updatedAt:this.state.updatedAt,habitCount:Object.keys(this.state.habits).length,transitionCount:Object.keys(this.state.transitions).length,habits:this.state.habits,persistence:this.persistence.status()};
-  }
+  stats() {return {revision:this.state.revision,updatedAt:this.state.updatedAt,habitCount:Object.keys(this.state.habits).length,transitionCount:Object.keys(this.state.transitions).length,habits:this.state.habits,persistence:this.persistence.status()};}
 }
 
 module.exports={HabitModel,modalityOf,targetRole,tabStateKey};
