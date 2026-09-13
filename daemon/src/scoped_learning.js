@@ -24,7 +24,13 @@ function normalizeLearningIdentity(value,fallbackRef=null) {
   if(value&&typeof value==='object') {
     const browserInstanceId=String(value.browserInstanceId||'').trim();
     if(!browserInstanceId) throw new Error('learning_browser_instance_id_required');
-    return {companyId:value.companyId||null,deviceId:value.deviceId||null,browserInstanceId,extensionInstanceId:value.extensionInstanceId?String(value.extensionInstanceId):null,runtimeExtensionId:value.runtimeExtensionId?String(value.runtimeExtensionId):null};
+    return {
+      companyId:value.companyId||null,
+      deviceId:value.deviceId||null,
+      browserInstanceId,
+      extensionInstanceId:value.extensionInstanceId?String(value.extensionInstanceId):null,
+      runtimeExtensionId:value.runtimeExtensionId?String(value.runtimeExtensionId):null
+    };
   }
   const browserInstanceId=String(value||fallbackRef||'').trim();
   if(!browserInstanceId) throw new Error('learning_browser_instance_id_required');
@@ -39,23 +45,50 @@ function readJsonlLines(file) {
   });
 }
 
-function mergeJsonlFile(source,target) {
-  if(!fs.existsSync(source)) return {source,target,sourceRows:0,added:0,total:fs.existsSync(target)?readJsonlLines(target).length:0};
-  const existing=readJsonlLines(target),seen=new Set(existing),incoming=readJsonlLines(source);
-  let added=0;
-  for(const line of incoming)if(!seen.has(line)){seen.add(line);existing.push(line);added++;}
-  if(added){fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,existing.join('\n')+'\n','utf8');}
-  return {source,target,sourceRows:incoming.length,added,total:existing.length};
+function lineCounts(lines) {
+  const counts=new Map();
+  for(const line of lines) counts.set(line,(counts.get(line)||0)+1);
+  return counts;
 }
 
-function sourceSignature(root) {
-  if(!root||!fs.existsSync(root)) return null;
-  const rows=[];
-  for(const site of fs.readdirSync(root,{withFileTypes:true}).filter(x=>x.isDirectory()).sort((a,b)=>a.name.localeCompare(b.name,'en'))){
-    const dataDir=path.join(root,site.name,'data');
-    for(const file of DATA_FILES){const full=path.join(dataDir,file);if(!fs.existsSync(full))continue;const stat=fs.statSync(full);rows.push(`${site.name}/${file}:${stat.size}:${Math.trunc(stat.mtimeMs)}`);}
+function mergeJsonlLines(incoming,target) {
+  const existing=readJsonlLines(target);
+  if(!incoming.length) return {target,sourceRows:0,added:0,total:existing.length};
+
+  const have=lineCounts(existing);
+  const need=lineCounts(incoming);
+  const remaining=new Map();
+  for(const [line,count] of need) {
+    const deficit=Math.max(0,count-(have.get(line)||0));
+    if(deficit>0) remaining.set(line,deficit);
   }
-  return rows.join('|');
+
+  const additions=[];
+  for(const line of incoming) {
+    const left=remaining.get(line)||0;
+    if(left<=0) continue;
+    additions.push(line);
+    if(left===1) remaining.delete(line);
+    else remaining.set(line,left-1);
+  }
+
+  if(additions.length) {
+    fs.mkdirSync(path.dirname(target),{recursive:true});
+    const merged=existing.concat(additions);
+    fs.writeFileSync(target,merged.join('\n')+'\n','utf8');
+  }
+  return {target,sourceRows:incoming.length,added:additions.length,total:existing.length+additions.length};
+}
+
+function mergeJsonlFile(source,target) {
+  const incoming=readJsonlLines(source);
+  return {source,...mergeJsonlLines(incoming,target)};
+}
+
+function mergeJsonlSources(sources,target) {
+  const incoming=[];
+  for(const source of sources) incoming.push(...readJsonlLines(source));
+  return {sources:[...sources],...mergeJsonlLines(incoming,target)};
 }
 
 class CascadingMotorModel {
@@ -84,14 +117,13 @@ class ScopedLearningManager {
     this.baseDir=dataRoot?path.join(dataRoot,'profiles'):baseDir;
     this.browserRoot=path.join(this.baseDir,'by-browser');
     this.siteRoot=path.join(this.baseDir,'by-site');
-    this.migrationStatePath=path.join(this.siteRoot,'.browser-learning-imports.json');
     this.resolveIdentity=typeof resolveIdentity==='function'?resolveIdentity:null;
     this.cache=new Map();
     this.migrations=[];
     this.browserMigrationChecked=false;
     this.checkedLegacyExtensions=new Set();
+    this.legacyRoots=new Map();
     fs.mkdirSync(this.siteRoot,{recursive:true});
-    this.migrationState=this._loadMigrationState();
     this._ensureSharedMigration();
   }
 
@@ -106,76 +138,171 @@ class ScopedLearningManager {
   _legacyExtensionDir(identity) {return identity?.extensionInstanceId?path.join(this.baseDir,safeSegment(identity.extensionInstanceId,'extension')):null;}
   _hasPayload(dir) {return Boolean(dir&&fs.existsSync(dir)&&fs.readdirSync(dir,{withFileTypes:true}).some(entry=>entry.name!=='.DS_Store'));}
 
-  _loadMigrationState() {
-    if(!fs.existsSync(this.migrationStatePath))return {schemaVersion:1,sources:{}};
-    try{const parsed=JSON.parse(fs.readFileSync(this.migrationStatePath,'utf8'));if(parsed?.schemaVersion===1&&parsed?.sources&&typeof parsed.sources==='object')return parsed;}catch{}
-    return {schemaVersion:1,sources:{}};
+  _rememberLegacyRoot(sourceKey,sourceRoot) {
+    if(!this._hasPayload(sourceRoot)) return false;
+    const resolved=path.resolve(sourceRoot);
+    if(resolved===path.resolve(this.siteRoot) || resolved===path.resolve(this.browserRoot)) return false;
+    const previous=this.legacyRoots.get(sourceKey);
+    this.legacyRoots.set(sourceKey,sourceRoot);
+    return previous!==sourceRoot;
   }
 
-  _saveMigrationState() {fs.mkdirSync(path.dirname(this.migrationStatePath),{recursive:true});fs.writeFileSync(this.migrationStatePath,JSON.stringify(this.migrationState,null,2),'utf8');}
+  _rememberBrowserRoots() {
+    if(!fs.existsSync(this.browserRoot)) return false;
+    let changed=false;
+    for(const browser of fs.readdirSync(this.browserRoot,{withFileTypes:true}).filter(x=>x.isDirectory()).sort((a,b)=>a.name.localeCompare(b.name,'en'))) {
+      const root=path.join(this.browserRoot,browser.name);
+      if(this._hasPayload(root)) {
+        const key=`browser:${browser.name}`;
+        if(this.legacyRoots.get(key)!==root) {this.legacyRoots.set(key,root);changed=true;}
+      }
+    }
+    return changed;
+  }
+
+  _flushCachedSite(siteKey) {
+    const scope=this.cache.get(this._key(siteKey));
+    if(!scope) return;
+    try{scope.store.flushSync();}catch{}
+    try{scope.motor.flushSync();}catch{}
+    try{scope.habit.flushSync();}catch{}
+  }
 
   _resetCachedSite(siteKey) {
     const key=this._key(siteKey),scope=this.cache.get(key);if(!scope)return;
-    try{scope.store.flushSync();}catch{}try{scope.motor.flushSync();}catch{}try{scope.habit.flushSync();}catch{}
+    this._flushCachedSite(siteKey);
     this.cache.delete(key);
   }
 
   _rebuildSharedSite(siteKey) {
-    const normalized=normalizeSiteKey(siteKey),dir=this._scopeDir(normalized);this._resetCachedSite(normalized);
+    const normalized=normalizeSiteKey(siteKey),dir=this._scopeDir(normalized);
+    this._resetCachedSite(normalized);
     const samples=readJsonlLines(path.join(dir,'data','human_samples.jsonl')).map(line=>JSON.parse(line));
-    const motor=new OnlineBehaviorModel(path.join(dir,'model','behavior_model.json'));motor.rebuild(samples);
-    const habit=new HabitModel(path.join(dir,'model','habit_model.json'));habit.state={version:1,revision:0,updatedAt:null,transitions:{},habits:{},lastHumanByTab:{}};
-    for(const sample of samples)habit.observe(sample);habit.flushSync();
+    const motor=new OnlineBehaviorModel(path.join(dir,'model','behavior_model.json'));
+    motor.rebuild(samples);
+    const habit=new HabitModel(path.join(dir,'model','habit_model.json'));
+    habit.state={version:1,revision:0,updatedAt:null,transitions:{},habits:{},lastHumanByTab:{}};
+    for(const sample of samples) habit.observe(sample);
+    habit.flushSync();
     return {siteKey:normalized,samples:samples.length,motor:motor.stats(),habit:habit.stats()};
   }
 
-  _importSourceRoot(sourceKey,sourceRoot) {
-    if(!this._hasPayload(sourceRoot))return null;
-    const signature=sourceSignature(sourceRoot);if(this.migrationState.sources[sourceKey]?.signature===signature)return null;
-    const touched=new Set(),files=[];
-    for(const entry of fs.readdirSync(sourceRoot,{withFileTypes:true}).filter(x=>x.isDirectory())){
-      const siteKey=normalizeSiteKey(entry.name),sourceData=path.join(sourceRoot,entry.name,'data'),targetData=path.join(this._scopeDir(siteKey),'data');let siteAdded=0;
-      for(const file of DATA_FILES){const merged=mergeJsonlFile(path.join(sourceData,file),path.join(targetData,file));files.push(merged);siteAdded+=merged.added;}
-      if(siteAdded>0)touched.add(siteKey);
+  _repairSharedFromLegacyRoots(reason='legacy_repair') {
+    const roots=[...this.legacyRoots.entries()];
+    if(!roots.length) return null;
+
+    const targets=new Map();
+    for(const [sourceKey,sourceRoot] of roots) {
+      if(!this._hasPayload(sourceRoot)) continue;
+      for(const entry of fs.readdirSync(sourceRoot,{withFileTypes:true}).filter(x=>x.isDirectory()).sort((a,b)=>a.name.localeCompare(b.name,'en'))) {
+        const siteKey=normalizeSiteKey(entry.name),sourceData=path.join(sourceRoot,entry.name,'data');
+        for(const file of DATA_FILES) {
+          const source=path.join(sourceData,file);
+          if(!fs.existsSync(source)) continue;
+          const key=`${siteKey}\u0000${file}`;
+          if(!targets.has(key)) targets.set(key,{siteKey,file,sources:[]});
+          targets.get(key).sources.push({sourceKey,source});
+        }
+      }
     }
-    const rebuilt=[...touched].map(site=>this._rebuildSharedSite(site));
-    const report={sourceKey,sourceRoot,signature,importedAt:new Date().toISOString(),touchedSites:[...touched].sort(),addedRows:files.reduce((sum,row)=>sum+row.added,0),files,rebuilt};
-    this.migrationState.sources[sourceKey]={signature,importedAt:report.importedAt,addedRows:report.addedRows,touchedSites:report.touchedSites};this._saveMigrationState();this.migrations.push(report);return report;
+
+    const sitesToFlush=new Set([...targets.values()].map(row=>row.siteKey));
+    for(const siteKey of sitesToFlush) this._flushCachedSite(siteKey);
+
+    const files=[];
+    const touchedData=new Set();
+    const touchedSamples=new Set();
+    for(const target of targets.values()) {
+      const targetFile=path.join(this._scopeDir(target.siteKey),'data',target.file);
+      const merged=mergeJsonlSources(target.sources.map(row=>row.source),targetFile);
+      files.push({siteKey:target.siteKey,file:target.file,sourceKeys:target.sources.map(row=>row.sourceKey),...merged});
+      if(merged.added>0) {
+        touchedData.add(target.siteKey);
+        if(target.file==='human_samples.jsonl') touchedSamples.add(target.siteKey);
+      }
+    }
+
+    for(const siteKey of touchedData) this._resetCachedSite(siteKey);
+    const rebuilt=[...touchedSamples].sort().map(siteKey=>this._rebuildSharedSite(siteKey));
+    const report={
+      reason,
+      importedAt:new Date().toISOString(),
+      sourceKeys:roots.map(([key])=>key).sort(),
+      addedRows:files.reduce((sum,row)=>sum+row.added,0),
+      touchedSites:[...touchedData].sort(),
+      repairedSampleSites:[...touchedSamples].sort(),
+      files,
+      rebuilt
+    };
+    this.migrations.push(report);
+    return report;
   }
 
   _ensureSharedMigration(identity=null) {
-    if(!this.browserMigrationChecked){
+    let shouldRepair=false;
+    if(!this.browserMigrationChecked) {
       this.browserMigrationChecked=true;
-      if(fs.existsSync(this.browserRoot))for(const browser of fs.readdirSync(this.browserRoot,{withFileTypes:true}).filter(x=>x.isDirectory()))this._importSourceRoot(`browser:${browser.name}`,path.join(this.browserRoot,browser.name));
+      this._rememberBrowserRoots();
+      shouldRepair=true;
     }
-    if(identity?.extensionInstanceId&&!this.checkedLegacyExtensions.has(identity.extensionInstanceId)){
+
+    if(identity?.extensionInstanceId&&!this.checkedLegacyExtensions.has(identity.extensionInstanceId)) {
       this.checkedLegacyExtensions.add(identity.extensionInstanceId);
       const legacy=this._legacyExtensionDir(identity);
-      if(legacy&&path.resolve(legacy)!==path.resolve(this.siteRoot)&&path.resolve(legacy)!==path.resolve(this.browserRoot))this._importSourceRoot(`extension:${identity.extensionInstanceId}`,legacy);
+      if(legacy&&this._rememberLegacyRoot(`extension:${identity.extensionInstanceId}`,legacy)) shouldRepair=true;
     }
+
+    if(shouldRepair) this._repairSharedFromLegacyRoots(identity?.extensionInstanceId?'legacy_identity_bound':'startup_legacy_repair');
     return this.migrationStatus();
   }
 
-  bindIdentity(ref) {const identity=this._identity(ref);this._ensureSharedMigration(identity);return {...identity,learningScope:'site_shared',migration:this.migrationStatus()};}
+  bindIdentity(ref) {
+    const identity=this._identity(ref);
+    this._ensureSharedMigration(identity);
+    return {...identity,learningScope:'site_shared',migration:this.migrationStatus()};
+  }
 
   scope(ref,siteKey) {
-    const identity=this._identity(ref);this._ensureSharedMigration(identity);const key=this._key(siteKey);
-    if(this.cache.has(key))return this.cache.get(key);
-    const dir=this._scopeDir(siteKey),scope={companyId:identity.companyId,deviceId:identity.deviceId,browserInstanceId:null,extensionInstanceId:null,runtimeExtensionId:null,learningScope:'site_shared',siteKey:normalizeSiteKey(siteKey),dir,store:new DatasetStore(path.join(dir,'data')),motor:new OnlineBehaviorModel(path.join(dir,'model','behavior_model.json')),habit:new HabitModel(path.join(dir,'model','habit_model.json'))};
-    this.cache.set(key,scope);return scope;
+    const identity=this._identity(ref);
+    this._ensureSharedMigration(identity);
+    const key=this._key(siteKey);
+    if(this.cache.has(key)) return this.cache.get(key);
+    const dir=this._scopeDir(siteKey);
+    const scope={
+      companyId:identity.companyId,
+      deviceId:identity.deviceId,
+      browserInstanceId:null,
+      extensionInstanceId:null,
+      runtimeExtensionId:null,
+      learningScope:'site_shared',
+      siteKey:normalizeSiteKey(siteKey),
+      dir,
+      store:new DatasetStore(path.join(dir,'data')),
+      motor:new OnlineBehaviorModel(path.join(dir,'model','behavior_model.json')),
+      habit:new HabitModel(path.join(dir,'model','habit_model.json'))
+    };
+    this.cache.set(key,scope);
+    return scope;
   }
 
   globalScope(ref) {return this.scope(ref,'__global__');}
 
   observeEvent(ref,siteKey,tabId,event) {
     const identity=this._identity(ref),site=this.scope(identity,siteKey),provenance={browserInstanceId:identity.browserInstanceId,extensionInstanceId:identity.extensionInstanceId,runtimeExtensionId:identity.runtimeExtensionId};
-    site.store.appendEvent(tabId,{...event,...provenance});const global=this.globalScope(identity);if(global!==site)global.store.appendEvent(tabId,{...event,...provenance,siteKey:normalizeSiteKey(siteKey)});
+    site.store.appendEvent(tabId,{...event,...provenance});
+    const global=this.globalScope(identity);
+    if(global!==site) global.store.appendEvent(tabId,{...event,...provenance,siteKey:normalizeSiteKey(siteKey)});
   }
 
   observeHumanSample(ref,siteKey,sample,{learn=true}={}) {
     const identity=this._identity(ref),site=this.scope(identity,siteKey),global=this.globalScope(identity),scopedSample={...sample,browserInstanceId:String(identity.browserInstanceId),extensionInstanceId:identity.extensionInstanceId,runtimeExtensionId:identity.runtimeExtensionId,siteKey:normalizeSiteKey(siteKey),source:'human'};
-    site.store.appendHumanSample(scopedSample);if(global!==site)global.store.appendHumanSample(scopedSample);
-    if(learn){site.motor.observe(scopedSample);site.habit.observe(scopedSample);if(global!==site){global.motor.observe(scopedSample);global.habit.observe(scopedSample);}}
+    site.store.appendHumanSample(scopedSample);
+    if(global!==site) global.store.appendHumanSample(scopedSample);
+    if(learn) {
+      site.motor.observe(scopedSample);
+      site.habit.observe(scopedSample);
+      if(global!==site) {global.motor.observe(scopedSample);global.habit.observe(scopedSample);}
+    }
     return scopedSample;
   }
 
@@ -183,21 +310,58 @@ class ScopedLearningManager {
   habitFor(ref,siteKey) {const site=this.scope(ref,siteKey),global=this.globalScope(ref);return new CascadingHabitModel(site.habit,global.habit);}
 
   flushSync() {
-    const results=[];for(const scope of this.cache.values()){let datasetOk=true;try{scope.store.flushSync();}catch{datasetOk=false;}const motor=scope.motor.flushSync(),habit=scope.habit.flushSync();results.push({learningScope:'site_shared',siteKey:scope.siteKey,datasetOk,motorOk:motor.ok,habitOk:habit.ok});}return results;
+    const results=[];
+    for(const scope of this.cache.values()) {
+      let datasetOk=true;
+      try{scope.store.flushSync();}catch{datasetOk=false;}
+      const motor=scope.motor.flushSync(),habit=scope.habit.flushSync();
+      results.push({learningScope:'site_shared',siteKey:scope.siteKey,datasetOk,motorOk:motor.ok,habitOk:habit.ok});
+    }
+    return results;
   }
 
   rebuild(ref,siteKey='__global__') {
-    const identity=this._identity(ref);this._ensureSharedMigration(identity);
-    if(siteKey==='*')return this.listSites(identity).map(site=>this.rebuild(identity,site));
-    const scope=this.scope(identity,siteKey),samples=scope.store.loadHumanSamples();scope.motor.rebuild(samples);scope.habit.state={version:1,revision:0,updatedAt:null,transitions:{},habits:{},lastHumanByTab:{}};for(const sample of samples)scope.habit.observe(sample);scope.habit.flushSync();
+    const identity=this._identity(ref);
+    this._ensureSharedMigration(identity);
+    if(siteKey==='*') return this.listSites(identity).map(site=>this.rebuild(identity,site));
+    const scope=this.scope(identity,siteKey),samples=scope.store.loadHumanSamples();
+    scope.motor.rebuild(samples);
+    scope.habit.state={version:1,revision:0,updatedAt:null,transitions:{},habits:{},lastHumanByTab:{}};
+    for(const sample of samples) scope.habit.observe(sample);
+    scope.habit.flushSync();
     return {browserInstanceId:String(identity.browserInstanceId),extensionInstanceId:identity.extensionInstanceId,learningScope:'site_shared',siteKey:scope.siteKey,samples:samples.length,motor:scope.motor.stats(),habit:scope.habit.stats()};
   }
 
-  stats(ref,siteKey) {const identity=this._identity(ref),scope=this.scope(identity,siteKey);return {browserInstanceId:String(identity.browserInstanceId),extensionInstanceId:identity.extensionInstanceId,learningScope:'site_shared',siteKey:scope.siteKey,dataset:scope.store.stats(),motor:scope.motor.stats(),habit:scope.habit.stats()};}
+  stats(ref,siteKey) {
+    const identity=this._identity(ref),scope=this.scope(identity,siteKey);
+    return {browserInstanceId:String(identity.browserInstanceId),extensionInstanceId:identity.extensionInstanceId,learningScope:'site_shared',siteKey:scope.siteKey,dataset:scope.store.stats(),motor:scope.motor.stats(),habit:scope.habit.stats()};
+  }
 
-  listSites(ref) {const identity=this._identity(ref);this._ensureSharedMigration(identity);if(!fs.existsSync(this.siteRoot))return [];return fs.readdirSync(this.siteRoot,{withFileTypes:true}).filter(x=>x.isDirectory()).map(x=>x.name).sort();}
+  listSites(ref) {
+    const identity=this._identity(ref);
+    this._ensureSharedMigration(identity);
+    if(!fs.existsSync(this.siteRoot)) return [];
+    return fs.readdirSync(this.siteRoot,{withFileTypes:true}).filter(x=>x.isDirectory()).map(x=>x.name).sort();
+  }
 
-  migrationStatus() {return {learningScope:'site_shared',siteRoot:this.siteRoot,legacyBrowserRoot:this.browserRoot,sources:{...this.migrationState.sources},recent:this.migrations.slice(-20).map(row=>({sourceKey:row.sourceKey,importedAt:row.importedAt,addedRows:row.addedRows,touchedSites:row.touchedSites}))};}
+  migrationStatus() {
+    return {
+      learningScope:'site_shared',
+      siteRoot:this.siteRoot,
+      legacyBrowserRoot:this.browserRoot,
+      legacySources:[...this.legacyRoots.keys()].sort(),
+      recent:this.migrations.slice(-20).map(row=>({reason:row.reason,importedAt:row.importedAt,addedRows:row.addedRows,touchedSites:row.touchedSites,repairedSampleSites:row.repairedSampleSites}))
+    };
+  }
 }
 
-module.exports={ScopedLearningManager,CascadingMotorModel,CascadingHabitModel,normalizeLearningIdentity,normalizeSiteKey,safeSegment,mergeJsonlFile};
+module.exports={
+  ScopedLearningManager,
+  CascadingMotorModel,
+  CascadingHabitModel,
+  normalizeLearningIdentity,
+  normalizeSiteKey,
+  safeSegment,
+  mergeJsonlFile,
+  mergeJsonlSources
+};

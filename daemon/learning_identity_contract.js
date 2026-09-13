@@ -59,54 +59,74 @@ test('different websites remain separate while device-global fallback is shared'
   assert.ok(learning.motorFor('ext-c','beta.test').samplePressKey('Tab'));
 });
 
-test('legacy by-browser data from every Browser is copied, deduplicated and rebuilt into by-site',()=>{
+test('legacy by-browser data from every Browser preserves repeated observations and rebuilds into by-site',()=>{
   const root=tempDir(),profiles=path.join(root,'profiles');
   const aSite=path.join(profiles,'by-browser','browser-old-a','youtube.com','data','human_samples.jsonl');
   const bSite=path.join(profiles,'by-browser','browser-old-b','youtube.com','data','human_samples.jsonl');
   const aGlobal=path.join(profiles,'by-browser','browser-old-a','__global__','data','human_samples.jsonl');
   const bGlobal=path.join(profiles,'by-browser','browser-old-b','__global__','data','human_samples.jsonl');
-  const rowA=human('pressKey',{key:'Enter',browserInstanceId:'browser-old-a',siteKey:'youtube.com'});
-  const rowB=human('pressKey',{key:'Tab',browserInstanceId:'browser-old-b',siteKey:'youtube.com'});
-  writeJsonl(aSite,[rowA]);writeJsonl(bSite,[rowB]);writeJsonl(aGlobal,[rowA]);writeJsonl(bGlobal,[rowB]);
+  const repeated=human('pressKey',{key:'Backspace',siteKey:'youtube.com'});
+  writeJsonl(aSite,[repeated,repeated,repeated]);
+  writeJsonl(bSite,[repeated,repeated]);
+  writeJsonl(aGlobal,[repeated,repeated,repeated]);
+  writeJsonl(bGlobal,[repeated,repeated]);
 
   const learning=new ScopedLearningManager(profiles,{resolveIdentity:resolver});
   const site=learning.stats('ext-a','youtube.com'),global=learning.stats('ext-b','__global__');
-  assert.equal(site.dataset.humanSamples,2);
-  assert.equal(global.dataset.humanSamples,2);
-  assert.equal(site.motor.groups['keyboard|pressKey|Enter'],1);
-  assert.equal(site.motor.groups['keyboard|pressKey|Tab'],1);
-  assert.equal(global.motor.groups['keyboard|pressKey|Enter'],1);
-  assert.equal(global.motor.groups['keyboard|pressKey|Tab'],1);
+  assert.equal(site.dataset.humanSamples,5);
+  assert.equal(global.dataset.humanSamples,5);
+  assert.equal(site.motor.groups['keyboard|pressKey|Backspace'],5);
+  assert.equal(global.motor.groups['keyboard|pressKey|Backspace'],5);
   assert.equal(fs.existsSync(aSite),true,'legacy source is preserved for rollback/audit');
   assert.equal(fs.existsSync(bSite),true,'legacy source is preserved for rollback/audit');
-  assert.equal(fs.existsSync(path.join(profiles,'by-site','youtube.com','data','human_samples.jsonl')),true);
 
   const learningAgain=new ScopedLearningManager(profiles,{resolveIdentity:resolver});
-  assert.equal(learningAgain.stats('ext-c','youtube.com').dataset.humanSamples,2,'restart must not duplicate imported rows');
+  assert.equal(learningAgain.stats('ext-c','youtube.com').dataset.humanSamples,5,'restart must not duplicate preserved multiplicity');
 });
 
-test('changed legacy Browser source is incrementally imported without duplicating old rows',()=>{
+test('collapsed shared dataset is repaired back to legacy multiplicity without deleting newer shared samples',()=>{
+  const root=tempDir(),profiles=path.join(root,'profiles');
+  const legacyFile=path.join(profiles,'by-browser','browser-old','__global__','data','human_samples.jsonl');
+  const sharedFile=path.join(profiles,'by-site','__global__','data','human_samples.jsonl');
+  const legacy=human('pressKey',{key:'Backspace',browserInstanceId:'browser-old',extensionInstanceId:'ext-old',siteKey:'youtube.com'});
+  const newer=human('typeText',{browserInstanceId:'browser-new',extensionInstanceId:'ext-new',siteKey:'youtube.com',key_events:[{type:'keydown',keyClass:'alpha',t:0},{type:'keyup',keyClass:'alpha',t:40},{type:'keydown',keyClass:'alpha',t:90},{type:'keyup',keyClass:'alpha',t:130}]});
+  writeJsonl(legacyFile,[legacy,legacy,legacy,legacy]);
+  writeJsonl(sharedFile,[legacy,newer]);
+  fs.mkdirSync(path.dirname(path.join(profiles,'by-site','.browser-learning-imports.json')),{recursive:true});
+  fs.writeFileSync(path.join(profiles,'by-site','.browser-learning-imports.json'),JSON.stringify({schemaVersion:1,sources:{}}),'utf8');
+
+  const learning=new ScopedLearningManager(profiles,{resolveIdentity:resolver});
+  const rows=learning.scope('ext-a','__global__').store.loadHumanSamples();
+  assert.equal(rows.length,5);
+  assert.equal(rows.filter(row=>row.action==='pressKey'&&row.key==='Backspace').length,4);
+  assert.equal(rows.filter(row=>row.action==='typeText').length,1,'new shared-only observations must survive repair');
+  const stats=learning.stats('ext-b','__global__');
+  assert.equal(stats.motor.groups['keyboard|pressKey|Backspace'],4);
+  assert.equal(stats.motor.groups['typing|typeText'],1);
+});
+
+test('changed legacy Browser source grows shared multiplicity by only the new occurrence',()=>{
   const root=tempDir(),profiles=path.join(root,'profiles'),file=path.join(profiles,'by-browser','browser-old','example.com','data','human_samples.jsonl');
-  const first=human('pressKey',{key:'Enter',browserInstanceId:'browser-old',siteKey:'example.com'});
-  const second=human('pressKey',{key:'Escape',browserInstanceId:'browser-old',siteKey:'example.com'});
-  writeJsonl(file,[first]);
+  const repeated=human('pressKey',{key:'Enter',browserInstanceId:'browser-old',siteKey:'example.com'});
+  writeJsonl(file,[repeated,repeated]);
   let learning=new ScopedLearningManager(profiles,{resolveIdentity:resolver});
-  assert.equal(learning.stats('ext-a','example.com').dataset.humanSamples,1);
-  writeJsonl(file,[first,second]);
+  assert.equal(learning.stats('ext-a','example.com').dataset.humanSamples,2);
+  writeJsonl(file,[repeated,repeated,repeated]);
   learning=new ScopedLearningManager(profiles,{resolveIdentity:resolver});
-  assert.equal(learning.stats('ext-b','example.com').dataset.humanSamples,2);
-  assert.equal(learning.stats('ext-b','example.com').motor.groups['keyboard|pressKey|Escape'],1);
+  assert.equal(learning.stats('ext-b','example.com').dataset.humanSamples,3);
+  assert.equal(learning.stats('ext-b','example.com').motor.groups['keyboard|pressKey|Enter'],3);
 });
 
-test('legacy extension-scoped learning is imported into the shared site store without deleting source',()=>{
+test('legacy extension-scoped learning is aggregated into the shared site store without deleting source',()=>{
   const root=tempDir(),profiles=path.join(root,'profiles');
   const legacy=path.join(profiles,'ext-legacy','example.com','data','human_samples.jsonl');
-  writeJsonl(legacy,[human('pressKey',{key:'Escape',siteKey:'example.com'})]);
+  const row=human('pressKey',{key:'Escape',siteKey:'example.com'});
+  writeJsonl(legacy,[row,row,row]);
   const learning=new ScopedLearningManager(profiles,{resolveIdentity:resolver});
   const bound=learning.bindIdentity('ext-legacy');
   assert.equal(bound.learningScope,'site_shared');
-  assert.equal(learning.stats('ext-legacy','example.com').dataset.humanSamples,1);
-  assert.equal(learning.stats('ext-a','example.com').motor.groups['keyboard|pressKey|Escape'],1);
+  assert.equal(learning.stats('ext-legacy','example.com').dataset.humanSamples,3);
+  assert.equal(learning.stats('ext-a','example.com').motor.groups['keyboard|pressKey|Escape'],3);
   assert.equal(fs.existsSync(legacy),true);
 });
 
