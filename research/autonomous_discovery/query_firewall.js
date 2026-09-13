@@ -33,9 +33,19 @@ function safeQueries(queries,target){
   return {queries:out,audit};
 }
 function targetPlanningFingerprint(targetApi){
-  const classification=classifyVideo(targetApi);
+  const strongKeywordRows=(targetApi?.keywords||[]).filter(x=>(x.sources||[]).some(s=>['tag','tag_token','video_topic','video_topic_token','channel_topic','channel_keyword'].includes(s)));
+  const strongKeywords=strongKeywordRows.slice(0,24).map(x=>x.term);
+  // Deliberately redact title/description and title-derived keywords before topic inference.
+  // Exact target title remains available only to the query firewall and final report.
+  const planningOnly={
+    ...targetApi,
+    title:'',
+    descriptionExcerpt:'',
+    keywords:strongKeywordRows,
+    channel:targetApi?.channel?{...targetApi.channel,descriptionExcerpt:''}:null
+  };
+  const classification=classifyVideo(planningOnly);
   const categoryTopic=CATEGORY_TOPIC[String(targetApi?.categoryId||'')]||classification.primary;
-  const strongKeywords=(targetApi?.keywords||[]).filter(x=>(x.sources||[]).some(s=>['tag','tag_token','video_topic','video_topic_token','channel_topic','channel_keyword'].includes(s))).slice(0,24).map(x=>x.term);
   return {
     videoId:targetApi?.videoId||null,
     categoryId:String(targetApi?.categoryId||''),
@@ -45,7 +55,8 @@ function targetPlanningFingerprint(targetApi){
     tags:uniq(targetApi?.tags).slice(0,30),
     keywords:uniq(strongKeywords).slice(0,30),
     language:targetApi?.defaultLanguage||targetApi?.defaultAudioLanguage||null,
-    country:targetApi?.channel?.country||null
+    country:targetApi?.channel?.country||null,
+    titleRedactedForPlanning:true
   };
 }
 function buildQueryPlan(targetApi,{maxQueries=18}={}){
