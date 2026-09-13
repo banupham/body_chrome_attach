@@ -66,7 +66,7 @@ test('runtime keeps semanticBefore out of learning DatasetStore while writing se
   assert.equal(evidence.action.type,'youtube.search');
   runtime.flushSync();
 
-  const datasetFile=path.join(baseDir,'profiles','by-browser','browser-a','www.youtube.com','data','human_events.jsonl');
+  const datasetFile=path.join(baseDir,'profiles','by-site','www.youtube.com','data','human_events.jsonl');
   const datasetText=fs.readFileSync(datasetFile,'utf8');
   assert.equal(datasetText.includes('semanticBefore'),false);
   assert.equal(datasetText.includes('search_results'),false);
