@@ -1,6 +1,7 @@
 'use strict';
 
 const {clean,uniq,topicLabel}=require('./topic_classifier');
+const {classifyMediaFormat,playerAspect}=require('./media_format');
 
 const API_ROOT='https://www.googleapis.com/youtube/v3';
 const STOP=new Set(['the','and','for','with','from','this','that','official','video','youtube','channel','watch','full','new','best','top','cua','của','cho','voi','với','mot','một','nhung','những','cac','các','nay','này','hay','nhat','nhất','trong','tren','trên','khi','den','đến','va','và']);
@@ -29,9 +30,11 @@ function deriveKeywords(video,channel,{limit=40}={}){
   return [...map.values()].map(x=>({term:x.term,score:Number(x.score.toFixed(2)),sources:[...x.sources]})).sort((a,b)=>b.score-a.score||b.term.length-a.term.length).slice(0,Math.max(1,Number(limit)||40));
 }
 function compactStats(raw={}){const out={};for(const k of ['viewCount','likeCount','commentCount'])if(raw[k]!=null)out[k]=String(raw[k]);return out;}
+function compactPlayer(raw={}){const embedWidth=Number(raw?.embedWidth),embedHeight=Number(raw?.embedHeight),player={embedWidth:Number.isFinite(embedWidth)&&embedWidth>0?embedWidth:null,embedHeight:Number.isFinite(embedHeight)&&embedHeight>0?embedHeight:null};player.aspectRatio=playerAspect(player);return player;}
 function compactVideo(item){
-  const s=item?.snippet||{},t=item?.topicDetails||{},c=item?.contentDetails||{};
-  return {videoId:String(item?.id||''),title:clean(s.title),descriptionExcerpt:clean(s.description).slice(0,900),publishedAt:s.publishedAt||null,channelId:s.channelId||null,channelTitle:clean(s.channelTitle)||null,tags:uniq(s.tags).slice(0,80),categoryId:s.categoryId||null,defaultLanguage:s.defaultLanguage||null,defaultAudioLanguage:s.defaultAudioLanguage||null,duration:c.duration||null,topicIds:uniq(t.topicIds),relevantTopicIds:uniq(t.relevantTopicIds),topicCategories:uniq(t.topicCategories),topicLabels:uniq((t.topicCategories||[]).map(topicLabel)),statistics:compactStats(item?.statistics||{})};
+  const s=item?.snippet||{},t=item?.topicDetails||{},c=item?.contentDetails||{},player=compactPlayer(item?.player||{}),descriptionExcerpt=clean(s.description).slice(0,900);
+  const mediaFormat=classifyMediaFormat({duration:c.duration||null,publishedAt:s.publishedAt||null,player,title:clean(s.title),descriptionExcerpt});
+  return {videoId:String(item?.id||''),title:clean(s.title),descriptionExcerpt,publishedAt:s.publishedAt||null,channelId:s.channelId||null,channelTitle:clean(s.channelTitle)||null,tags:uniq(s.tags).slice(0,80),categoryId:s.categoryId||null,defaultLanguage:s.defaultLanguage||null,defaultAudioLanguage:s.defaultAudioLanguage||null,duration:c.duration||null,player,mediaFormat,topicIds:uniq(t.topicIds),relevantTopicIds:uniq(t.relevantTopicIds),topicCategories:uniq(t.topicCategories),topicLabels:uniq((t.topicCategories||[]).map(topicLabel)),statistics:compactStats(item?.statistics||{})};
 }
 function compactChannel(item){
   const s=item?.snippet||{},t=item?.topicDetails||{},b=item?.brandingSettings?.channel||{};
@@ -84,7 +87,7 @@ class YouTubeApi {
   }
   async enrichVideoIds(ids,{required=false}={}){
     const unique=uniq(ids);const missing=unique.filter(id=>!this.videoCache.has(id));this.metrics.cacheHits+=unique.length-missing.length;
-    for(let i=0;i<missing.length;i+=50){const batch=missing.slice(i,i+50);if(!batch.length)continue;this.metrics.videoCalls++;const data=await this._safe('videos',{part:'snippet,contentDetails,topicDetails,statistics',id:batch.join(',')},{required});if(!data)continue;const seen=new Set();for(const item of data.items||[]){const row=compactVideo(item);seen.add(row.videoId);this.videoCache.set(row.videoId,row);}for(const id of batch)if(!seen.has(id))this.videoCache.set(id,null);}
+    for(let i=0;i<missing.length;i+=50){const batch=missing.slice(i,i+50);if(!batch.length)continue;this.metrics.videoCalls++;const data=await this._safe('videos',{part:'snippet,contentDetails,player,topicDetails,statistics',id:batch.join(','),maxWidth:8192,maxHeight:8192},{required});if(!data)continue;const seen=new Set();for(const item of data.items||[]){const row=compactVideo(item);seen.add(row.videoId);this.videoCache.set(row.videoId,row);}for(const id of batch)if(!seen.has(id))this.videoCache.set(id,null);}
     await this._loadChannels(unique.map(id=>this.videoCache.get(id)?.channelId).filter(Boolean),{required:false});
     const out=new Map();for(const id of unique){const video=this.videoCache.get(id);if(!video)continue;const channel=video.channelId?this.channelCache.get(video.channelId)||null:null;out.set(id,{...video,channel,keywords:deriveKeywords(video,channel)});}return out;
   }
@@ -95,4 +98,4 @@ class YouTubeApi {
   }
 }
 
-module.exports={YouTubeApi,tokens,parseChannelKeywords,deriveKeywords,compactVideo,compactChannel,timeoutError,httpError,networkError};
+module.exports={YouTubeApi,tokens,parseChannelKeywords,deriveKeywords,compactPlayer,compactVideo,compactChannel,timeoutError,httpError,networkError};
