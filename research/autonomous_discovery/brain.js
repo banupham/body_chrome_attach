@@ -4,9 +4,9 @@ const fs=require('node:fs');
 const path=require('node:path');
 const crypto=require('node:crypto');
 const {BodyBrainClient,defaultBodyRoot}=require('./body_client');
-const {YouTubeApi,tokens}=require('./youtube_api');
+const {YouTubeApi}=require('./youtube_api');
 const {classifyVideo,topicDistance,fold,uniq}=require('./topic_classifier');
-const {buildQueryPlan,inspectQuery}=require('./query_firewall');
+const {buildQueryPlan,inspectQuery,buildObservedQueryExpansion}=require('./query_firewall');
 const {ExperienceMemory}=require('./experience_memory');
 const {Reporter}=require('./reporter');
 
@@ -85,8 +85,11 @@ class AutonomousYouTubeBrain{
     const proximityGain=Math.max(0,maxProximity-this.bestProximity);this.bestProximity=maxProximity;return {snapshot,newVideos,newTopics,newTransitions,proximityGain,targetCandidate};
   }
   deriveEnvironmentQueries(snapshot){
-    if(snapshot.pageType!=='search')return;const counts=new Map();for(const row of snapshot.candidates){for(const token of tokens(row.title||'')){if(token.length<4)continue;counts.set(token,(counts.get(token)||0)+1);}}
-    const recurring=[...counts.entries()].filter(([,count])=>count>=2).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([token])=>token);const base=this.queryPlan.fingerprint.primaryTopic;for(const token of recurring){const query=`${base==='unknown'?'':base.replace(/_/g,' ')} ${token}`.trim();const inspected=inspectQuery(query,{targetVideoId:this.targetApi.videoId,targetTitle:this.targetApi.title});this.queryAudit.push({kind:'environment_neighborhood',source:'observed_search_titles',...inspected});if(inspected.allowed&&!this.dynamicQueries.some(x=>fold(x.query)===fold(query))&&!this.queryPlan.plan.some(x=>fold(x.query)===fold(query)))this.dynamicQueries.push({kind:'environment_neighborhood',source:'observed_search_titles',query,titleOverlap:inspected.titleOverlap});}
+    if(snapshot.pageType!=='search'||!this.queryPlan?.fingerprint||!this.targetApi)return;
+    const titles=snapshot.candidates.map(row=>row.youtubeApi?.title||row.title||'').filter(Boolean),existing=[...this.queryPlan.plan,...this.dynamicQueries].map(row=>row.query);
+    const expansion=buildObservedQueryExpansion(titles,this.queryPlan.fingerprint,{targetVideoId:this.targetApi.videoId,targetTitle:this.targetApi.title},{existingQueries:existing,limit:5});this.queryAudit.push(...expansion.audit);
+    let added=0;for(const row of expansion.plan){if(this.dynamicQueries.some(x=>fold(x.query)===fold(row.query))||this.queryPlan.plan.some(x=>fold(x.query)===fold(row.query)))continue;this.dynamicQueries.push(row);added++;}
+    if(added)this.ledger('query_plan_expanded',{source:'observed_target_anchored_titles',added,totalDynamic:this.dynamicQueries.length,queries:expansion.plan.slice(0,added).map(row=>row.query)});
   }
   nextQuery(){
     const all=[...this.queryPlan.plan,...this.dynamicQueries];if(!all.length)throw new Error('no_safe_query_available');
@@ -166,7 +169,7 @@ class AutonomousYouTubeBrain{
   }
   limitReached(){if(!this.config.unlimited&&this.config.maxSteps>0&&this.stepNo>=this.config.maxSteps)return 'max_steps';if(!this.config.unlimited&&this.config.maxMinutes>0&&Date.now()-this.startedAt>=this.config.maxMinutes*60000)return 'max_runtime';return null;}
   async run(){
-    this.status='STARTING';this.memory.startRun();this.targetApi=await this.api.profileTarget(this.config.target);this.queryPlan=buildQueryPlan(this.targetApi,{maxQueries:this.config.maxQueries});this.queryAudit.push(...this.queryPlan.audit);this.ledger('target_profiled',{videoId:this.targetApi.videoId,title:this.targetApi.title,categoryId:this.targetApi.categoryId,topics:this.targetApi.topicLabels,planningFingerprint:this.queryPlan.fingerprint,safeQueryCount:this.queryPlan.plan.length});
+    this.status='STARTING';this.memory.startRun();this.targetApi=await this.api.profileTarget(this.config.target);this.queryPlan=buildQueryPlan(this.targetApi,{maxQueries:this.config.maxQueries});this.queryAudit.push(...this.queryPlan.audit);this.ledger('target_profiled',{videoId:this.targetApi.videoId,title:this.targetApi.title,categoryId:this.targetApi.categoryId,topics:this.targetApi.topicLabels,planningFingerprint:this.queryPlan.fingerprint,queryPlanner:this.queryPlan.planner,safeQueryCount:this.queryPlan.plan.length,plannedQueries:this.queryPlan.plan.map(row=>({query:row.query,kind:row.kind,components:row.components||[]}))});
     await this.body.connect();await this.selectBrowser();await this.createTask();this.status='RUNNING';
     try{
       let state=await this.ensureYouTube();let first=await this.enrichedSnapshot(state,'initial');if(await this.maybeOpenTarget(first,'initial_observation')){this.status='TARGET_REACHED';this.writeBatch(this.status,true);if(!this.config.continueAfterFound)return this.reportObject(this.status);}
