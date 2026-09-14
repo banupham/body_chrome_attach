@@ -4,6 +4,7 @@ const {clean,uniq,topicLabel}=require('./topic_classifier');
 
 const API_ROOT='https://www.googleapis.com/youtube/v3';
 const STOP=new Set(['the','and','for','with','from','this','that','official','video','youtube','channel','watch','full','new','best','top','cua','của','cho','voi','với','mot','một','nhung','những','cac','các','nay','này','hay','nhat','nhất','trong','tren','trên','khi','den','đến','va','và']);
+const sleep=ms=>new Promise(resolve=>setTimeout(resolve,Math.max(0,Number(ms)||0)));
 function normalized(value){return clean(value).toLowerCase();}
 function tokens(value){return normalized(value).split(/[^\p{L}\p{N}+#._-]+/gu).map(x=>x.replace(/^[._-]+|[._-]+$/g,'')).filter(x=>x.length>=3&&!STOP.has(x));}
 function parseChannelKeywords(raw){
@@ -36,40 +37,62 @@ function compactChannel(item){
   const s=item?.snippet||{},t=item?.topicDetails||{},b=item?.brandingSettings?.channel||{};
   return {channelId:String(item?.id||''),title:clean(s.title)||null,descriptionExcerpt:clean(s.description).slice(0,500),publishedAt:s.publishedAt||null,country:s.country||b.country||null,keywords:parseChannelKeywords(b.keywords).slice(0,80),topicIds:uniq(t.topicIds),topicCategories:uniq(t.topicCategories),topicLabels:uniq((t.topicCategories||[]).map(topicLabel)),statistics:compactStats(item?.statistics||{})};
 }
+function timeoutError(resource,timeoutMs,cause=null){const error=new Error(`youtube_api_${resource}_timeout_after_${timeoutMs}ms`);error.code='YOUTUBE_API_TIMEOUT';error.retryable=true;if(cause)error.cause=cause;return error;}
+function httpError(resource,response,detail=''){const status=Number(response?.status||0),error=new Error(`youtube_api_${resource}_${status||'error'}${detail?`:${detail}`:''}`);error.code=`YOUTUBE_API_HTTP_${status||'ERROR'}`;error.status=status;error.retryable=status===408||status===429||status>=500;return error;}
+function networkError(resource,cause){const error=new Error(`youtube_api_${resource}_network_error:${String(cause?.message||cause||'network_error')}`);error.code='YOUTUBE_API_NETWORK_ERROR';error.retryable=true;error.cause=cause;return error;}
 
 class YouTubeApi {
-  constructor({apiKey=process.env.YOUTUBE_DATA_API_KEY||process.env.YOUTUBE_API_KEY||'',fetchImpl=globalThis.fetch,required=true,timeoutMs=9000}={}){
-    this.apiKey=String(apiKey||'').trim();this.fetchImpl=fetchImpl;this.required=required!==false;this.timeoutMs=Math.max(1000,Number(timeoutMs)||9000);this.videoCache=new Map();this.channelCache=new Map();this.metrics={apiCalls:0,videoCalls:0,channelCalls:0,cacheHits:0,errors:0,lastError:null};
+  constructor({apiKey=process.env.YOUTUBE_DATA_API_KEY||process.env.YOUTUBE_API_KEY||'',fetchImpl=globalThis.fetch,required=true,timeoutMs=9000,maxRetries=2,retryBaseMs=300}={}){
+    this.apiKey=String(apiKey||'').trim();this.fetchImpl=fetchImpl;this.required=required!==false;this.timeoutMs=Math.max(50,Number(timeoutMs)||9000);this.maxRetries=Math.max(0,Math.min(5,Number(maxRetries)||0));this.retryBaseMs=Math.max(0,Math.min(5000,Number(retryBaseMs)||0));this.videoCache=new Map();this.channelCache=new Map();this.metrics={apiCalls:0,videoCalls:0,channelCalls:0,cacheHits:0,errors:0,timeouts:0,retries:0,degradedCalls:0,lastError:null};
     if(this.required&&!this.apiKey)throw new Error('youtube_data_api_key_required');
     if(this.apiKey&&typeof this.fetchImpl!=='function')throw new Error('youtube_api_fetch_unavailable');
   }
-  stats(){return {enabled:Boolean(this.apiKey),keyPresent:Boolean(this.apiKey),...this.metrics,videoCacheSize:this.videoCache.size,channelCacheSize:this.channelCache.size};}
-  async _get(resource,params){
+  stats(){return {enabled:Boolean(this.apiKey),keyPresent:Boolean(this.apiKey),timeoutMs:this.timeoutMs,maxRetries:this.maxRetries,...this.metrics,videoCacheSize:this.videoCache.size,channelCacheSize:this.channelCache.size};}
+  async _get(resource,params,{retries=this.maxRetries}={}){
     if(!this.apiKey)return null;
     const url=new URL(`${API_ROOT}/${resource}`);for(const [k,v] of Object.entries({...params,key:this.apiKey}))if(v!=null&&v!=='')url.searchParams.set(k,String(v));
-    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),this.timeoutMs);this.metrics.apiCalls++;
-    try{
-      const response=await this.fetchImpl(url,{signal:controller.signal,headers:{accept:'application/json'}});
-      if(!response?.ok){let detail='';try{detail=clean(await response.text()).slice(0,180);}catch{}throw new Error(`youtube_api_${resource}_${response?.status||'error'}${detail?`:${detail}`:''}`);}
-      return await response.json();
-    }finally{clearTimeout(timer);}
+    const retryLimit=Math.max(0,Math.min(5,Number(retries)||0));let lastError=null;
+    for(let attempt=0;attempt<=retryLimit;attempt++){
+      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),this.timeoutMs);this.metrics.apiCalls++;
+      try{
+        const response=await this.fetchImpl(url,{signal:controller.signal,headers:{accept:'application/json'}});
+        if(!response?.ok){let detail='';try{detail=clean(await response.text()).slice(0,180);}catch{}throw httpError(resource,response,detail);}
+        return await response.json();
+      }catch(rawError){
+        let error=rawError;
+        if(controller.signal.aborted||rawError?.name==='AbortError')error=timeoutError(resource,this.timeoutMs,rawError);
+        else if(rawError?.retryable!==true&&(rawError instanceof TypeError||rawError?.code==='UND_ERR_CONNECT_TIMEOUT'||rawError?.code==='UND_ERR_SOCKET'))error=networkError(resource,rawError);
+        lastError=error;
+        if(attempt>=retryLimit||error?.retryable!==true)throw error;
+        this.metrics.retries++;
+        const backoff=this.retryBaseMs*Math.pow(2,attempt)+Math.floor(Math.random()*Math.max(25,this.retryBaseMs*0.25));
+        await sleep(backoff);
+      }finally{clearTimeout(timer);}
+    }
+    throw lastError||new Error(`youtube_api_${resource}_unknown_error`);
   }
-  async _safe(resource,params){try{return await this._get(resource,params);}catch(error){this.metrics.errors++;this.metrics.lastError=String(error?.message||error).replace(this.apiKey,'[redacted]');if(this.required)throw error;return null;}}
-  async _loadChannels(ids){
+  async _safe(resource,params,{required=false,retries=required?this.maxRetries:Math.min(1,this.maxRetries)}={}){
+    try{return await this._get(resource,params,{retries});}
+    catch(error){
+      this.metrics.errors++;if(error?.code==='YOUTUBE_API_TIMEOUT')this.metrics.timeouts++;this.metrics.lastError=String(error?.message||error).replace(this.apiKey,'[redacted]');
+      if(required)throw error;this.metrics.degradedCalls++;return null;
+    }
+  }
+  async _loadChannels(ids,{required=false}={}){
     const missing=uniq(ids).filter(id=>id&&!this.channelCache.has(id));
-    for(let i=0;i<missing.length;i+=50){const batch=missing.slice(i,i+50);if(!batch.length)continue;this.metrics.channelCalls++;const data=await this._safe('channels',{part:'snippet,topicDetails,brandingSettings,statistics',id:batch.join(',')});if(!data)continue;const seen=new Set();for(const item of data.items||[]){const row=compactChannel(item);seen.add(row.channelId);this.channelCache.set(row.channelId,row);}for(const id of batch)if(!seen.has(id))this.channelCache.set(id,null);}
+    for(let i=0;i<missing.length;i+=50){const batch=missing.slice(i,i+50);if(!batch.length)continue;this.metrics.channelCalls++;const data=await this._safe('channels',{part:'snippet,topicDetails,brandingSettings,statistics',id:batch.join(',')},{required});if(!data)continue;const seen=new Set();for(const item of data.items||[]){const row=compactChannel(item);seen.add(row.channelId);this.channelCache.set(row.channelId,row);}for(const id of batch)if(!seen.has(id))this.channelCache.set(id,null);}
   }
-  async enrichVideoIds(ids){
+  async enrichVideoIds(ids,{required=false}={}){
     const unique=uniq(ids);const missing=unique.filter(id=>!this.videoCache.has(id));this.metrics.cacheHits+=unique.length-missing.length;
-    for(let i=0;i<missing.length;i+=50){const batch=missing.slice(i,i+50);if(!batch.length)continue;this.metrics.videoCalls++;const data=await this._safe('videos',{part:'snippet,contentDetails,topicDetails,statistics',id:batch.join(',')});if(!data)continue;const seen=new Set();for(const item of data.items||[]){const row=compactVideo(item);seen.add(row.videoId);this.videoCache.set(row.videoId,row);}for(const id of batch)if(!seen.has(id))this.videoCache.set(id,null);}
-    await this._loadChannels(unique.map(id=>this.videoCache.get(id)?.channelId).filter(Boolean));
+    for(let i=0;i<missing.length;i+=50){const batch=missing.slice(i,i+50);if(!batch.length)continue;this.metrics.videoCalls++;const data=await this._safe('videos',{part:'snippet,contentDetails,topicDetails,statistics',id:batch.join(',')},{required});if(!data)continue;const seen=new Set();for(const item of data.items||[]){const row=compactVideo(item);seen.add(row.videoId);this.videoCache.set(row.videoId,row);}for(const id of batch)if(!seen.has(id))this.videoCache.set(id,null);}
+    await this._loadChannels(unique.map(id=>this.videoCache.get(id)?.channelId).filter(Boolean),{required:false});
     const out=new Map();for(const id of unique){const video=this.videoCache.get(id);if(!video)continue;const channel=video.channelId?this.channelCache.get(video.channelId)||null:null;out.set(id,{...video,channel,keywords:deriveKeywords(video,channel)});}return out;
   }
-  async profileTarget(videoId){const map=await this.enrichVideoIds([String(videoId)]);const row=map.get(String(videoId));if(!row)throw new Error(`youtube_target_not_found:${videoId}`);return row;}
+  async profileTarget(videoId){const map=await this.enrichVideoIds([String(videoId)],{required:true});const row=map.get(String(videoId));if(!row)throw new Error(`youtube_target_not_found:${videoId}`);return row;}
   async enrichCandidates(candidates){
-    const map=await this.enrichVideoIds((candidates||[]).map(x=>x?.videoId).filter(Boolean));
+    const map=await this.enrichVideoIds((candidates||[]).map(x=>x?.videoId).filter(Boolean),{required:false});
     return (candidates||[]).map(row=>({...row,youtubeApi:map.get(String(row.videoId))||null}));
   }
 }
 
-module.exports={YouTubeApi,tokens,parseChannelKeywords,deriveKeywords,compactVideo,compactChannel};
+module.exports={YouTubeApi,tokens,parseChannelKeywords,deriveKeywords,compactVideo,compactChannel,timeoutError,httpError,networkError};
