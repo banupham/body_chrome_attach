@@ -29,7 +29,7 @@ class BodyBrainClient{
       ws.on('message',raw=>{let msg;try{msg=JSON.parse(String(raw));}catch{return;}
         if(msg.type==='HELLO_ACK'&&msg.authenticated===true&&!settled){settled=true;clearTimeout(timer);if(Number(msg.protocolVersion)!==PROTOCOL_VERSION)return reject(new Error('body_protocol_version_mismatch'));if(String(msg.bodyContractVersion)!==BODY_CONTRACT_VERSION)return reject(new Error('body_contract_version_mismatch'));resolve();return;}
         if(msg.type==='AUTH_ERROR'&&!settled){settled=true;clearTimeout(timer);reject(new Error(`body_auth_failed:${msg.error||'unknown'}`));return;}
-        if(msg.type==='BODY_EVENT'&&!msg.requestId){this.events.push(msg);if(this.events.length>500)this.events.shift();return;}
+        if(msg.type==='BODY_EVENT'&&!msg.requestId){this.events.push(msg);if(this.events.length>1000)this.events.shift();return;}
         const rid=String(msg.requestId||'');const p=this.pending.get(rid);if(!rid||!p)return;clearTimeout(p.timer);this.pending.delete(rid);if(msg.type==='BRAIN_ERROR'||msg.ok===false)p.reject(new Error(String(msg.error||'body_request_failed')));else p.resolve(msg);
       });
       ws.on('close',()=>{const error=new Error('body_brain_disconnected');for(const [rid,p] of this.pending){clearTimeout(p.timer);p.reject(error);this.pending.delete(rid);}this.ws=null;});
@@ -46,8 +46,10 @@ class BodyBrainClient{
   async startTask(taskId){return (await this.request('TASK_START',{taskId})).result||{};}
   async finishTask(taskId,state,payload){const type=state==='COMPLETED'?'TASK_COMPLETE':state==='FAILED'?'TASK_FAIL':'TASK_CANCEL';const args=type==='TASK_COMPLETE'?{taskId,result:payload}:type==='TASK_FAIL'?{taskId,error:String(payload||'failed')}:{taskId,reason:String(payload||'cancelled')};return (await this.request(type,args)).result||{};}
   async step(taskId,step,{tabId='primary'}={}){const stepId=id('STEP');return this.request('BODY_STEP',{contractVersion:BODY_CONTRACT_VERSION,taskId,stepId,tabId,step});}
-  async motor(taskId,intent){return this.step(taskId,{kind:'motor',intent});}
-  async browserUi(taskId,action,value=null){return this.step(taskId,{kind:'browser_ui',action,value});}
+  async motor(taskId,intent,{tabId='primary'}={}){return this.step(taskId,{kind:'motor',intent},{tabId});}
+  async browserUi(taskId,action,value=null,{tabId='primary'}={}){return this.step(taskId,{kind:'browser_ui',action,value},{tabId});}
+  async switchTab(taskId,targetTabId){return this.step(taskId,{kind:'tab_switch',targetTabId:Number(targetTabId)},{tabId:Number(targetTabId)});}
+  drainEvents(){const rows=this.events.splice(0,this.events.length);return rows;}
   async close(){const ws=this.ws;this.ws=null;for(const [rid,p] of this.pending){clearTimeout(p.timer);p.reject(new Error('body_brain_closed'));this.pending.delete(rid);}if(ws)await new Promise(resolve=>{ws.once('close',resolve);try{ws.close();}catch{resolve();}setTimeout(resolve,200);});}
 }
 
