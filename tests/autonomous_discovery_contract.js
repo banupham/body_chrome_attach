@@ -5,7 +5,8 @@ const fs=require('node:fs');
 const os=require('node:os');
 const path=require('node:path');
 const {classifyVideo}=require('../research/autonomous_discovery/topic_classifier');
-const {inspectQuery,buildQueryPlan}=require('../research/autonomous_discovery/query_firewall');
+const {inspectQuery,buildQueryPlan,buildObservedQueryExpansion}=require('../research/autonomous_discovery/query_firewall');
+const {YouTubeApi}=require('../research/autonomous_discovery/youtube_api');
 const {ExperienceMemory}=require('../research/autonomous_discovery/experience_memory');
 const {reportMarkdown}=require('../research/autonomous_discovery/reporter');
 const {planningProximity}=require('../research/autonomous_discovery/brain');
@@ -13,14 +14,25 @@ const {fingerprintText,sameFingerprint,randomScrollPoint}=require('../research/a
 const {youtubeSemanticObservation,textFingerprint}=require('../src/youtube_semantic_observer');
 const {parseArgs}=require('../research/autonomous_discovery/entry');
 
-const target={videoId:'qXy0iyni-xk',title:'Khu dân cư mới Cầu Tràm 5x28m SHR đường rộng ô tô tránh nhau',categoryId:'22',tags:['bất động sản','nhà bình chánh','sổ hồng'],topicLabels:['Lifestyle (sociology)'],channel:{country:'VN',keywords:['nhà bình chánh','bán nhà chính chủ'],topicLabels:['Knowledge']},keywords:[{term:'bất động sản',sources:['tag']},{term:'nhà bình chánh',sources:['channel_keyword']}]};
+const target={videoId:'qXy0iyni-xk',title:'Khu dân cư mới Cầu Tràm 5x28m SHR đường rộng ô tô tránh nhau',categoryId:'22',tags:['bất động sản','nhà bình chánh','sổ hồng'],topicLabels:['Lifestyle (sociology)'],channel:{country:'VN',keywords:['nhà bình chánh','bán nhà chính chủ'],topicLabels:['Knowledge']},keywords:[{term:'bất động sản',sources:['tag']},{term:'nhà bình chánh',sources:['channel_keyword']},{term:'cầu tràm',sources:['title']}]};
 assert.equal(inspectQuery('qXy0iyni-xk',{targetVideoId:target.videoId,targetTitle:target.title}).allowed,false);
 assert.equal(inspectQuery('Khu dân cư mới Cầu Tràm 5x28m',{targetVideoId:target.videoId,targetTitle:target.title}).allowed,false);
 assert.equal(inspectQuery('bất động sản',{targetVideoId:target.videoId,targetTitle:target.title}).allowed,true);
 const plan=buildQueryPlan(target,{maxQueries:12});
+assert.equal(plan.planner,'target_metadata_combinatorial_v2');
 assert.ok(plan.plan.length>=1);
 assert.ok(plan.plan.every(x=>inspectQuery(x.query,{targetVideoId:target.videoId,targetTitle:target.title}).allowed));
 assert.equal(plan.plan.some(x=>x.query.includes(target.videoId)),false);
+assert.equal(plan.plan.some(x=>x.kind==='domain'||x.kind==='fallback'),false);
+assert.ok(plan.plan.some(x=>x.kind==='combined'||x.kind==='metadata_phrase'));
+assert.equal(plan.plan.some(x=>/real\s+estate/i.test(x.query)),false);
+const expansion=buildObservedQueryExpansion([
+  'Nhà Bình Chánh sổ hồng giá rẻ 10 phút',
+  'Bán nhà Bình Chánh chính chủ giá rẻ',
+  'Nhà Bình Chánh giá rẻ đường ô tô'
+],plan.fingerprint,{targetVideoId:target.videoId,targetTitle:target.title},{existingQueries:plan.plan.map(x=>x.query),limit:5});
+assert.ok(expansion.plan.every(x=>!/(?:phút|phut|real\s+estate)/i.test(x.query)));
+assert.ok(expansion.plan.every(x=>inspectQuery(x.query,{targetVideoId:target.videoId,targetTitle:target.title}).allowed));
 
 const game=classifyVideo({title:'VALORANT Gameplay Highlights',youtubeApi:{categoryId:'20',tags:['gaming','esports'],topicLabels:['Video game culture']}});
 assert.equal(game.primary,'gaming');
@@ -61,5 +73,30 @@ const md=reportMarkdown({runId:'run-test',status:'RUNNING',target:{videoId:targe
 assert.match(md,/Found via: \*\*next_video\*\*/);
 assert.match(md,/Learned experience/);
 const parsed=parseArgs(['--target',target.videoId,'--unlimited','true','--report-every-steps','5','--action-retries','4']);assert.equal(parsed.unlimited,true);assert.equal(parsed.maxSteps,0);assert.equal(parsed.reportEverySteps,5);assert.equal(parsed.actionRetries,4);assert.equal(parsed.browserWaitSec,120);
-fs.rmSync(dir,{recursive:true,force:true});
-console.log('autonomous_discovery_contract: PASS');
+
+function abortingFetch(_url,{signal}={}){
+  return new Promise((resolve,reject)=>{
+    const fail=()=>{const error=new Error('mock aborted');error.name='AbortError';reject(error);};
+    if(signal?.aborted)return fail();signal?.addEventListener('abort',fail,{once:true});
+  });
+}
+async function apiResilienceContract(){
+  let candidateCalls=0;
+  const optionalApi=new YouTubeApi({apiKey:'test-key',fetchImpl:(url,options)=>{candidateCalls++;return abortingFetch(url,options);},required:true,timeoutMs:50,maxRetries:1,retryBaseMs:0});
+  const candidateMap=await optionalApi.enrichVideoIds(['candidate-video']);
+  assert.equal(candidateMap.size,0);assert.equal(candidateCalls,2);assert.equal(optionalApi.stats().retries,1);assert.equal(optionalApi.stats().timeouts,1);assert.equal(optionalApi.stats().degradedCalls,1);
+
+  let targetCalls=0;
+  const requiredApi=new YouTubeApi({apiKey:'test-key',fetchImpl:(url,options)=>{targetCalls++;return abortingFetch(url,options);},required:true,timeoutMs:50,maxRetries:1,retryBaseMs:0});
+  await assert.rejects(()=>requiredApi.profileTarget('target-video'),error=>error?.code==='YOUTUBE_API_TIMEOUT'&&/youtube_api_videos_timeout_after_50ms/.test(error.message));
+  assert.equal(targetCalls,2);assert.equal(requiredApi.stats().retries,1);assert.equal(requiredApi.stats().degradedCalls,0);
+}
+
+apiResilienceContract().then(()=>{
+  fs.rmSync(dir,{recursive:true,force:true});
+  console.log('autonomous_discovery_contract: PASS');
+}).catch(error=>{
+  fs.rmSync(dir,{recursive:true,force:true});
+  console.error(error);
+  process.exitCode=1;
+});
