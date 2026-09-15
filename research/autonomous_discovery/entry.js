@@ -1,6 +1,6 @@
 'use strict';
 
-const {AutonomousYouTubeBrainV3}=require('./brain_v3');
+const {AutonomousYouTubeBrainV3Recovery,safeContentRect}=require('./brain_v3_recovery');
 const {inspectQuery}=require('./query_firewall');
 const {classifyVideo}=require('./topic_classifier');
 const {adaptiveQueryPlan}=require('./adaptive_query_planner');
@@ -31,16 +31,18 @@ function runSelftest(){
   const plan=adaptiveQueryPlan({videoId:'abc123XYZ90',title:'Nhà đẹp Bình Chánh Minh Ngọc',defaultLanguage:'vi',tags:['nhà đẹp','bình chánh','minh ngọc'],topicLabels:['Hobby'],channel:{keywords:['nhà bình chánh'],topicLabels:['Lifestyle']}},{maxQueries:20});
   if(plan.plan.some(row=>/\bhobby\b/i.test(row.query)))throw new Error('selftest_language_mixing_failed');if(!plan.plan.length)throw new Error('selftest_adaptive_query_plan_empty');
   const catalog=bodyCapabilityCatalog();if(!catalog.motor.includes('drag')||!catalog.browserUi.includes('devtools')||!catalog.tab.includes('tab_switch'))throw new Error('selftest_full_body_capability_catalog_failed');
+  if(safeContentRect({x:683,y:-12.5,width:208,height:112.5},{width:1000,height:700})!==null)throw new Error('selftest_safe_candidate_clip_failed');
+  if(!safeContentRect({x:683,y:349,width:208,height:112.5},{width:1000,height:700}))throw new Error('selftest_safe_candidate_visible_failed');
   console.log('YouTubeExplorerBrain selftest: PASS');return 0;
 }
 
 async function main(){
   const config=parseArgs();if(config.selftest)return runSelftest();
-  console.log('BODY Autonomous YouTube Discovery Brain V3');console.log(`Target videoId: ${config.target}`);console.log(`Mode: ${config.unlimited?'UNLIMITED':'BOUNDED'} | continueAfterFound=${config.continueAfterFound}`);console.log(`Agent exploration rate: ${config.explorationRate}`);console.log(`Step verification: retries=${config.actionRetries} | timeout=${config.verifyTimeoutMs}ms | browserWait=${config.browserWaitSec}s`);console.log('Autonomy: FULL_BODY_AGENT. Brain receives the complete BODY motor/browser/tab action surface and plans from observed environment state.');console.log('Task constraint retained: target ID/title are for profiling and success verification, not direct YouTube search.');console.log('YouTube API key: read from YOUTUBE_DATA_API_KEY / YOUTUBE_API_KEY (never written to reports).');
-  const brain=new AutonomousYouTubeBrainV3(config);let stopping=false;
+  console.log('BODY Autonomous YouTube Discovery Brain V3 Recovery');console.log(`Target videoId: ${config.target}`);console.log(`Mode: ${config.unlimited?'UNLIMITED':'BOUNDED'} | continueAfterFound=${config.continueAfterFound}`);console.log(`Agent exploration rate: ${config.explorationRate}`);console.log(`Step verification: retries=${config.actionRetries} | timeout=${config.verifyTimeoutMs}ms | browserWait=${config.browserWaitSec}s`);console.log('Autonomy: FULL_BODY_AGENT + safe click geometry + no-op recovery + target-specific relevance.');console.log('Task constraint retained: target ID/title are for profiling and success verification, not direct YouTube search.');console.log('YouTube API key: read from YOUTUBE_DATA_API_KEY / YOUTUBE_API_KEY (never written to reports).');
+  const brain=new AutonomousYouTubeBrainV3Recovery(config);let stopping=false;
   const onSignal=signal=>{if(stopping){console.error(`\n${signal} received again: forcing exit.`);process.exit(130);}stopping=true;console.log(`\n${signal}: requesting graceful stop; flushing final batch report...`);brain.requestStop(signal);};
   process.on('SIGINT',onSignal);process.on('SIGTERM',onSignal);
-  try{const report=await brain.run();console.log('\n=== DISCOVERY FINISHED ===');console.log(JSON.stringify({runId:report.runId,status:report.status,steps:report.summary.steps,targetDiscovery:report.targetDiscovery,reportsRoot:brain.reportDir,sessionLedger:brain.ledgerFile,memoryFile:brain.memory.file,planner:report.autonomy?.planner},null,2));return report;}
+  try{const report=await brain.run();console.log('\n=== DISCOVERY FINISHED ===');console.log(JSON.stringify({runId:report.runId,status:report.status,steps:report.summary.steps,targetDiscovery:report.targetDiscovery,reportsRoot:brain.reportDir,sessionLedger:brain.ledgerFile,memoryFile:brain.memory.file,planner:report.autonomy?.planner,revision:report.autonomy?.revision},null,2));return report;}
   finally{process.removeListener('SIGINT',onSignal);process.removeListener('SIGTERM',onSignal);}
 }
 if(require.main===module)main().catch(error=>{console.error('\n[AUTODISCOVERY ERROR]',String(error?.stack||error));process.exitCode=1;});
