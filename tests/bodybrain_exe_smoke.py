@@ -33,6 +33,15 @@ def main() -> int:
         if not token_path.exists() or not company_path.exists() or not device_path.exists(): raise AssertionError("packaged runtime did not persist control auth/identity under LocalAppData")
         first_token = token_path.read_text(encoding="utf-8").strip(); first_company = company_path.read_text(encoding="utf-8"); first_device = device_path.read_text(encoding="utf-8")
         if not first_token: raise AssertionError("packaged controller token is empty")
+
+        state_dir = body_root / "state"; state_dir.mkdir(parents=True, exist_ok=True); ledger_path = state_dir / "body_step_ledger.json"
+        ledger_path.write_text('{"schemaVersion":1,"entries":', encoding="utf-8")
+        run_check(executable, local_app_data)
+        recovered = json.loads(ledger_path.read_text(encoding="utf-8"))
+        if recovered != {"schemaVersion":1,"entries":{}}: raise AssertionError(f"corrupt BODY step ledger was not replaced: {recovered}")
+        backups = list(state_dir.glob("body_step_ledger.json.corrupt-*.bak"))
+        if not backups: raise AssertionError("corrupt BODY step ledger was not quarantined")
+
         run_check(executable, local_app_data)
         if token_path.read_text(encoding="utf-8").strip() != first_token: raise AssertionError("controller token changed across one-file runs")
         if company_path.read_text(encoding="utf-8") != first_company: raise AssertionError("company identity changed across one-file runs")

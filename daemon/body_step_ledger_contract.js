@@ -9,6 +9,7 @@ const {BodyStepLedger,commandHash}=require('./src/body_step_ledger');
 
 function tmp(name){return fs.mkdtempSync(path.join(os.tmpdir(),`${name}-`));}
 function command(requestId='r1'){return {contractVersion:'1.0',type:'BODY_STEP',requestId,stepId:'STEP-1',taskId:'TASK-1',tabId:'primary',step:{kind:'motor',intent:{type:'pressKey',key:'Enter'}}};}
+function ledgerFile(base){return path.join(base,'state','body_step_ledger.json');}
 
 test('BODY step command identity ignores transport requestId and object key order',()=>{
   const a=command('r1'),b={taskId:'TASK-1',stepId:'STEP-1',type:'BODY_STEP',contractVersion:'1.0',requestId:'r2',step:{intent:{key:'Enter',type:'pressKey'},kind:'motor'},tabId:'primary'};
@@ -27,4 +28,17 @@ test('DONE result is durable and replayable after restart',()=>{
 
 test('reusing a taskId/stepId for a different Body command is rejected',()=>{
   const ledger=new BodyStepLedger(tmp('body-ledger-conflict')),cmd=command();ledger.reserve(cmd);const changed={...cmd,step:{kind:'motor',intent:{type:'pressKey',key:'Escape'}}};assert.throws(()=>ledger.lookup(changed),/body_step_id_conflict/);
+});
+
+test('invalid JSON is quarantined and replaced instead of killing BODY bootstrap',()=>{
+  const base=tmp('body-ledger-corrupt-json'),file=ledgerFile(base);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'{"schemaVersion":1,"entries":','utf8');
+  const ledger=new BodyStepLedger(base,{now:()=>1760000000000}),stats=ledger.stats();
+  assert.equal(stats.total,0);assert.equal(stats.recovery?.reason,'invalid_json');assert.equal(stats.recovery?.freshFileWritten,true);assert.ok(stats.recovery?.backupFile);assert.ok(fs.existsSync(stats.recovery.backupFile));
+  const fresh=JSON.parse(fs.readFileSync(file,'utf8'));assert.deepEqual(fresh,{schemaVersion:1,entries:{}});
+  ledger.reserve(command());assert.equal(new BodyStepLedger(base).lookup(command('after-recovery')).status,'reserved');
+});
+
+test('invalid ledger schema is quarantined and replaced instead of killing BODY bootstrap',()=>{
+  const base=tmp('body-ledger-corrupt-schema'),file=ledgerFile(base);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,JSON.stringify({schemaVersion:99,entries:[]}), 'utf8');
+  const ledger=new BodyStepLedger(base),stats=ledger.stats();assert.equal(stats.recovery?.reason,'invalid_schema');assert.equal(stats.recovery?.freshFileWritten,true);assert.deepEqual(JSON.parse(fs.readFileSync(file,'utf8')),{schemaVersion:1,entries:{}});
 });

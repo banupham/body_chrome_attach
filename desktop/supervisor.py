@@ -150,6 +150,7 @@ class BodyRuntimeSupervisor:
             "BODY_RUNTIME_PORT": str(self.config.port),
             "BODY_RUNTIME_DATA_DIR": str(self.body_data_dir),
             "BODY_DESKTOP_HOSTED": "1",
+            "BODY_DESKTOP_PARENT_PID": str(os.getpid()),
         }
         native_helper = self._native_helper()
         if native_helper is not None:
