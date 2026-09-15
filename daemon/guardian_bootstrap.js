@@ -23,8 +23,26 @@ server.wss.on('error',error=>{
 
 const protection=new ProtectionSupervisor(server.runtime).start();
 server.runtime.protection=protection;
-process.once('exit',()=>{try{protection.stop();}catch{}});
+
+function processAlive(pid){
+  const value=Number(pid);if(!Number.isInteger(value)||value<=0)return false;
+  try{process.kill(value,0);return true;}catch(error){return error?.code==='EPERM';}
+}
+const desktopParentPid=Number(process.env.BODY_DESKTOP_PARENT_PID||0);let parentWatch=null,parentLossHandled=false;
+if(Number.isInteger(desktopParentPid)&&desktopParentPid>0&&desktopParentPid!==process.pid){
+  parentWatch=setInterval(()=>{
+    if(parentLossHandled||processAlive(desktopParentPid))return;
+    parentLossHandled=true;console.error(`[DESKTOP_PARENT_LOST] pid=${desktopParentPid}; stopping BODY worker to prevent orphan runtime.`);
+    try{server.flushStores();}catch{}
+    try{protection.stop();}catch{}
+    try{server.clearEndpoint();}catch{}
+    process.exitCode=0;setImmediate(()=>process.exit(0));
+  },1000);
+  parentWatch.unref?.();
+}
+
+process.once('exit',()=>{if(parentWatch)clearInterval(parentWatch);try{protection.stop();}catch{}});
 
 console.log(`Protection Guardian: ${JSON.stringify(protection.status().policy)}`);
 
-module.exports={...server,protection};
+module.exports={...server,protection,processAlive};
