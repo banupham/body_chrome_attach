@@ -162,3 +162,31 @@ test('deferred environment retries from a recorder event that already proves a w
   await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
   assert.equal(probes,1);assert.equal(row.state,'ACTIVE');assert.equal(supervisor.status().transientProbeInFlight.length,0);supervisor.stop();
 });
+
+test('protection supervisor ignores trusted BODY HUMAN_MOTOR recorder echoes',()=>{
+  const runtime=fakeRuntime();
+  runtime.recorderEvent=()=>({suppressed:true,reason:'agent_motor_human_echo'});
+  const supervisor=new ProtectionSupervisor(runtime,{controllerProbe:{probe:()=>compactProcessSnapshot({processes:[],udp:[]})},setIntervalImpl:()=>({unref(){}}),clearIntervalImpl:()=>{}}).start();
+  runtime.recorderEvent('e1',{tabId:1,siteKey:'www.youtube.com',event:{eventType:'synthetic_input',source:'human',isTrusted:false}});
+  runtime.recorderEvent('e1',{tabId:1,siteKey:'www.youtube.com',event:{eventType:'synthetic_input',source:'human',isTrusted:false}});
+  const protection=supervisor.status().browsers.b1;
+  assert.equal(protection.behavior.eventCount,0);
+  assert.equal(protection.behavior.score,0);
+  assert.equal(protection.behavior.blocked,false);
+  assert.equal(protection.blocked,false);
+  assert.equal(runtime.browsers.require('b1').state,'ACTIVE');
+  assert.equal(supervisor.readiness('b1').state,'READY');
+  supervisor.stop();
+});
+
+test('protection supervisor still blocks untrusted input outside trusted BODY execution',()=>{
+  const runtime=fakeRuntime();
+  const supervisor=new ProtectionSupervisor(runtime,{controllerProbe:{probe:()=>compactProcessSnapshot({processes:[],udp:[]})},setIntervalImpl:()=>({unref(){}}),clearIntervalImpl:()=>{}}).start();
+  runtime.recorderEvent('e1',{tabId:1,siteKey:'www.youtube.com',event:{eventType:'synthetic_input',source:'human',isTrusted:false}});
+  runtime.recorderEvent('e1',{tabId:1,siteKey:'www.youtube.com',event:{eventType:'synthetic_input',source:'human',isTrusted:false}});
+  const protection=supervisor.status().browsers.b1;
+  assert.equal(protection.behavior.blocked,true);
+  assert.equal(protection.blocked,true);
+  assert.equal(runtime.browsers.require('b1').state,'QUARANTINED');
+  supervisor.stop();
+});
