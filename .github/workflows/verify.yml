@@ -82,6 +82,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          node tools/stamp_discovery_build.js
+          if ($LASTEXITCODE -ne 0) { throw 'autodiscovery_build_metadata_failed' }
           New-Item -ItemType Directory -Force -Path 'brain-artifacts' | Out-Null
           npx --yes pkg@5.8.1 research/autonomous_discovery/entry.js --targets node18-win-x64 --output brain-artifacts/YouTubeExplorerBrain.exe
           if ($LASTEXITCODE -ne 0) { throw 'autodiscovery_brain_build_failed' }

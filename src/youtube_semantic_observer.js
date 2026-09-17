@@ -66,9 +66,22 @@ function interactiveAffordances(documentRef=globalThis.document,windowRef=global
   return out;
 }
 function countNodes(documentRef,selector){try{return Number(documentRef?.querySelectorAll?.(selector)?.length||0);}catch{return 0;}}
+function visibleAdMarker(node,playerRect,windowRef){
+  const rect=rectOf(node);if(!isVisible(rect,windowRef)||!rectIntersects(rect,playerRect))return false;
+  try{
+    if(node.hidden||node.closest?.('[hidden], [aria-hidden="true"]'))return false;
+    const style=windowRef?.getComputedStyle?.(node);
+    if(style&&(style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse'||Number(style.opacity)===0))return false;
+  }catch{return false;}
+  return true;
+}
 function advertisingObservation(documentRef=globalThis.document,windowRef=globalThis.window){
   const player=firstNode(documentRef,['#movie_player','.html5-video-player','ytd-player #container']);let classAd=false;try{classAd=Boolean(player?.classList?.contains?.('ad-showing')||player?.classList?.contains?.('ad-interrupting'));}catch{}
-  const adMarker=firstNode(documentRef,['.ytp-ad-player-overlay','.ytp-ad-module','.ytp-ad-text','.ytp-ad-preview-container','ytd-player-legacy-desktop-watch-ads-renderer','ytd-action-companion-ad-renderer']);
+  // A persistent module or a sponsored feed card is not evidence of a playing ad.
+  const playerRect=rectOf(player),adMarker=['.ytp-ad-player-overlay','.ytp-ad-text','.ytp-ad-preview-container'].some(selector=>{
+    let nodes=[];try{nodes=[...(player?.querySelectorAll?.(selector)||[])];}catch{}
+    return nodes.some(node=>visibleAdMarker(node,playerRect,windowRef));
+  });
   const skipButton=firstNode(documentRef,['button.ytp-skip-ad-button','.ytp-skip-ad-button','button.ytp-ad-skip-button-modern','.ytp-ad-skip-button-modern','button.ytp-ad-skip-button','.ytp-ad-skip-button','button[aria-label*="Skip"]','button[aria-label*="skip"]','button[aria-label*="Bỏ qua"]','button[aria-label*="bỏ qua"]']);
   const skip=controlDescriptor(skipButton,'ad_skip_button',{documentRef,windowRef});const playingAd=Boolean(classAd||adMarker),feedAdCount=countNodes(documentRef,AD_CONTAINER_SELECTOR);
   return {playingAd,skippable:Boolean(playingAd&&skip.available&&skip.visible),skipButton:skip,feedAdCount};

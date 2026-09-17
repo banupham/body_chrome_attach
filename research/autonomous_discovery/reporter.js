@@ -17,7 +17,12 @@ function reportMarkdown(report){
   lines.push(`- Autonomy mode: ${report.autonomy?.mode||'unknown'}`);
   lines.push(`- Started: ${report.startedAt}`);
   lines.push(`- Updated: ${report.updatedAt}`);
+  lines.push(`- Source revision: ${esc(report.source?.revision||'unknown')} / commit ${esc(report.source?.commit||'unknown')} / dirty=${report.source?.dirty??'unknown'}`);
+  lines.push(`- Report scope: ${esc(report.reportScope||'legacy_batch')} / summary: ${esc(report.summaryScope||'run_cumulative')}`);
+  lines.push(`- Session ledger: ${esc(report.sessionFile||'unknown')}`);
+  lines.push(`- Batch steps: ${report.batch?.firstStep??'none'} → ${report.batch?.lastStep??'none'}`);
   lines.push(`- Steps: ${report.summary.steps}`);
+  lines.push(`- Steps without target progress: ${report.summary.stagnationCount??0}`);
   lines.push(`- Unique videos observed: ${report.summary.uniqueVideosObserved}`);
   lines.push(`- Topics observed: ${report.summary.uniqueTopicsObserved}`);
   lines.push(`- Queries attempted: ${report.summary.queryAttempts}`);
@@ -46,5 +51,5 @@ function reportMarkdown(report){
   return lines.join('\n')+'\n';
 }
 
-class Reporter{constructor(root,runId){this.root=root;this.runId=runId;fs.mkdirSync(root,{recursive:true});}paths(batchIndex){const base=`${this.runId}-batch-${String(batchIndex).padStart(4,'0')}`;return {json:path.join(this.root,`${base}.json`),md:path.join(this.root,`${base}.md`),latest:path.join(this.root,`${this.runId}-latest.json`)};}write(report,batchIndex){const p=this.paths(batchIndex);atomicWrite(p.json,report);fs.writeFileSync(p.md,reportMarkdown(report));atomicWrite(p.latest,report);return p;}}
+class Reporter{constructor(root,runId){this.root=root;this.runId=runId;fs.mkdirSync(root,{recursive:true});}paths(batchIndex){const base=`${this.runId}-batch-${String(batchIndex).padStart(4,'0')}`;return {json:path.join(this.root,`${base}.json`),md:path.join(this.root,`${base}.md`),latest:path.join(this.root,`${this.runId}-latest.json`)};}writeLatest(report){const history=report.agent?.history||report.path||[],latest={...report,reportScope:'checkpoint',pathScope:'run_history_tail',path:history,historyFirstStep:history[0]?.step??null,historyLastStep:history.at(-1)?.step??null};atomicWrite(this.paths(0).latest,latest);return this.paths(0).latest;}write(report,batchIndex){const p=this.paths(batchIndex);atomicWrite(p.json,report);fs.writeFileSync(p.md,reportMarkdown(report));this.writeLatest(report);return p;}}
 module.exports={Reporter,reportMarkdown,foundMethod,topicCounts};

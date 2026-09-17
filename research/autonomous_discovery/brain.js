@@ -9,6 +9,7 @@ const {classifyVideo,topicDistance,fold,uniq}=require('./topic_classifier');
 const {buildQueryPlan,inspectQuery,buildObservedQueryExpansion}=require('./query_firewall');
 const {ExperienceMemory}=require('./experience_memory');
 const {Reporter}=require('./reporter');
+const {sourceInfo}=require('./build_info');
 
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,Math.max(0,Number(ms)||0)));
 const nowIso=()=>new Date().toISOString();
@@ -37,13 +38,13 @@ function contextKey(pageType,topic){return `${String(pageType||'other')}|${Strin
 
 class AutonomousYouTubeBrain{
   constructor(config,{body=null,api=null}={}){
-    this.config=config;this.runId=runId();this.body=body||new BodyBrainClient({controllerId:`youtube-autonomous-${this.runId}`});this.api=api||new YouTubeApi({required:true});
+    this.config=config;this.sourceInfo=sourceInfo();this.runId=runId();this.body=body||new BodyBrainClient({controllerId:`youtube-autonomous-${this.runId}`});this.api=api||new YouTubeApi({required:true});
     this.root=config.root||localBrainRoot();this.sessionDir=path.join(this.root,'sessions');this.reportDir=path.join(this.root,'reports');this.memory=new ExperienceMemory(path.join(this.root,'memory.json'));this.reporter=new Reporter(this.reportDir,this.runId);
     fs.mkdirSync(this.sessionDir,{recursive:true});this.ledgerFile=path.join(this.sessionDir,`${this.runId}.jsonl`);
     this.startedAt=Date.now();this.lastBatchAt=this.startedAt;this.batchIndex=0;this.batchSnapshots=[];this.batchPath=[];this.bodyActions=0;this.queryAttempts=0;this.stepNo=0;this.stagnation=0;this.queryIndex=0;this.dynamicQueries=[];
     this.seenVideos=new Set();this.seenTopics=new Set();this.seenTransitions=new Set();this.seenEdges=new Set();this.visitedVideos=new Set();this.failedVideos=new Set();this.bestProximity=0;this.targetDiscovery=null;this.targetOpened=false;this.task=null;this.browser=null;this.tabId=null;this.targetApi=null;this.queryPlan=null;this.queryAudit=[];this.lastSnapshot=null;this.status='INITIALIZING';
   }
-  ledger(type,payload={}){const row={at:Date.now(),atIso:nowIso(),type,...payload};fs.appendFileSync(this.ledgerFile,JSON.stringify(row)+'\n');return row;}
+  ledger(type,payload={}){const {type:actionType,...data}=payload;const row={at:Date.now(),atIso:nowIso(),...data,type,...(actionType!=null?{actionType}:{})};fs.appendFileSync(this.ledgerFile,JSON.stringify(row)+'\n');return row;}
   async selectBrowser(){
     const status=await this.body.status();const rows=(status.browsers||[]).filter(b=>b.online===true&&b.environment?.eligible===true&&!['QUARANTINED','ERROR','OFFLINE'].includes(String(b.state||'')));
     let browser=this.config.browser?rows.find(b=>String(b.browserInstanceId)===String(this.config.browser)):null;
@@ -162,10 +163,10 @@ class AutonomousYouTubeBrain{
     return {strategy,success,reward,targetSeen:Boolean(after.targetCandidate),targetOpened,after};
   }
   reportObject(status){
-    return {schemaVersion:1,tool:'BODY Autonomous YouTube Discovery Brain',runId:this.runId,status,target:{videoId:this.config.target,title:this.targetApi?.title||null,categoryId:this.targetApi?.categoryId||null,topicLabels:this.targetApi?.topicLabels||[],classification:classifyVideo(this.targetApi||{}),planningFingerprint:this.queryPlan?.fingerprint||null,titleSearchForbidden:true},startedAt:new Date(this.startedAt).toISOString(),updatedAt:nowIso(),config:{...this.config,apiKey:undefined},summary:{steps:this.stepNo,uniqueVideosObserved:this.seenVideos.size,uniqueTopicsObserved:this.seenTopics.size,uniqueTransitionsObserved:this.seenTransitions.size,queryAttempts:this.queryAttempts,bodyActions:this.bodyActions,bestTargetProximity:this.bestProximity,stagnationCount:this.stagnation},targetDiscovery:this.targetDiscovery,snapshots:this.batchSnapshots,path:this.batchPath,queryAudit:this.queryAudit,memory:this.memory.summary(),youtubeApi:this.api.stats()};
+    return {schemaVersion:1,source:this.sourceInfo,sessionFile:this.ledgerFile,reportScope:'batch',summaryScope:'run_cumulative',batch:{index:this.batchIndex,firstStep:this.batchPath[0]?.step??null,lastStep:this.batchPath.at(-1)?.step??null},tool:'BODY Autonomous YouTube Discovery Brain',runId:this.runId,status,target:{videoId:this.config.target,title:this.targetApi?.title||null,categoryId:this.targetApi?.categoryId||null,topicLabels:this.targetApi?.topicLabels||[],classification:classifyVideo(this.targetApi||{}),planningFingerprint:this.queryPlan?.fingerprint||null,titleSearchForbidden:true},startedAt:new Date(this.startedAt).toISOString(),updatedAt:nowIso(),config:{...this.config,apiKey:undefined},summary:{steps:this.stepNo,uniqueVideosObserved:this.seenVideos.size,uniqueTopicsObserved:this.seenTopics.size,uniqueTransitionsObserved:this.seenTransitions.size,queryAttempts:this.queryAttempts,bodyActions:this.bodyActions,bestTargetProximity:this.bestProximity,stagnationCount:this.stagnation},targetDiscovery:this.targetDiscovery,snapshots:this.batchSnapshots,path:this.batchPath,queryAudit:this.queryAudit,memory:this.memory.summary(),youtubeApi:this.api.stats()};
   }
   writeBatch(status,force=false){
-    const dueSteps=this.config.reportEverySteps>0&&this.stepNo>0&&this.stepNo%this.config.reportEverySteps===0,dueTime=this.config.reportEveryMinutes>0&&Date.now()-this.lastBatchAt>=this.config.reportEveryMinutes*60000;if(!force&&!dueSteps&&!dueTime)return null;this.batchIndex++;const report=this.reportObject(status),paths=this.reporter.write(report,this.batchIndex);this.ledger('batch_report',{batchIndex:this.batchIndex,status,paths});this.batchSnapshots=[];this.batchPath=[];this.lastBatchAt=Date.now();return paths;
+    const dueSteps=this.config.reportEverySteps>0&&this.stepNo>0&&this.stepNo%this.config.reportEverySteps===0,dueTime=this.config.reportEveryMinutes>0&&Date.now()-this.lastBatchAt>=this.config.reportEveryMinutes*60000;if(!force&&!dueSteps&&!dueTime){this.reporter.writeLatest(this.reportObject(status));return null;}this.batchIndex++;const report=this.reportObject(status),paths=this.reporter.write(report,this.batchIndex);this.ledger('batch_report',{batchIndex:this.batchIndex,status,paths});this.batchSnapshots=[];this.batchPath=[];this.lastBatchAt=Date.now();return paths;
   }
   limitReached(){if(!this.config.unlimited&&this.config.maxSteps>0&&this.stepNo>=this.config.maxSteps)return 'max_steps';if(!this.config.unlimited&&this.config.maxMinutes>0&&Date.now()-this.startedAt>=this.config.maxMinutes*60000)return 'max_runtime';return null;}
   async run(){
