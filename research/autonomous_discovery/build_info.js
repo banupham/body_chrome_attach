@@ -3,7 +3,7 @@
 const path=require('node:path');
 const {execFileSync}=require('node:child_process');
 const embedded=require('./build_metadata.json');
-const REVISION='observation-feedback-recovery-v2';
+const REVISION='account-aware-recovery-v1';
 
 function sourceInfo(){
   const info={revision:REVISION,commit:embedded.commit||null,builtAt:embedded.builtAt||null,dirty:embedded.dirty??null};
