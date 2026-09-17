@@ -12,8 +12,9 @@ function key(...parts){return parts.map(x=>String(x??'unknown')).join('|');}
 class ExperienceMemory{
   constructor(file){
     this.file=file;
-    this.state=safeLoad(file,{schemaVersion:1,updatedAt:null,totalRuns:0,totalSteps:0,strategies:{},queries:{},transitions:{},topics:{},lessons:[]});
-    if(Number(this.state.schemaVersion)!==1)this.state={schemaVersion:1,updatedAt:null,totalRuns:0,totalSteps:0,strategies:{},queries:{},transitions:{},topics:{},lessons:[]};
+    this.state=safeLoad(file,{schemaVersion:1,updatedAt:null,totalRuns:0,totalSteps:0,strategies:{},queries:{},transitions:{},topics:{},interactionEffects:{},lessons:[]});
+    if(Number(this.state.schemaVersion)!==1)this.state={schemaVersion:1,updatedAt:null,totalRuns:0,totalSteps:0,strategies:{},queries:{},transitions:{},topics:{},interactionEffects:{},lessons:[]};
+    this.state.interactionEffects=this.state.interactionEffects||{};
   }
   strategy(id,context='global'){
     const k=key(context,id);return this.state.strategies[k]||(this.state.strategies[k]={id,context,attempts:0,successes:0,rewardSum:0,meanReward:0,newTopicCount:0,newTransitionCount:0,targetSeenCount:0,lastUsedAt:null});
@@ -34,6 +35,17 @@ class ExperienceMemory{
     const k=key(fromTopic,toTopic,surface),row=this.state.transitions[k]||(this.state.transitions[k]={fromTopic,toTopic,surface,count:0,lastSeenAt:null});row.count+=Math.max(1,Number(count)||1);row.lastSeenAt=nowIso();return clone(row);
   }
   recordTopic(topic,count=1){const k=String(topic||'unknown'),row=this.state.topics[k]||(this.state.topics[k]={topic:k,observations:0,lastSeenAt:null});row.observations+=Math.max(1,Number(count)||1);row.lastSeenAt=nowIso();return clone(row);}
+  interactionEffect(id,context='global'){
+    const k=key(context,id);return this.state.interactionEffects[k]||(this.state.interactionEffects[k]={id,context,observations:0,successfulExecutions:0,recommendationShiftSum:0,meanRecommendationShift:0,proximityGainSum:0,meanProximityGain:0,targetSeenCount:0,exposureSecondsSum:0,meanExposureSeconds:0,lastObservedAt:null});
+  }
+  recordInteractionEffect(id,{context='global',success=false,recommendationShift=0,proximityGain=0,targetSeen=false,exposureSeconds=0}={}){
+    const row=this.interactionEffect(id,context),shift=Math.max(0,Math.min(1,Number(recommendationShift)||0)),gain=Math.max(0,Number(proximityGain)||0),exposure=Math.max(0,Number(exposureSeconds)||0);
+    row.observations++;if(success)row.successfulExecutions++;row.recommendationShiftSum+=shift;row.meanRecommendationShift=Number((row.recommendationShiftSum/row.observations).toFixed(4));row.proximityGainSum+=gain;row.meanProximityGain=Number((row.proximityGainSum/row.observations).toFixed(4));if(targetSeen)row.targetSeenCount++;row.exposureSecondsSum+=exposure;row.meanExposureSeconds=Number((row.exposureSecondsSum/row.observations).toFixed(3));row.lastObservedAt=nowIso();return clone(row);
+  }
+  interactionEffectScore(id,context='global'){
+    const row=this.state.interactionEffects[key(context,id)];if(!row||!row.observations)return 0;const successRate=row.successfulExecutions/row.observations,targetRate=row.targetSeenCount/row.observations;
+    return Number(Math.max(-18,Math.min(36,row.meanRecommendationShift*18+row.meanProximityGain*90+targetRate*36+(successRate-0.5)*4)).toFixed(3));
+  }
   addLesson(text,evidence={}){const row={at:nowIso(),text:String(text),evidence:clone(evidence)};this.state.lessons.push(row);if(this.state.lessons.length>200)this.state.lessons.splice(0,this.state.lessons.length-200);return row;}
   startRun(){this.state.totalRuns++;this.save();}
   save(){this.state.updatedAt=nowIso();atomicWrite(this.file,this.state);}
@@ -41,7 +53,7 @@ class ExperienceMemory{
     const strategies=Object.values(this.state.strategies).sort((a,b)=>b.meanReward-a.meanReward||b.attempts-a.attempts).slice(0,30);
     const transitions=Object.values(this.state.transitions).sort((a,b)=>b.count-a.count).slice(0,60);
     const queries=Object.values(this.state.queries).sort((a,b)=>b.meanReward-a.meanReward||b.targetSeenCount-a.targetSeenCount).slice(0,30);
-    return {updatedAt:this.state.updatedAt,totalRuns:this.state.totalRuns,totalSteps:this.state.totalSteps,strategies,queries,transitions,topics:Object.values(this.state.topics).sort((a,b)=>b.observations-a.observations),lessons:this.state.lessons.slice(-30)};
+    const interactionEffects=Object.values(this.state.interactionEffects||{}).sort((a,b)=>(b.targetSeenCount-a.targetSeenCount)||(b.meanProximityGain-a.meanProximityGain)||(b.meanRecommendationShift-a.meanRecommendationShift)).slice(0,60);return {updatedAt:this.state.updatedAt,totalRuns:this.state.totalRuns,totalSteps:this.state.totalSteps,strategies,queries,transitions,topics:Object.values(this.state.topics).sort((a,b)=>b.observations-a.observations),interactionEffects,lessons:this.state.lessons.slice(-30)};
   }
 }
 
