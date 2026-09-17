@@ -33,5 +33,5 @@ test('BODY_OBSERVE carries native browser UI facts without changing action execu
 test('native helper is browser-chrome-only and contains no action primitives',()=>{
   const source=fs.readFileSync(path.join(__dirname,'native','windows_ui_observer.ps1'),'utf8');
   for(const forbidden of ['InvokePattern','.Invoke(','SetValue','SendKeys','SendInput','mouse_event','PostMessage','Runtime.evaluate','Input.dispatch'])assert.equal(source.includes(forbidden),false,`forbidden native UI action primitive: ${forbidden}`);
-  assert.ok(source.includes("$type -eq 'Document'"));assert.ok(source.includes('Chrome_RenderWidgetHostHWND'));assert.ok(source.includes('ValueFingerprint'));
+  assert.ok(source.includes("$type -eq 'Document'"));assert.ok(source.includes('Chrome_RenderWidgetHostHWND'));assert.ok(source.includes('ValueFingerprint'));assert.ok(source.includes('chrome_window_title_mismatch'));assert.ok(source.includes("$type -eq 'Pane'"));
 });

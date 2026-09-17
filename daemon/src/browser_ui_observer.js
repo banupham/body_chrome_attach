@@ -6,6 +6,9 @@ const {spawn}=require('node:child_process');
 
 const MAX_CONTROLS=220;
 const MAX_TABS=80;
+const ACTIVE_OBSERVERS=new Set();
+let EXIT_HOOK_INSTALLED=false;
+function registerObserver(observer){ACTIVE_OBSERVERS.add(observer);if(EXIT_HOOK_INSTALLED)return;EXIT_HOOK_INSTALLED=true;process.once('exit',()=>{for(const item of ACTIVE_OBSERVERS)try{item.child?.kill();}catch{}});}
 
 function text(value,max=240){const out=String(value??'').replace(/\s+/g,' ').trim();return out.slice(0,Math.max(0,Number(max)||0));}
 function finite(value){const n=Number(value);return Number.isFinite(n)?n:null;}
@@ -25,7 +28,7 @@ function scopeKey(request={}){return `${text(request.browserInstanceId,180)}|${f
 class WindowsBrowserUiObserver{
   constructor({platform=process.platform,spawnImpl=spawn,helperPath=path.join(__dirname,'..','native','windows_ui_observer.ps1'),timeoutMs=1500,refreshIntervalMs=250,maxStaleMs=3000,failureCooldownMs=2500}={}){
     this.platform=platform;this.spawnImpl=spawnImpl;this.helperPath=helperPath;this.timeoutMs=Math.max(500,Number(timeoutMs)||1500);this.refreshIntervalMs=Math.max(100,Number(refreshIntervalMs)||250);this.maxStaleMs=Math.max(this.refreshIntervalMs,Number(maxStaleMs)||3000);this.failureCooldownMs=Math.max(500,Number(failureCooldownMs)||2500);this.child=null;this.starting=null;this.pending=new Map();this.sequence=0;this.cache=new Map();this.inflightScopes=new Map();this.nextRefresh=new Map();this.unavailableUntil=0;
-    process.once('exit',()=>{try{this.child?.kill();}catch{}});
+    registerObserver(this);
   }
   unavailable(request,reason='platform_unsupported'){return normalizeSnapshot({available:false,observed:false,reason,confidence:'none',controls:[],tabs:[],observedAt:Date.now()},request);}
   pendingSnapshot(request,reason='uia_refresh_pending'){return normalizeSnapshot({available:true,observed:false,reason,confidence:'none',controls:[],tabs:[],observedAt:Date.now()},request);}
@@ -60,7 +63,7 @@ class WindowsBrowserUiObserver{
     return this.pendingSnapshot(scoped);
   }
   invalidate(request={}){const key=scopeKey(request);this.cache.delete(key);this.nextRefresh.set(key,0);return true;}
-  async close(){const child=this.child;this.child=null;this.cache.clear();this.inflightScopes.clear();if(!child)return;try{child.stdin.end();}catch{}await new Promise(resolve=>{child.once?.('close',resolve);setTimeout(()=>{try{child.kill();}catch{}resolve();},300);});}
+  async close(){const child=this.child;this.child=null;this.cache.clear();this.inflightScopes.clear();ACTIVE_OBSERVERS.delete(this);if(!child)return;try{child.stdin.end();}catch{}await new Promise(resolve=>{child.once?.('close',resolve);setTimeout(()=>{try{child.kill();}catch{}resolve();},300);});}
 }
 function createBrowserUiObserver(options={}){return new WindowsBrowserUiObserver(options);}
 

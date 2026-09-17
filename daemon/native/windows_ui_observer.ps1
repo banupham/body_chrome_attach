@@ -136,7 +136,12 @@ function Window-Score($Window, [string]$ExpectedTitle) {
 function Select-ChromeWindow([string]$ExpectedTitle) {
     $windows = @(Get-ChromeWindows)
     if ($windows.Count -eq 0) { return [pscustomobject]@{ element=$null; confidence='none'; reason='chrome_window_not_found'; candidates=0 } }
-    if ($windows.Count -eq 1) { return [pscustomobject]@{ element=$windows[0]; confidence=$(if ((Window-Score $windows[0] $ExpectedTitle) -gt 0) {'title_match'} else {'single_window'}); reason=$null; candidates=1 } }
+    if ($windows.Count -eq 1) {
+        $score = Window-Score $windows[0] $ExpectedTitle
+        if ($score -gt 0) { return [pscustomobject]@{ element=$windows[0]; confidence='title_match'; reason=$null; candidates=1 } }
+        if (-not (Clean-Text $ExpectedTitle 240)) { return [pscustomobject]@{ element=$windows[0]; confidence='single_window'; reason=$null; candidates=1 } }
+        return [pscustomobject]@{ element=$null; confidence='none'; reason='chrome_window_title_mismatch'; candidates=1 }
+    }
     $ranked = @($windows | ForEach-Object { [pscustomobject]@{ row=$_; score=(Window-Score $_ $ExpectedTitle) } } | Sort-Object score -Descending)
     if ($ranked.Count -gt 0 -and $ranked[0].score -gt 0) {
         $best = $ranked[0].score
@@ -148,6 +153,7 @@ function Select-ChromeWindow([string]$ExpectedTitle) {
 
 function Get-BrowserControls($WindowElement) {
     $allowed = @('Tab','TabItem','ToolBar','Button','Edit','MenuBar','MenuItem','ComboBox','SplitButton','Window')
+    $windowRect = Get-Rect $WindowElement
     $queue = New-Object System.Collections.Queue
     $queue.Enqueue([pscustomobject]@{ element=$WindowElement; depth=0 })
     $controls = @(); $index = 0
@@ -164,6 +170,8 @@ function Get-BrowserControls($WindowElement) {
             # Never walk into rendered web content. This observer is browser-chrome only.
             if ($type -eq 'Document' -or $className -eq 'Chrome_RenderWidgetHostHWND') { continue }
             $rect = Get-Rect $child
+            # Defense in depth: a large pane below the title bar is web/content chrome, not browser controls.
+            if ($type -eq 'Pane' -and $null -ne $rect -and $null -ne $windowRect -and $rect.Y -gt ($windowRect.Y + 50) -and $rect.Height -gt ($windowRect.Height * 0.60) -and $rect.Width -gt ($windowRect.Width * 0.50)) { continue }
             $offscreen = $true
             try { $offscreen = [bool]$child.Current.IsOffscreen } catch {}
             if ($allowed -contains $type -and $null -ne $rect -and -not $offscreen) {
