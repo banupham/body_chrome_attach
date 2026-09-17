@@ -78,6 +78,27 @@ jobs:
         run: python tests/bodybrain_exe_smoke.py artifacts/BodyBrain.exe
       - name: Verify exact three-file release
         run: python tests/bodybrain_release_manifest_contract.py
+      - name: Build separate YouTube discovery Brain executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node tools/stamp_discovery_build.js
+          if ($LASTEXITCODE -ne 0) { throw 'autodiscovery_build_metadata_failed' }
+          New-Item -ItemType Directory -Force -Path 'brain-artifacts' | Out-Null
+          npx --yes pkg@5.8.1 research/autonomous_discovery/entry.js --targets node18-win-x64 --output brain-artifacts/YouTubeExplorerBrain.exe
+          if ($LASTEXITCODE -ne 0) { throw 'autodiscovery_brain_build_failed' }
+      - name: Smoke separate YouTube discovery Brain executable
+        shell: pwsh
+        run: |
+          & .\brain-artifacts\YouTubeExplorerBrain.exe --selftest true
+          if ($LASTEXITCODE -ne 0) { throw 'autodiscovery_brain_selftest_failed' }
+      - name: Upload autonomous discovery Brain
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-autonomous-discovery-brain-${{ github.sha }}
+          path: brain-artifacts/YouTubeExplorerBrain.exe
+          if-no-files-found: error
+          retention-days: 14
       - name: Upload clean BodyBrain Windows release
         uses: actions/upload-artifact@v4
         with:

@@ -9,6 +9,7 @@ function deepEvidence(browser){const evidence=Array.isArray(browser?.environment
 function deepSignals(browser){const deep=deepEvidence(browser);return Array.isArray(deep?.signalIds)?deep.signalIds.map(String):[];}
 function transientEnvironment(browser){const reasons=Array.isArray(browser?.environment?.reasons)?browser.environment.reasons:[];return browser?.state==='ENV_CHECK'||String(browser?.stateReason||'').includes('waiting_for_http_tab')||reasons.includes('ENVIRONMENT_SIGNATURE_UNAVAILABLE')||reasons.includes('NO_BROWSER_TAB_FOR_ENVIRONMENT_PROBE');}
 function webTabContext(msg={}){const context=msg?.context||{},site=String(context.siteKey||'').toLowerCase(),scheme=String(context.urlScheme||'').toLowerCase();return context.contextSource==='content_script'||scheme==='http:'||scheme==='https:'||(site&&site!=='__non_web__'&&site!=='__unknown__');}
+function trustedBodyRecorderEcho(result){return result?.suppressed===true&&String(result?.reason||'')==='agent_motor_human_echo';}
 
 class ProtectionSupervisor{
   constructor(runtime,{env=process.env,behavior=new BehaviorGuardian(),controllerProbe=new ExternalControllerProbe(),setIntervalImpl=setInterval,clearIntervalImpl=clearInterval}={}){
@@ -53,7 +54,15 @@ class ProtectionSupervisor{
       this.runtime.extensionOnline=item=>{const result=this.original.extensionOnline(item);Promise.resolve().then(()=>this.scanLightAll()).catch(()=>{});return result;};
     }
     this.original.recorderEvent=this.runtime.recorderEvent.bind(this.runtime);
-    this.runtime.recorderEvent=(extId,msg)=>{const result=this.original.recorderEvent(extId,msg);const browser=this.runtime.browsers.browserForExtension(extId);if(browser&&msg?.event){this.behavior.observe(browser.browserInstanceId,msg.event);this.enforce(browser.browserInstanceId);if(webTabContext({context:{siteKey:msg.siteKey}}))this._kickTransientProbe(browser);}return result;};
+    this.runtime.recorderEvent=(extId,msg)=>{
+      const result=this.original.recorderEvent(extId,msg),browser=this.runtime.browsers.browserForExtension(extId);
+      // daemon_runtime already proves this recorder event is the trusted HUMAN_MOTOR
+      // echo of BODY's own input. Do not feed that echo back into BehaviorGuardian,
+      // otherwise BODY can quarantine itself while typing/clicking for Brain.
+      if(trustedBodyRecorderEcho(result))return result;
+      if(browser&&msg?.event){this.behavior.observe(browser.browserInstanceId,msg.event);this.enforce(browser.browserInstanceId);if(webTabContext({context:{siteKey:msg.siteKey}}))this._kickTransientProbe(browser);}
+      return result;
+    };
     if(typeof this.runtime.tabContext==='function'){
       this.original.tabContext=this.runtime.tabContext.bind(this.runtime);
       this.runtime.tabContext=(extId,msg)=>{const result=this.original.tabContext(extId,msg);const browser=this.runtime.browsers.browserForExtension(extId);if(browser&&webTabContext(msg))this._kickTransientProbe(browser);return result;};
@@ -127,4 +136,4 @@ class ProtectionSupervisor{
   status(){const browsers={};for(const browser of this.runtime.browsers.list())if(browser.online)browsers[browser.browserInstanceId]=this.combined(browser.browserInstanceId);return {policy:{...this.policy},lightRunning:this.lightRunning,initialScanInFlight:Boolean(this.lightPromise),transientProbeInFlight:[...this.transientProbeInFlight],browsers};}
 }
 
-module.exports={ProtectionSupervisor,envBool,envInt,deepEvidence,deepSignals,transientEnvironment,webTabContext};
+module.exports={ProtectionSupervisor,envBool,envInt,deepEvidence,deepSignals,transientEnvironment,webTabContext,trustedBodyRecorderEcho};

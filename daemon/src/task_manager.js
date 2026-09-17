@@ -8,12 +8,14 @@ const {runtimeDataDir}=require('./runtime_data_dir');
 
 const TASK_STATES=new Set(['READY','WAITING_APPROVAL','RUNNING','RECOVERY_REQUIRED','COMPLETED','FAILED','CANCELLED','REJECTED']);
 const POLICY_CLASSES=new Set(['SAFE_AUTO','HUMAN_APPROVED','RESTRICTED']);
+const WORKSPACE_MODES=new Set(['FIXED','DYNAMIC']);
 const ACTIVE_OWNERSHIP_STATES=new Set(['READY','RUNNING','RECOVERY_REQUIRED']);
 const RESTRICTED_SIGNALS=new Set(['spam','fake_engagement','metric_manipulation','detector_evasion','anti_bot_evasion','fingerprint_spoofing','fingerprint_manipulation','proxy_concealment','vpn_concealment']);
 const SAFE_CAPABILITIES=new Set(['youtube.search','youtube.open_video','youtube.open_channel','youtube.navigation','youtube.back','youtube.tab_switch','youtube.content_discovery','youtube.content_review','youtube.collect_metadata']);
 
 function clone(v){return JSON.parse(JSON.stringify(v));}
 function uniqueTabs(primaryTabId,tabIds=[]){const ids=[primaryTabId,...(Array.isArray(tabIds)?tabIds:[])].filter(x=>x!==null&&x!==undefined).map(Number);if(!ids.length||ids.some(x=>!Number.isInteger(x)))throw new Error('task_workspace_tabs_required');return [...new Set(ids)];}
+function workspaceMode(value){const mode=String(value||'FIXED').trim().toUpperCase();if(!WORKSPACE_MODES.has(mode))throw new Error(`task_workspace_mode_invalid:${mode}`);return mode;}
 
 class TaskPolicyGate{
   evaluate(task={}){
@@ -36,24 +38,25 @@ class TaskManager{
     if(!browserManager)throw new Error('task_manager_browser_manager_required');
     const resolvedBaseDir=runtimeDataDir(baseDir,env);
     this.browserManager=browserManager;this.uuid=uuid;this.now=now;this.policy=new TaskPolicyGate();this.dir=path.join(resolvedBaseDir,'state');this.file=path.join(this.dir,'tasks.json');fs.mkdirSync(this.dir,{recursive:true});
-    this.state=this._load();this.tabOwners=new Map();this._rebuildOwners();
+    this.state=this._load();this.tabOwners=new Map();this._normalizePersistedWorkspaces();this._rebuildOwners();
     this.persistence=new SafeJsonPersistence(this.file,{getValue:()=>this.state,debounceMs:0,retryAfterMs:1000,log:null});
     let recovered=false;for(const task of Object.values(this.state.tasks)){if(task.state==='RUNNING'){task.state='RECOVERY_REQUIRED';task.error='daemon_restart_during_running_task';task.updatedAt=this._ts();recovered=true;}}
     if(recovered)this._persist();
   }
   _ts(){return new Date(this.now()).toISOString();}
   _load(){if(!fs.existsSync(this.file))return {schemaVersion:1,tasks:{}};let x;try{x=JSON.parse(fs.readFileSync(this.file,'utf8'));}catch{throw new Error('task_state_invalid_json');}if(Number(x.schemaVersion)!==1||!x.tasks||typeof x.tasks!=='object'||Array.isArray(x.tasks))throw new Error('task_state_invalid');return x;}
+  _normalizePersistedWorkspaces(){for(const task of Object.values(this.state.tasks)){if(!task.workspace)continue;task.workspace.mode=workspaceMode(task.workspace.mode||'FIXED');task.workspace.tabIds=[...new Set((task.workspace.tabIds||[]).map(Number).filter(Number.isInteger))];if(!Number.isInteger(Number(task.workspace.primaryTabId))&&task.workspace.tabIds.length)task.workspace.primaryTabId=task.workspace.tabIds[0];}}
   _persist(){this.persistence.schedule();const r=this.persistence.flushSync();if(!r.ok)throw new Error(`task_state_persistence_failed:${r.lastError?.code||'UNKNOWN'}`);return r;}
   _mutate(work){const beforeState=clone(this.state),beforeOwners=new Map(this.tabOwners);try{const result=work();this._persist();return result;}catch(error){this.state=beforeState;this.tabOwners=beforeOwners;throw error;}}
   _key(browserId,tabId){return `${browserId}/${Number(tabId)}`;}
   _rebuildOwners(){for(const task of Object.values(this.state.tasks)){if(!ACTIVE_OWNERSHIP_STATES.has(task.state))continue;for(const tabId of task.workspace?.tabIds||[]){const key=this._key(task.workspace.browserInstanceId,tabId);if(this.tabOwners.has(key))throw new Error(`task_workspace_conflict_persisted:${key}`);this.tabOwners.set(key,task.taskId);}}}
   _claim(task){const ws=task.workspace;for(const tabId of ws.tabIds){const key=this._key(ws.browserInstanceId,tabId),owner=this.tabOwners.get(key);if(owner&&owner!==task.taskId)throw new Error(`tab_already_owned:${ws.browserInstanceId}:${tabId}:${owner}`);}for(const tabId of ws.tabIds)this.tabOwners.set(this._key(ws.browserInstanceId,tabId),task.taskId);}
   _release(task){for(const tabId of task.workspace?.tabIds||[]){const key=this._key(task.workspace.browserInstanceId,tabId);if(this.tabOwners.get(key)===task.taskId)this.tabOwners.delete(key);}}
-  _assertWorkspace(browserInstanceId,primaryTabId,tabIds){const ids=uniqueTabs(primaryTabId,tabIds);for(const id of ids)this.browserManager.assertTab(browserInstanceId,id);return {browserInstanceId:String(browserInstanceId),primaryTabId:Number(primaryTabId??ids[0]),tabIds:ids};}
+  _assertWorkspace(browserInstanceId,primaryTabId,tabIds,mode='FIXED'){const ids=uniqueTabs(primaryTabId,tabIds);for(const id of ids)this.browserManager.assertTab(browserInstanceId,id);return {browserInstanceId:String(browserInstanceId),primaryTabId:Number(primaryTabId??ids[0]),tabIds:ids,mode:workspaceMode(mode)};}
 
   create(spec={}){
     const taskId=String(spec.taskId||`task-${this.uuid()}`).trim();if(!taskId)throw new Error('task_id_required');if(this.state.tasks[taskId])throw new Error(`task_exists:${taskId}`);const browserId=String(spec.browserInstanceId||'').trim();if(!browserId)throw new Error('task_browser_required');
-    const policy=this.policy.evaluate(spec),workspace=this._assertWorkspace(browserId,spec.primaryTabId,spec.tabIds),now=this._ts(),state=policy.policyClass==='RESTRICTED'?'REJECTED':policy.requiresApproval?'WAITING_APPROVAL':'READY';
+    const policy=this.policy.evaluate(spec),workspace=this._assertWorkspace(browserId,spec.primaryTabId,spec.tabIds,spec.workspaceMode),now=this._ts(),state=policy.policyClass==='RESTRICTED'?'REJECTED':policy.requiresApproval?'WAITING_APPROVAL':'READY';
     const task={taskId,capability:String(spec.capability||spec.goal?.capability||''),goal:clone(spec.goal||null),taskType:spec.taskType||null,policy,state,humanApproved:spec.humanApproved===true,workspace,createdAt:now,updatedAt:now,result:null,error:null};
     return this._mutate(()=>{if(ACTIVE_OWNERSHIP_STATES.has(state))this._claim(task);this.state.tasks[taskId]=task;return clone(task);});
   }
@@ -66,6 +69,18 @@ class TaskManager{
   recover(taskId,{retry=false}={}){return this._mutate(()=>{const task=this.get(taskId);if(task.state!=='RECOVERY_REQUIRED')throw new Error(`task_not_recovery_required:${task.taskId}`);if(retry){for(const tabId of task.workspace.tabIds)this.browserManager.assertTab(task.workspace.browserInstanceId,tabId);task.state='READY';task.error=null;}else{this._release(task);task.state='FAILED';task.error='recovery_rejected';}task.updatedAt=this._ts();return clone(task);});}
   finish(taskId,state,payload=null){return this._mutate(()=>{const task=this.get(taskId),next=String(state||'').toUpperCase();if(!['COMPLETED','FAILED','CANCELLED'].includes(next))throw new Error(`invalid_task_terminal_state:${next}`);this._release(task);task.state=next;task.updatedAt=this._ts();if(next==='COMPLETED')task.result=clone(payload);else task.error=payload==null?null:String(payload);return clone(task);});}
 
+  updateWorkspace(taskId,{addTabIds=[],removeTabIds=[],primaryTabId=null}={}){
+    return this._mutate(()=>{
+      const task=this.get(taskId);if(!ACTIVE_OWNERSHIP_STATES.has(task.state))throw new Error(`task_workspace_not_mutable:${task.taskId}:${task.state}`);if(workspaceMode(task.workspace?.mode)!=='DYNAMIC')throw new Error(`task_workspace_not_dynamic:${task.taskId}`);
+      const browserId=task.workspace.browserInstanceId,browser=this.browserManager.require(browserId),adds=[...new Set((addTabIds||[]).map(Number).filter(Number.isInteger))],removes=new Set((removeTabIds||[]).map(Number).filter(Number.isInteger));
+      for(const id of adds){this.browserManager.assertTab(browserId,id);const owner=this.tabOwners.get(this._key(browserId,id));if(owner&&owner!==task.taskId)throw new Error(`tab_already_owned:${browserId}:${id}:${owner}`);}
+      const next=[...new Set([...task.workspace.tabIds,...adds])].filter(id=>!removes.has(Number(id))&&browser.tabs.has(Number(id)));if(!next.length)throw new Error(`task_workspace_cannot_be_empty:${task.taskId}`);
+      let primary=primaryTabId==null?Number(task.workspace.primaryTabId):Number(primaryTabId);if(!next.includes(primary)){const active=Number(browser.activeTabId);primary=next.includes(active)?active:next[0];}
+      for(const oldId of task.workspace.tabIds){if(next.includes(Number(oldId)))continue;const key=this._key(browserId,oldId);if(this.tabOwners.get(key)===task.taskId)this.tabOwners.delete(key);}
+      task.workspace.tabIds=next;task.workspace.primaryTabId=primary;task.workspace.mode='DYNAMIC';for(const id of next)this.tabOwners.set(this._key(browserId,id),task.taskId);task.updatedAt=this._ts();return clone(task);
+    });
+  }
+
   executionContext(taskId,tabRef='primary',{autoStart=true}={}){
     let task=this.get(taskId);
     if(task.state==='READY'&&autoStart){this.start(task.taskId);task=this.get(taskId);}
@@ -76,13 +91,24 @@ class TaskManager{
   }
 
   reconcileBrowser(browserInstanceId){
-    const browser=this.browserManager.require(browserInstanceId),changed=[];
-    this._mutate(()=>{for(const task of Object.values(this.state.tasks)){if(task.workspace?.browserInstanceId!==browser.browserInstanceId||!ACTIVE_OWNERSHIP_STATES.has(task.state))continue;const missing=task.workspace.tabIds.filter(id=>!browser.tabs.has(Number(id)));if(missing.length){this._release(task);task.state='FAILED';task.error=`workspace_tabs_missing:${missing.join(',')}`;task.updatedAt=this._ts();changed.push(task.taskId);}}return null;});
-    return {browserInstanceId:browser.browserInstanceId,failedTasks:changed};
+    const browser=this.browserManager.require(browserInstanceId),failed=[],adjusted=[];
+    this._mutate(()=>{for(const task of Object.values(this.state.tasks)){
+      if(task.workspace?.browserInstanceId!==browser.browserInstanceId||!ACTIVE_OWNERSHIP_STATES.has(task.state))continue;
+      const missing=task.workspace.tabIds.filter(id=>!browser.tabs.has(Number(id)));if(!missing.length)continue;
+      if(workspaceMode(task.workspace.mode)==='DYNAMIC'){
+        for(const id of missing){const key=this._key(browser.browserInstanceId,id);if(this.tabOwners.get(key)===task.taskId)this.tabOwners.delete(key);}
+        task.workspace.tabIds=task.workspace.tabIds.filter(id=>browser.tabs.has(Number(id)));
+        if(!task.workspace.tabIds.length){this._release(task);task.state='FAILED';task.error=`dynamic_workspace_empty:${missing.join(',')}`;task.updatedAt=this._ts();failed.push(task.taskId);continue;}
+        if(!task.workspace.tabIds.includes(Number(task.workspace.primaryTabId))){const active=Number(browser.activeTabId);task.workspace.primaryTabId=task.workspace.tabIds.includes(active)?active:task.workspace.tabIds[0];}
+        task.updatedAt=this._ts();adjusted.push({taskId:task.taskId,removedTabIds:missing,newPrimaryTabId:task.workspace.primaryTabId,tabIds:[...task.workspace.tabIds]});continue;
+      }
+      this._release(task);task.state='FAILED';task.error=`workspace_tabs_missing:${missing.join(',')}`;task.updatedAt=this._ts();failed.push(task.taskId);
+    }return null;});
+    return {browserInstanceId:browser.browserInstanceId,failedTasks:failed,adjustedTasks:adjusted};
   }
 
   owners(){return [...this.tabOwners.entries()].map(([resource,taskId])=>({resource,taskId})).sort((a,b)=>a.resource.localeCompare(b.resource,'en'));}
   flushSync(){return this.persistence.flushSync();}
 }
 
-module.exports={TaskManager,TaskPolicyGate,TASK_STATES,POLICY_CLASSES,SAFE_CAPABILITIES,RESTRICTED_SIGNALS};
+module.exports={TaskManager,TaskPolicyGate,TASK_STATES,POLICY_CLASSES,WORKSPACE_MODES,SAFE_CAPABILITIES,RESTRICTED_SIGNALS};
