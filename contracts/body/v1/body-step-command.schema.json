@@ -45,7 +45,7 @@
           "properties": {
             "kind": {"const": "browser_ui"},
             "action": {
-              "enum": ["back", "forward", "reload", "hardreload", "stop", "newtab", "closetab", "reopentab", "nexttab", "prevtab", "newwindow", "addressbar", "find", "downloads", "history", "devtools", "fullscreen", "bookmark", "zoomin", "zoomout", "zoomreset", "address", "findtext"]
+              "enum": ["dismiss", "back", "forward", "reload", "hardreload", "stop", "newtab", "closetab", "reopentab", "nexttab", "prevtab", "newwindow", "addressbar", "find", "downloads", "history", "devtools", "fullscreen", "bookmark", "zoomin", "zoomout", "zoomreset", "address", "findtext"]
             },
             "value": {}
           }
