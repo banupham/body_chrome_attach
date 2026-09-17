@@ -9,6 +9,7 @@ const {buildWorld,worldDelta,contextKey}=require('./world_model');
 const {bodyCapabilityCatalog,isSupportedStep}=require('./body_capabilities');
 const {FORMAT,formatKind}=require('./media_format');
 const {ExperienceMemory}=require('./experience_memory');
+const {evaluateAction,rebindAffordance}=require('./action_feedback');
 const {AccountProfileStore,buildAccountProfile,contextForTarget}=require('./account_profile');
 
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,Math.max(0,Number(ms)||0)));
@@ -32,9 +33,39 @@ class AutonomousYouTubeBrainV3 extends AutonomousYouTubeBrainV2{
     else info.snapshot.currentMediaFormat=null;
     return info;
   }
-  async semanticRecovery(){
-    const tabs=await this.browserTabs();for(const tab of tabs){const inspected=await this.inspectTab(tab).catch(()=>null);if(inspected?.youtube){if(Number(tab.id)!==Number(this.tabId))await this.switchToTab(tab.id,{reason:'semantic_recovery'});return this.observe('semantic_recovered');}}
-    await this.ensureWorkspaceTabs([this.tabId],{reason:'semantic_recovery_address'}).catch(()=>{});await this.body.browserUi(this.task.taskId,'address','https://www.youtube.com/',{tabId:Number(this.tabId)});return this.waitForSemantic(()=>true,{timeoutMs:12000,reason:'semantic_recovery_home'});
+  async recoverObservation(reason,{attempts=3,allowPartial=false}={}){
+    for(let attempt=1;attempt<=attempts&&!this.stopRequested;attempt++){
+      try{
+        if(attempt>1){
+          const tabs=await this.browserTabs();
+          if(!tabs.some(t=>Number(t.id)===Number(this.tabId))){
+            const fallback=tabs.find(t=>t.active)||tabs[0];
+            if(!fallback||!await this.switchToTab(fallback.id,{reason:'observation_tab_disappeared'}))throw new Error('workspace_rebind_failed');
+          }
+          await this.ensureWorkspaceTabs([this.tabId],{reason:'observation_workspace_refresh'});
+        }
+        const state=await this.observe(reason);
+        if(state?.semantic||state?.quality?.usable!==false&&state?.observation?.content?.semantic?.reason==='unsupported_site')return state;
+        this.ledger('observation_retry',{reason,attempt,error:state?.quality?.reason||'semantic_unavailable'});
+      }catch(error){this.ledger('observation_retry',{reason,attempt,error:String(error?.message||error)});}
+      if(attempt<attempts)await sleep(180);
+    }
+    if(allowPartial&&!this.stopRequested){
+      try{
+        const browser=await this.currentBrowser(),tab=(browser.tabs||[]).find(t=>Number(t.id)===Number(this.tabId));
+        if(tab)return {semantic:null,partial:true,quality:{usable:false,reason:'browser_metadata_only'},observation:{scope:{tabId:Number(tab.id),status:tab.status||null,siteKey:tab.siteKey||null},content:{page:null,semantic:null},freshness:{observationUnavailable:true},bodyState:{activeTabId:browser.activeTabId},environment:{online:browser.online===true,eligible:browser.environment?.eligible===true,status:browser.state||'UNKNOWN'}}};
+      }catch(error){this.ledger('observation_fallback_failed',{reason,error:String(error?.message||error)});}
+    }
+    return null;
+  }
+  async semanticRecovery(){return this.recoverObservation('semantic_recovery');}
+  recordUnobservedAction(action,plan,world,outcome){
+    const feedback=evaluateAction(action,outcome,world,null,{reasons:[]}),memoryId=actionMemoryId(action),context=contextKey(world),reward=-2;
+    this.memory.recordStrategy(memoryId,{context,reward,success:false});
+    this.memory.addLesson('The action outcome is unknown. Obtain fresh evidence and replan; do not replay the prior input automatically.',{memoryId,context,feedback});this.memory.save();
+    const row={step:this.stepNo,at:Date.now(),actionKey:action.actionKey,memoryId,type:action.type,capability:action.capability,purpose:action.purpose,subgoal:plan.subgoal.id,videoId:action.target?.videoId||null,query:outcome.query||null,tabId:this.tabId,success:false,changed:false,reward,error:outcome.error||feedback.reason,feedback,beforeSignature:world.signature,afterSignature:null,targetProgress:false};
+    this.agentHistory.push(row);this.batchPath.push(row);this.ledger('agent_outcome',row);this.stagnation++;
+    return {success:false,reward,observationUnavailable:true,stop:false};
   }
   async restoreHomeAfterAccountProfile(){
     await this.body.browserUi(this.task.taskId,'address','https://www.youtube.com/',{tabId:Number(this.tabId)});const state=await this.waitForSemantic(s=>s?.route?.pageType==='home',{timeoutMs:12000,intervalMs:300,reason:'account_profile_restore_home'});this.ledger('account_profile_workspace_restored',{pageType:state?.semantic?.route?.pageType||null});return state;
@@ -72,6 +103,16 @@ class AutonomousYouTubeBrainV3 extends AutonomousYouTubeBrainV2{
     const step=JSON.parse(JSON.stringify(action.step||{}));if(!isSupportedStep(step))return {success:false,reason:'unsupported_step'};
     if(step.kind==='browser_ui'&&step.action==='address')step.value='https://www.youtube.com/';
     if(step.kind==='browser_ui'&&step.action==='findtext')step.value=this.queryPlan?.plan?.[0]?.components?.[0]||this.queryPlan?.plan?.[0]?.query||'video';
+    if(step.kind==='motor'){
+      const fresh=await this.observe('raw_action_preflight');
+      if(!fresh.semantic)return {success:false,reason:'fresh_semantic_required'};
+      if(fresh.semantic.scene?.hasFocus===false)return {success:false,reason:'document_focus_unavailable'};
+      if(action.affordance){
+        const bound=rebindAffordance(action.affordance,fresh.semantic);if(!bound)return {success:false,reason:'affordance_changed_replan_required'};
+        const r=bound.actionRect,p=bound.actionPoint||{x:r.x+r.width/2,y:r.y+r.height/2};
+        Object.assign(step.intent,{x:p.x,y:p.y,width:r.width,height:r.height});
+      }
+    }
     const beforeTabs=await this.browserTabs(),sourceTabId=this.tabId;let result;
     if(step.kind==='browser_ui')result=await this.body.browserUi(this.task.taskId,step.action,step.value??null,{tabId:Number(this.tabId)});
     else if(step.kind==='tab_switch'){const success=await this.switchToTab(step.targetTabId,{reason:'agent_raw_step'});return {success,result:null};}
@@ -97,7 +138,7 @@ class AutonomousYouTubeBrainV3 extends AutonomousYouTubeBrainV2{
       }else if(action.type==='tab_switch'){
         success=await this.switchToTab(action.tabId,{reason:'agent_planner'});
       }else if(action.type==='body_step'){
-        const out=await this.executeRawBodyStep(action);success=out.success;result=out.result;
+        const out=await this.executeRawBodyStep(action);success=out.success;result=out.result;error=out.reason||null;
       }else throw new Error(`agent_action_unknown:${action.type}`);
     }catch(e){error=String(e?.message||e);success=false;}
     return {success,result,query,queryRepeated,selected,dwellSec,error,durationMs:Date.now()-started};
@@ -109,20 +150,42 @@ class AutonomousYouTubeBrainV3 extends AutonomousYouTubeBrainV2{
     const world=await this.worldFrom(state,snapshotInfo);if(world.currentIsTarget&&!this.config.continueAfterFound){this.markTargetOpened({surface:'current_video',method:'current_video',fromTopic:world.current.topic,strategy:'arrival'});return {stop:true,world};}
     const plan=this.agentPlanner.generate(world,{task:this.taskModel,queryPlan:this.queryPlan,dynamicQueries:this.dynamicQueries,usedQueries:this.usedQueries,stagnation:this.stagnation});const action=this.agentPlanner.choose(plan,{stagnation:this.stagnation});if(!action)throw new Error('agent_planner_no_action');this.plannerDecisionCount++;
     this.ledger('agent_plan',{decision:this.plannerDecisionCount,subgoal:plan.subgoal,context:plan.context,targetFormat:plan.targetFormat,currentFormat:world.current.mediaFormat,formatMismatch:world.formatMismatch,accountRelationship:plan.accountRelationship,accountPlanMode:plan.accountPlanMode,selected:{type:action.type,capability:action.capability,purpose:action.purpose,query:action.query||null,targetVideoId:action.target?.videoId||null,targetMediaFormat:action.target?.mediaFormat||null,formatRelation:action.formatRelation||null,tabId:action.tabId??null,utility:action.utility,selection:action.selection,epsilon:action.epsilon},alternatives:plan.actions.slice(0,8).map(a=>({type:a.type,capability:a.capability,purpose:a.purpose,query:a.query||null,targetVideoId:a.target?.videoId||null,targetMediaFormat:a.target?.mediaFormat||null,formatRelation:a.formatRelation||null,utility:a.utility}))});
-    const outcome=await this.executeAgentAction(action,snapshotInfo,world);let afterState=await this.observe('agent_after_action');if(!afterState.semantic)afterState=await this.semanticRecovery();if(!afterState?.semantic)throw new Error('agent_semantic_recovery_failed');const afterInfo=await this.enrichedSnapshot(afterState,`agent_after_${action.type}`);const afterWorld=await this.worldFrom(afterState,afterInfo),delta=worldDelta(world,afterWorld);const success=outcome.success&&(delta.changed||(action.type==='preview_candidate'&&outcome.previewConfirmed===true)||action.type==='dwell'||action.capability?.startsWith('motor.moveTo')||action.capability?.startsWith('motor.hover'));
-    const reward=this.rewardAgent({action,outcome:{...outcome,success},delta,afterInfo}),memoryId=actionMemoryId(action),context=contextKey(world);this.memory.recordStrategy(memoryId,{context,reward,success,newTopics:afterInfo.newTopics,newTransitions:afterInfo.newTransitions,targetSeen:Boolean(afterInfo.targetCandidate)||this.targetOpened});if(outcome.query)this.memory.recordQuery(outcome.query,{reward,targetSeen:Boolean(afterInfo.targetCandidate)||this.targetOpened,resultCount:afterInfo.snapshot.candidates.length});if(!success)this.memory.addLesson('An autonomous action failed to produce its expected environment change; planner should lower this action in the same context.',{memoryId,context,error:outcome.error,delta:delta.reasons});this.memory.save();const targetProgress=success&&(Number(afterInfo.proximityGain||0)>=0.025||Boolean(afterInfo.targetCandidate&&!snapshotInfo.targetCandidate)||(afterWorld.currentIsTarget&&!world.currentIsTarget)||outcome.previewConfirmed===true);this.stagnation=targetProgress?0:this.stagnation+1;
-    const historyRow={step:this.stepNo,at:Date.now(),targetProgress,memoryId,durationMs:outcome.durationMs??outcome.hoverMs??null,queryRepeated:outcome.queryRepeated===true,actionKey:action.actionKey,type:action.type,capability:action.capability,purpose:action.purpose,subgoal:plan.subgoal.id,accountRelationship:plan.accountRelationship,accountPlanMode:plan.accountPlanMode,targetFormat:plan.targetFormat,currentFormatBefore:world.current.mediaFormat,currentFormatAfter:afterWorld.current.mediaFormat,formatMismatchBefore:world.formatMismatch,formatMismatchAfter:afterWorld.formatMismatch,videoId:outcome.selected?.videoId||afterWorld.current.videoId||null,topic:outcome.selected?.classification?.primary||afterWorld.current.topic,query:outcome.query,tabId:this.tabId,success,reward,changed:delta.changed,changeReasons:delta.reasons,error:outcome.error,selection:action.selection,utility:action.utility};this.agentHistory.push(historyRow);if(this.agentHistory.length>500)this.agentHistory.splice(0,this.agentHistory.length-500);this.batchPath.push(historyRow);this.ledger('agent_outcome',historyRow);
+    let outcome;
+    try{outcome=await this.executeAgentAction(action,snapshotInfo,world);}catch(error){outcome={success:false,error:String(error?.message||error)};}
+    const afterState=await this.recoverObservation('agent_after_action');
+    if(!afterState)return this.recordUnobservedAction(action,plan,world,outcome);
+    let afterInfo,afterWorld;
+    try{afterInfo=await this.enrichedSnapshot(afterState,`agent_after_${action.type}`);afterWorld=await this.worldFrom(afterState,afterInfo);}
+    catch(error){return this.recordUnobservedAction(action,plan,world,{...outcome,error:String(error?.message||error)});}
+    const delta=worldDelta(world,afterWorld),feedback=evaluateAction(action,outcome,world,afterWorld,delta),success=feedback.verdict==='confirmed';
+    const reward=this.rewardAgent({action,outcome:{...outcome,success},delta,afterInfo}),memoryId=actionMemoryId(action),context=contextKey(world);this.memory.recordStrategy(memoryId,{context,reward,success,newTopics:afterInfo.newTopics,newTransitions:afterInfo.newTransitions,targetSeen:Boolean(afterInfo.targetCandidate)||this.targetOpened});if(outcome.query)this.memory.recordQuery(outcome.query,{reward,targetSeen:Boolean(afterInfo.targetCandidate)||this.targetOpened,resultCount:afterInfo.snapshot.candidates.length});if(!success)this.memory.addLesson('An autonomous action failed to produce its expected environment change; planner should lower this action in the same context.',{memoryId,context,error:outcome.error,feedback,delta:delta.reasons});this.memory.save();const targetProgress=success&&(Number(afterInfo.proximityGain||0)>=0.025||Boolean(afterInfo.targetCandidate&&!snapshotInfo.targetCandidate)||(afterWorld.currentIsTarget&&!world.currentIsTarget)||outcome.previewConfirmed===true);this.stagnation=targetProgress?0:this.stagnation+1;
+    const historyRow={step:this.stepNo,at:Date.now(),targetProgress,memoryId,durationMs:outcome.durationMs??outcome.hoverMs??null,queryRepeated:outcome.queryRepeated===true,feedback,beforeSignature:world.signature,afterSignature:afterWorld.signature,actionKey:action.actionKey,type:action.type,capability:action.capability,purpose:action.purpose,subgoal:plan.subgoal.id,accountRelationship:plan.accountRelationship,accountPlanMode:plan.accountPlanMode,targetFormat:plan.targetFormat,currentFormatBefore:world.current.mediaFormat,currentFormatAfter:afterWorld.current.mediaFormat,formatMismatchBefore:world.formatMismatch,formatMismatchAfter:afterWorld.formatMismatch,videoId:outcome.selected?.videoId||afterWorld.current.videoId||null,topic:outcome.selected?.classification?.primary||afterWorld.current.topic,query:outcome.query,tabId:this.tabId,success,reward,changed:delta.changed,changeReasons:delta.reasons,error:outcome.error,selection:action.selection,utility:action.utility};this.agentHistory.push(historyRow);if(this.agentHistory.length>500)this.agentHistory.splice(0,this.agentHistory.length-500);this.batchPath.push(historyRow);this.ledger('agent_outcome',historyRow);
     if(afterWorld.currentIsTarget)this.markTargetOpened({surface:'agent_environment',method:'agent_environment',fromVideoId:world.current.videoId||null,fromTopic:world.current.topic,strategy:'agent_planner',title:this.targetApi?.title||null});
     return {success,reward,after:afterInfo,world:afterWorld,targetOpened:this.targetOpened,stop:this.targetOpened&&!this.config.continueAfterFound};
   }
-  reportObject(status){const report=super.reportObject(status);report.schemaVersion=6;if(report.target)report.target.mediaFormat=this.targetApi?.mediaFormat||{kind:FORMAT.UNKNOWN};report.autonomy={...report.autonomy,mode:'FULL_BODY_AGENT',planner:'world_model_affordance_utility_experience_v3',fixedStrategyMenu:false,fullBodyCapabilityCatalog:this.capabilityCatalog,taskModel:this.taskModel,languageAwareQueryPlanner:this.queryPlan?.planner||null,targetLanguage:this.queryPlan?.targetLanguage||null,targetFormat:formatKind(this.targetApi?.mediaFormat),targetFormatPolicy:this.taskModel?.formatPolicy||null};report.account=this.accountContext?{accountKey:this.accountContext.accountKey,available:this.accountContext.available,profileRefreshedAt:this.accountContext.profileRefreshedAt,historySampleCount:this.accountContext.historySampleCount,profileConfidence:this.accountContext.profileConfidence,habits:this.accountContext.habits,relationship:this.accountContext.relationship,plan:this.accountContext.plan,profileActions:this.accountProfileActions,experienceMemoryFile:this.memory.file}:null;report.agent={plannerDecisions:this.plannerDecisionCount,history:this.agentHistory.slice(-250),usedQueries:[...this.usedQueries],dynamicQueries:this.dynamicQueries.slice(-50)};return report;}
+  reportObject(status){const report=super.reportObject(status);report.schemaVersion=6;if(report.target)report.target.mediaFormat=this.targetApi?.mediaFormat||{kind:FORMAT.UNKNOWN};report.autonomy={...report.autonomy,mode:'FULL_BODY_AGENT',planner:'world_model_observe_verify_replan_v4',fixedStrategyMenu:false,stepFeedback:'expected_effect_or_unknown',nativeUiContentsObserved:false,observationRetryLimit:3,fullBodyCapabilityCatalog:this.capabilityCatalog,taskModel:this.taskModel,languageAwareQueryPlanner:this.queryPlan?.planner||null,targetLanguage:this.queryPlan?.targetLanguage||null,targetFormat:formatKind(this.targetApi?.mediaFormat),targetFormatPolicy:this.taskModel?.formatPolicy||null};report.account=this.accountContext?{accountKey:this.accountContext.accountKey,available:this.accountContext.available,profileRefreshedAt:this.accountContext.profileRefreshedAt,historySampleCount:this.accountContext.historySampleCount,profileConfidence:this.accountContext.profileConfidence,habits:this.accountContext.habits,relationship:this.accountContext.relationship,plan:this.accountContext.plan,profileActions:this.accountProfileActions,experienceMemoryFile:this.memory.file}:null;report.agent={plannerDecisions:this.plannerDecisionCount,history:this.agentHistory.slice(-250),usedQueries:[...this.usedQueries],dynamicQueries:this.dynamicQueries.slice(-50)};return report;}
   async run(){
-    this.status='STARTING';this.memory.startRun();this.targetApi=await this.api.profileTarget(this.config.target);this.ledger('target_format_profiled',{videoId:this.targetApi.videoId,mediaFormat:this.targetApi.mediaFormat});this.queryPlan=adaptiveQueryPlan(this.targetApi,{maxQueries:this.config.maxQueries});this.queryPlan.fingerprint=this.buildFingerprint();this.queryAudit.push(...this.queryPlan.audit);
+    this.status='STARTING';
+    try{
+    this.memory.startRun();this.targetApi=await this.api.profileTarget(this.config.target);this.ledger('target_format_profiled',{videoId:this.targetApi.videoId,mediaFormat:this.targetApi.mediaFormat});this.queryPlan=adaptiveQueryPlan(this.targetApi,{maxQueries:this.config.maxQueries});this.queryPlan.fingerprint=this.buildFingerprint();this.queryAudit.push(...this.queryPlan.audit);
     await this.body.connect();await this.selectBrowser();await this.createTask();if(this.accountProfileStore){this.status='ACCOUNT_PROFILING';this.accountContext=await this.profileAccountContext();}
     this.taskModel=this.agentPlanner.inferTask(this.targetApi,this.queryPlan,this.accountContext);this.ledger('target_profiled',{videoId:this.targetApi.videoId,title:this.targetApi.title,categoryId:this.targetApi.categoryId,topics:this.targetApi.topicLabels,targetLanguage:this.queryPlan.targetLanguage,targetFormat:this.taskModel.targetFormat,targetFormatConfidence:this.taskModel.targetFormatConfidence,targetFormatEvidence:this.taskModel.targetFormatEvidence,formatPolicy:this.taskModel.formatPolicy,accountContext:this.accountContext?{accountKey:this.accountContext.accountKey,historySampleCount:this.accountContext.historySampleCount,relationship:this.accountContext.relationship,plan:this.accountContext.plan}:null,queryPlanner:this.queryPlan.planner,safeQueryCount:this.queryPlan.plan.length,plannedQueries:this.queryPlan.plan.map(row=>({query:row.query,components:row.components,provenance:row.provenance,specificity:row.specificity})),taskModel:{objective:this.taskModel.objective,targetFormat:this.taskModel.targetFormat,formatPolicy:this.taskModel.formatPolicy,accountRelationship:this.taskModel.accountContext?.relationship?.kind||null,accountPlanMode:this.taskModel.accountContext?.plan?.mode||null,constraints:this.taskModel.constraints,successEvidence:this.taskModel.successEvidence},capabilities:this.capabilityCatalog});this.status='RUNNING';
-    try{
-      while(true){const limit=this.limitReached();if(limit){this.status=String(limit).toUpperCase();break;}this.stepNo++;let state=await this.observe(`agent_step_${this.stepNo}_before`);if(!state.semantic)state=await this.semanticRecovery();if(!state?.semantic){this.stagnation++;await sleep(500);continue;}await this.handleAds({waitForSkippable:true,maxWaitMs:2500});const before=await this.enrichedSnapshot(state,`agent_step_${this.stepNo}_before`);const result=await this.actAgent(state,before);if(result.stop){this.status='TARGET_REACHED';break;}if(result.targetOpened)this.status='TARGET_REACHED';else this.status='RUNNING';this.writeBatch(this.status,false);}
-      this.writeBatch(this.status,true);await this.body.finishTask(this.task.taskId,'COMPLETED',{status:this.status,targetVideoId:this.config.target,targetFormat:this.taskModel?.targetFormat||FORMAT.UNKNOWN,targetOpened:this.targetOpened,accountKey:this.accountContext?.accountKey||null,accountRelationship:this.accountContext?.relationship?.kind||null,steps:this.stepNo,planner:'v3'});return this.reportObject(this.status);
+    let unavailableStreak=0;
+      while(true){
+        const limit=this.limitReached();if(limit){this.status=String(limit).toUpperCase();break;}this.stepNo++;
+        try{
+          const state=await this.recoverObservation(`agent_step_${this.stepNo}_before`,{allowPartial:true});
+          if(!state){unavailableStreak++;this.stagnation++;this.ledger('agent_step_unobserved',{step:this.stepNo,unavailableStreak});}
+          else{
+            const before=await this.enrichedSnapshot(state,`agent_step_${this.stepNo}_before`),result=await this.actAgent(state,before);
+            unavailableStreak=result.observationUnavailable||state.partial?unavailableStreak+1:0;
+            if(result.stop){this.status='TARGET_REACHED';break;}
+          }
+        }catch(error){unavailableStreak++;this.stagnation++;this.ledger('agent_step_error',{step:this.stepNo,unavailableStreak,error:String(error?.message||error)});}
+        this.status=unavailableStreak?'RECOVERING':'RUNNING';this.writeBatch(this.status,false);
+        if(unavailableStreak>=3){this.status='RECOVERY_REQUIRED';break;}
+      }
+      this.writeBatch(this.status,true);await this.body.finishTask(this.task.taskId,this.status==='RECOVERY_REQUIRED'?'FAILED':'COMPLETED',this.status==='RECOVERY_REQUIRED'?'RECOVERY_REQUIRED: fresh observation unavailable after bounded recovery':{status:this.status,targetVideoId:this.config.target,targetFormat:this.taskModel?.targetFormat||FORMAT.UNKNOWN,targetOpened:this.targetOpened,accountKey:this.accountContext?.accountKey||null,accountRelationship:this.accountContext?.relationship?.kind||null,steps:this.stepNo,planner:'v3'});return this.reportObject(this.status);
     }catch(error){this.status='ERROR';this.ledger('run_error',{error:String(error?.stack||error)});this.writeBatch(this.status,true);if(this.task)await this.body.finishTask(this.task.taskId,'FAILED',String(error?.message||error)).catch(()=>{});throw error;}finally{await this.body.close().catch(()=>{});}
   }
 }

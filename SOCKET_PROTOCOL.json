@@ -48,7 +48,7 @@
     "stepIdentity": "taskId + stepId; requestId is transport-only and does not change Body step identity",
     "deliverySemantics": "durable at-most-once physical execution; duplicate completed steps replay the stored result; unresolved durable reservations return body_step_outcome_unknown and are never physically re-executed",
     "eyes": "BODY_OBSERVE requests a live Extension snapshot when available; cached facts remain explicitly age-tagged if live refresh fails",
-    "browserUiActions": ["back", "forward", "reload", "hardreload", "stop", "newtab", "closetab", "reopentab", "nexttab", "prevtab", "newwindow", "addressbar", "find", "downloads", "history", "devtools", "fullscreen", "bookmark", "zoomin", "zoomout", "zoomreset", "address", "findtext"],
+    "browserUiActions": ["dismiss", "back", "forward", "reload", "hardreload", "stop", "newtab", "closetab", "reopentab", "nexttab", "prevtab", "newwindow", "addressbar", "find", "downloads", "history", "devtools", "fullscreen", "bookmark", "zoomin", "zoomout", "zoomreset", "address", "findtext"],
     "invariants": [
       "one taskId+stepId identity requests one Body step and permits at most one physical attempt",
       "BODY returns facts and technical execution state, never task judgment",
