@@ -8,7 +8,6 @@ const {
   contextKey
 }=require('./brain');
 const {inspectQuery}=require('./query_firewall');
-const {observationQuality}=require('./observation_quality');
 
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,Math.max(0,Number(ms)||0)));
 const bounded=(v,a,b)=>Math.max(a,Math.min(b,Number(v)||0));
@@ -76,14 +75,13 @@ class AutonomousYouTubeBrainV2 extends AutonomousYouTubeBrain{
   async browserTabs(){return (await this.currentBrowser()).tabs||[];}
   async observeTab(tabId){
     const observation=await this.body.observe({browserInstanceId:this.browser.browserInstanceId,tabId:Number(tabId)});const semantic=observation?.content?.semantic;
-    const quality=observationQuality(observation);return {observation,quality,semantic:quality.usable&&semantic?.available&&semantic.platform==='youtube'?semantic:null};
+    return {observation,semantic:semantic?.available&&semantic.platform==='youtube'?semantic:null};
   }
   async observe(reason='observe'){
     if(!this.task)return super.observe(reason);
     const observation=await this.body.observe({taskId:this.task.taskId,tabId:Number(this.tabId)});const semantic=observation?.content?.semantic;
-    const quality=observationQuality(observation);
-    if(!quality.usable||!semantic?.available||semantic.platform!=='youtube')return {observation,semantic:null,reason,quality};
-    return {observation,semantic,reason,quality};
+    if(!semantic?.available||semantic.platform!=='youtube')return {observation,semantic:null,reason};
+    return {observation,semantic,reason};
   }
   async bodyStep(step){
     this.bodyActions++;const result=await this.body.step(this.task.taskId,step,{tabId:Number(this.tabId)});
@@ -123,8 +121,7 @@ class AutonomousYouTubeBrainV2 extends AutonomousYouTubeBrain{
   async createTask(){return this.startWorkspaceTask([this.tabId],{reason:'initial_workspace',preferredTabId:this.tabId});}
   async ensureWorkspaceTabs(extraTabIds,{reason='expand_workspace',preferredTabId=this.tabId}={}){
     const owned=new Set((this.task?.workspace?.tabIds||[]).map(Number)),needed=[...new Set((extraTabIds||[]).map(Number).filter(Number.isInteger))];
-    const live=tabIds(await this.browserTabs());
-    if(needed.every(id=>owned.has(id)&&live.has(id))&&[...owned].every(id=>live.has(id)))return this.task;
+    if(needed.every(id=>owned.has(id)))return this.task;
     return this.startWorkspaceTask([...owned,...needed],{reason,preferredTabId});
   }
   async switchToTab(tabId,{reason='brain_switch'}={}){
@@ -141,47 +138,31 @@ class AutonomousYouTubeBrainV2 extends AutonomousYouTubeBrain{
     this.ledger('tab_close_verify',{tabId:id,reason,closed,completed:result?.execution?.completed??null});return closed;
   }
   async inspectTab(tab){
-    try{
-      const state=await this.observeTab(tab.id),semantic=state.semantic;
-      return {tab:tabSummary(tab),youtube:Boolean(semantic),currentVideoId:semantic?currentVideoId(semantic):null,pageType:semantic?routeType(semantic):'unknown',semantic,observationState:semantic?'ready':tab.status==='loading'?'loading':state.quality?.usable===false?'stale':'unavailable'};
-    }catch(error){return {tab:tabSummary(tab),youtube:false,currentVideoId:null,pageType:'unknown',semantic:null,observationState:'error',error:String(error?.message||error)};}
+    const state=await this.observeTab(tab.id).catch(()=>({semantic:null,observation:null}));const semantic=state.semantic;
+    return {tab:tabSummary(tab),youtube:Boolean(semantic),currentVideoId:semantic?currentVideoId(semantic):null,pageType:semantic?routeType(semantic):'other',semantic};
   }
   async reconcileTabEffects(beforeTabs,{reason='action',expectedVideoId=null,sourceTabId=this.tabId}={}){
     await sleep(220);let afterTabs=await this.browserTabs();const beforeIds=tabIds(beforeTabs),afterIds=tabIds(afterTabs),created=afterTabs.filter(t=>!beforeIds.has(Number(t.id))),removed=(beforeTabs||[]).filter(t=>!afterIds.has(Number(t.id)));
     this.tabRecovery.discovered+=created.length;this.tabRecovery.removed+=removed.length;
-    const inspected=[];
-    for(const tab of created){
-      let row=await this.inspectTab(tab);
-      for(let attempt=0;!row.semantic&&attempt<2&&!this.stopRequested;attempt++){
-        await sleep(180);const live=(await this.browserTabs()).find(t=>Number(t.id)===Number(tab.id));if(!live)break;row=await this.inspectTab(live);
-      }
-      inspected.push(row);
-      // Missing observation is uncertainty, never proof that a new tab is unwanted.
-      this.tabBranches.set(Number(row.tab.id),{tabId:Number(row.tab.id),createdAt:Date.now(),reason,currentVideoId:row.currentVideoId,pageType:row.pageType,observationState:row.observationState,visited:false});
-      if(row.youtube)this.tabRecovery.youtubeBranches++;
-    }
-    for(const tab of removed)this.tabBranches.delete(Number(tab.id));
-    this.ledger('tab_topology_change',{reason,sourceTabId:Number(sourceTabId),expectedVideoId:expectedVideoId||null,created:inspected.map(x=>({...x.tab,youtube:x.youtube,currentVideoId:x.currentVideoId,pageType:x.pageType,observationState:x.observationState,error:x.error||null})),removed:removed.map(tabSummary)});
-    let match=null,expectedFound=false;
+    const inspected=[];for(const tab of created)inspected.push(await this.inspectTab(tab));
+    this.ledger('tab_topology_change',{reason,sourceTabId:Number(sourceTabId),expectedVideoId:expectedVideoId||null,created:inspected.map(x=>({...x.tab,youtube:x.youtube,currentVideoId:x.currentVideoId,pageType:x.pageType})),removed:removed.map(tabSummary)});
+
     if(expectedVideoId){
-      const candidates=[...inspected],source=afterTabs.find(t=>Number(t.id)===Number(sourceTabId));if(source)candidates.push(await this.inspectTab(source));
-      match=candidates.find(x=>String(x.currentVideoId||'')===String(expectedVideoId))||null;
+      const candidates=[...inspected];const source=afterTabs.find(t=>Number(t.id)===Number(sourceTabId));if(source&&!candidates.some(x=>Number(x.tab.id)===Number(source.id)))candidates.push(await this.inspectTab(source));
+      const match=candidates.find(x=>String(x.currentVideoId||'')===String(expectedVideoId));
       if(match){
-        const active=Number((await this.currentBrowser()).activeTabId)===Number(match.tab.id);
-        expectedFound=active&&Number(this.tabId)===Number(match.tab.id)||await this.switchToTab(match.tab.id,{reason:'expected_video_found'});
-        if(expectedFound&&Number(match.tab.id)!==Number(sourceTabId))this.tabRecovery.expectedOpenedInNewTab++;
+        if(Number(match.tab.id)!==Number(sourceTabId)){this.tabRecovery.expectedOpenedInNewTab++;await this.ensureWorkspaceTabs([match.tab.id],{reason:'expected_video_opened_new_tab',preferredTabId:sourceTabId});await this.switchToTab(match.tab.id,{reason:'expected_video_found'});}
+        this.knownTabs=new Map((await this.browserTabs()).map(t=>[Number(t.id),tabSummary(t)]));return {expectedFound:true,tabId:Number(match.tab.id),semantic:match.semantic,created:inspected};
       }
     }
-    const browser=await this.currentBrowser();afterTabs=browser.tabs||[];
-    if(!afterTabs.some(t=>Number(t.id)===Number(this.tabId))){
-      const fallback=afterTabs.find(t=>Number(t.id)===Number(browser.activeTabId))||afterTabs.find(t=>t.active)||afterTabs[0];
-      if(!fallback||!await this.switchToTab(fallback.id,{reason:'source_tab_removed'}))throw new Error('workspace_rebind_failed');
-    }else if(!match){
-      const active=afterTabs.find(t=>Number(t.id)===Number(browser.activeTabId));
-      if(active&&Number(active.id)!==Number(this.tabId))await this.switchToTab(active.id,{reason:'observe_new_active_tab'});
+
+    for(const row of inspected){
+      if(row.youtube){this.tabBranches.set(Number(row.tab.id),{tabId:Number(row.tab.id),createdAt:Date.now(),reason,currentVideoId:row.currentVideoId,pageType:row.pageType,visited:false});this.tabRecovery.youtubeBranches++;continue;}
+      this.tabRecovery.unexpectedSideEffects++;const closed=await this.closeTab(row.tab.id,{reason:`${reason}:goal_mismatch`,fallbackTabId:sourceTabId});if(closed){this.memory.addLesson('A newly opened tab did not match the YouTube discovery goal; BODY recovered by closing the side-effect and returning to the exploration workspace.',{reason,siteKey:row.tab.siteKey||null});this.memory.save();}else this.tabRecovery.recoveryFailures++;
     }
-    this.knownTabs=new Map((await this.browserTabs()).map(t=>[Number(t.id),tabSummary(t)]));
-    return {expectedFound,tabId:expectedFound?Number(match.tab.id):Number(this.tabId),semantic:expectedFound?match.semantic:null,created:inspected};
+
+    afterTabs=await this.browserTabs();const sourceAlive=afterTabs.some(t=>Number(t.id)===Number(sourceTabId));if(sourceAlive&&Number((await this.currentBrowser()).activeTabId)!==Number(sourceTabId))await this.switchToTab(sourceTabId,{reason:`restore_source:${reason}`});
+    this.knownTabs=new Map((await this.browserTabs()).map(t=>[Number(t.id),tabSummary(t)]));return {expectedFound:false,created:inspected};
   }
   async availableBranch(){
     const tabs=await this.browserTabs(),live=tabIds(tabs);for(const [id,row] of this.tabBranches){if(!live.has(id)){this.tabBranches.delete(id);continue;}if(!row.visited)return row;}return null;
@@ -191,16 +172,13 @@ class AutonomousYouTubeBrainV2 extends AutonomousYouTubeBrain{
     const deadline=Date.now()+Math.max(0,maxWaitMs);let sawAd=false;
     do{
       const state=await this.observe('ad_probe');const semantic=state.semantic;if(!semantic)return {handled:false,sawAd};
-      if(semantic.scene?.hasFocus===false)return {handled:false,sawAd,reason:'document_focus_unavailable'};
       const ad=semantic.advertising||{};if(!ad.playingAd)return {handled:sawAd,sawAd};
       sawAd=true;this.ledger('ad_detected',{skippable:ad.skippable===true,feedAdCount:Number(ad.feedAdCount||0)});
       const skip=ad.skipButton;
       if(skip?.available&&skip.visible&&skip.actionRect){
         for(let attempt=1;attempt<=this.actionRetries;attempt++){
-          const fresh=await this.observe('ad_skip_preflight'),currentSkip=fresh.semantic?.advertising?.skipButton;
-          if(!fresh.semantic?.advertising?.playingAd||!currentSkip?.visible||currentSkip.actionable===false)return {handled:false,sawAd};
-          const beforeTabs=await this.browserTabs(),sourceTabId=this.tabId,p=currentSkip.actionPoint||randomPointInRect(currentSkip.actionRect,{pad:5});
-          await this.motor({type:'click',x:p.x,y:p.y,width:currentSkip.actionRect.width,height:currentSkip.actionRect.height,role:'button'});await this.reconcileTabEffects(beforeTabs,{reason:'ad_skip_click',sourceTabId});
+          const beforeTabs=await this.browserTabs(),sourceTabId=this.tabId,p=randomPointInRect(skip.actionRect,{pad:5});
+          await this.motor({type:'click',x:p.x,y:p.y,width:skip.actionRect.width,height:skip.actionRect.height,role:'button'});await this.reconcileTabEffects(beforeTabs,{reason:'ad_skip_click',sourceTabId});
           const after=await this.waitForSemantic(s=>!s.advertising?.playingAd||!s.advertising?.skipButton?.visible,{timeoutMs:this.verifyTimeoutMs,intervalMs:300,reason:'verify_ad_skip'});
           const changed=Boolean(after?.semantic&&(!after.semantic.advertising?.playingAd||!after.semantic.advertising?.skipButton?.visible));
           this.ledger('ad_skip_attempt',{attempt,changed});if(changed)return {handled:true,sawAd:true};
@@ -216,14 +194,12 @@ class AutonomousYouTubeBrainV2 extends AutonomousYouTubeBrain{
   async verifiedSearchField(query){
     const expected=fingerprintText(query);
     for(let attempt=1;attempt<=this.actionRetries;attempt++){
-      let state=await this.ensureYouTube();await this.handleAds();state=await this.observe('search_fresh_input');let input=state.semantic?.controls?.searchInput;
+      let state=await this.ensureYouTube();await this.handleAds();let input=state.semantic?.controls?.searchInput;
       if(!input?.actionRect||input.visible===false){await this.browserUi('address','https://www.youtube.com/');state=await this.waitForSemantic(s=>Boolean(s.controls?.searchInput?.actionRect),{timeoutMs:12000,reason:'search_input_ready'});input=state.semantic?.controls?.searchInput;}
       if(!input?.actionRect)continue;
-      if(input.actionable===false)throw new Error('search_input_not_actionable');
-      const beforeTabs=await this.browserTabs(),sourceTabId=this.tabId,p=input.actionPoint||randomPointInRect(input.actionRect,{pad:10});
+      const beforeTabs=await this.browserTabs(),sourceTabId=this.tabId,p=randomPointInRect(input.actionRect,{pad:10});
       await this.motor({type:'click',x:p.x,y:p.y,width:input.actionRect.width,height:input.actionRect.height,role:'textbox'});await this.reconcileTabEffects(beforeTabs,{reason:'search_focus_click',sourceTabId});
-      const focused=await this.waitForSemantic(s=>s.controls?.searchInput?.active===true,{timeoutMs:1800,intervalMs:180,reason:'search_focus'});
-      if(!focused?.semantic?.controls?.searchInput?.active)throw new Error('search_focus_not_verified');
+      await this.waitForSemantic(s=>s.controls?.searchInput?.active===true,{timeoutMs:1800,intervalMs:180,reason:'search_focus'});
       await this.motor({type:'keyCombo',key:'Control+a'});await this.motor({type:'pressKey',key:'Backspace'});await this.motor({type:'typeText',x:p.x,y:p.y,width:input.actionRect.width,height:input.actionRect.height,role:'textbox',text:query});
       const typed=await this.waitForSemantic(s=>sameFingerprint(s.controls?.searchInput?.valueFingerprint,expected),{timeoutMs:this.verifyTimeoutMs,intervalMs:220,reason:'verify_search_text'});
       const ok=Boolean(typed?.semantic&&sameFingerprint(typed.semantic.controls?.searchInput?.valueFingerprint,expected));this.ledger('search_text_verify',{attempt,ok,expectedFingerprint:expected,observedFingerprint:typed?.semantic?.controls?.searchInput?.valueFingerprint||null});if(ok)return typed;
@@ -284,7 +260,7 @@ class AutonomousYouTubeBrainV2 extends AutonomousYouTubeBrain{
   async goHome(){
     for(let attempt=1;attempt<=this.actionRetries;attempt++){
       const state=await this.observe('home_prepare'),home=state.semantic?.controls?.homeLink,beforeTabs=await this.browserTabs(),sourceTabId=this.tabId;
-      if(home?.visible&&home.actionable!==false&&home.actionRect){const p=home.actionPoint||randomPointInRect(home.actionRect,{pad:5});await this.motor({type:'click',x:p.x,y:p.y,width:home.actionRect.width,height:home.actionRect.height,role:'link'});}else await this.browserUi('address','https://www.youtube.com/');
+      if(home?.visible&&home.actionRect){const p=randomPointInRect(home.actionRect,{pad:5});await this.motor({type:'click',x:p.x,y:p.y,width:home.actionRect.width,height:home.actionRect.height,role:'link'});}else await this.browserUi('address','https://www.youtube.com/');
       await this.reconcileTabEffects(beforeTabs,{reason:'home_navigation',sourceTabId});const after=await this.waitForSemantic(s=>routeType(s)==='home',{timeoutMs:this.verifyTimeoutMs,intervalMs:300,reason:'verify_home'});const ok=routeType(after?.semantic)==='home';this.ledger('home_verify',{attempt,ok});if(ok)return {ok:true,state:after};
     }
     return {ok:false};

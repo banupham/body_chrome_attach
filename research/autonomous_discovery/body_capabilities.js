@@ -4,7 +4,7 @@ const MOTOR_TYPES=Object.freeze([
   'click','doubleClick','moveTo','hover','drag','scrollVertical','scrollHorizontal','typeText','pressKey','keyCombo'
 ]);
 const BROWSER_UI_ACTIONS=Object.freeze([
-  'dismiss','back','forward','reload','hardreload','stop','newtab','closetab','reopentab','nexttab','prevtab','newwindow',
+  'back','forward','reload','hardreload','stop','newtab','closetab','reopentab','nexttab','prevtab','newwindow',
   'addressbar','find','downloads','history','devtools','fullscreen','bookmark','zoomin','zoomout','zoomreset','address','findtext'
 ]);
 const STEP_KINDS=Object.freeze(['motor','browser_ui','tab_switch']);
@@ -19,9 +19,6 @@ function bodyCapabilityCatalog(){
     tab:['tab_switch'],
     executionModel:'one_atomic_body_step_then_observe',
     plannerOwnership:'brain',
-    pageActionTransport:'CDP',
-    browserUiTransport:'explicit_browser_ui_adapter',
-    browserUiObservation:'DOM focus evidence only; native popup contents are unknown',
     bodyOwnership:'physical_execution_only'
   };
 }

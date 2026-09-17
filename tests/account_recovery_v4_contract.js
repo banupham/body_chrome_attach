@@ -108,7 +108,7 @@ async function main(){
   reporting.stepNo=11;const row={step:11,type:'click_candidate',success:true};reporting.agentHistory.push(row);reporting.batchPath.push(row);reporting.writeBatch('RUNNING');
   const latest=JSON.parse(fs.readFileSync(paths.latest));
   assert.equal(latest.schemaVersion,9);assert.equal(latest.summary.steps,11);assert.equal(latest.historyLastStep,11);assert.equal(latest.path.length,11);
-  assert.equal(latest.batch.firstStep,11);assert.equal(latest.reportScope,'checkpoint');assert.equal(latest.source.revision,'observation-feedback-recovery-v2');
+  assert.equal(latest.batch.firstStep,11);assert.equal(latest.reportScope,'checkpoint');assert.equal(latest.source.revision,'account-aware-recovery-v1');
   assert.equal(latest.account.accountKey,reporting.accountContext.accountKey);
   reporting.writeBatch('USER_STOP',true);assert.equal(JSON.parse(fs.readFileSync(paths.latest)).status,'USER_STOP');
   console.log('account_recovery_v4_contract: PASS');

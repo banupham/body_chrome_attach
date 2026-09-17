@@ -1,7 +1,6 @@
 'use strict';
 
 const BROWSER_COMMANDS=Object.freeze({
-  dismiss:{mode:'key',value:'Escape',verify:'unobservable'},
   back:{mode:'combo',value:'Alt+ArrowLeft',verify:'navigation'},
   forward:{mode:'combo',value:'Alt+ArrowRight',verify:'navigation'},
   reload:{mode:'combo',value:'Control+r',verify:'navigation-epoch'},
