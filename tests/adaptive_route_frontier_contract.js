@@ -75,8 +75,8 @@ const baseWorld=(overrides={})=>({
   }));
   const world=baseWorld({current:{pageType:'watch',videoId:'source',topic:'music',mediaFormat:{kind:'LONG_FORM'}},candidates:[same,cross],history});
   const plan=planner.generate(world,{task,queryPlan:{plan:[],signals:[],semanticTopics:['music']},dynamicQueries:[],usedQueries:new Set(),stagnation:4});
-  const sameAction=plan.actions.find(a=>a.target?.videoId==='same001');
-  const crossAction=plan.actions.find(a=>a.target?.videoId==='cross001');
+  const sameAction=plan.actions.find(a=>a.type==='click_candidate'&&a.target?.videoId==='same001');
+  const crossAction=plan.actions.find(a=>a.type==='click_candidate'&&a.target?.videoId==='cross001');
   assert.equal(sameAction.routeFamily,'related_same_topic');
   assert.equal(crossAction.routeFamily,'related_cross_topic');
   assert.ok(crossAction.utility>sameAction.utility,`expected unexplored cross-topic route > saturated same-topic route`);
