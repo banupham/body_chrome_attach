@@ -34,7 +34,7 @@ const task={targetFormat:FORMAT.LONG_FORM},queryPlan={plan:[{query:'cầu tràm 
 const plan=planner.generate(world,{task,queryPlan,dynamicQueries:[],usedQueries:new Set(),stagnation:3});
 assert.equal(plan.subgoal.id,'recover_from_noop_blocker');
 assert.ok(plan.actions.some(a=>a.purpose==='dismiss_transient_overlay_or_menu'));
-const search=plan.actions.find(a=>a.type==='search'),candidate=plan.actions.find(a=>a.type==='click_candidate');assert.ok(search.utility>candidate.utility);
+const search=plan.actions.find(a=>a.type==='search'),candidate=plan.actions.find(a=>a.type==='click_candidate'),escape=plan.actions.find(a=>a.purpose==='dismiss_transient_overlay_or_menu');assert.ok(search);assert.ok(candidate);assert.ok(escape);assert.ok(escape.utility>search.utility);assert.ok(escape.utility>candidate.utility);
 assert.ok(seenMemoryIds.includes(actionMemoryId(candidate)));
 const pool=explorationPool(plan.actions);assert.ok(pool.some(a=>a.type==='search'));assert.ok(pool.some(a=>a.purpose==='dismiss_transient_overlay_or_menu'));
 
