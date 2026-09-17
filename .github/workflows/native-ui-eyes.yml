@@ -1,0 +1,55 @@
+name: Verify Native Chrome UI Eyes
+
+on:
+  pull_request:
+    paths:
+      - 'daemon/src/browser_ui_observer.js'
+      - 'daemon/native/windows_ui_observer.ps1'
+      - 'daemon/src/body_step_gateway.js'
+      - 'daemon/browser_ui_observer_contract.js'
+      - 'research/autonomous_discovery/world_model.js'
+      - 'tests/browser_ui_world_contract.js'
+      - '.github/workflows/native-ui-eyes.yml'
+  workflow_dispatch:
+
+jobs:
+  node-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+      - name: Syntax and read-only contracts
+        run: |
+          node --check daemon/src/browser_ui_observer.js
+          node --check daemon/src/body_step_gateway.js
+          node --check research/autonomous_discovery/world_model.js
+          node --check daemon/browser_ui_observer_contract.js
+          node --check tests/browser_ui_world_contract.js
+          node daemon/browser_ui_observer_contract.js
+          node tests/browser_ui_world_contract.js
+
+  windows-uia-contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+      - name: Parse UI Automation observer
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'daemon/native/windows_ui_observer.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            throw 'windows_ui_observer_parse_failed'
+          }
+      - name: Run read-only UI eyes contracts
+        run: |
+          node daemon/browser_ui_observer_contract.js
+          node tests/browser_ui_world_contract.js
