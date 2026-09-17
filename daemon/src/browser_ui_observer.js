@@ -18,47 +18,50 @@ function normalizeSnapshot(raw,request={}){
   const tabs=Array.isArray(raw?.tabs)?raw.tabs.slice(0,MAX_TABS).map(control):controls.filter(row=>row.controlType==='TabItem').slice(0,MAX_TABS);
   const addressBar=raw?.addressBar?control(raw.addressBar):controls.find(row=>row.surface==='omnibox_or_find')||null;
   const focusedControl=raw?.focusedControl?control(raw.focusedControl):controls.find(row=>row.state.focused)||null;
-  return {
-    available:raw?.available!==false,
-    observed:raw?.observed===true,
-    reason:text(raw?.reason,120)||null,
-    confidence:text(raw?.confidence,40)||'unknown',
-    source:'windows_uia_read_only',
-    observedAt:finite(raw?.observedAt)||Date.now(),
-    scope:{browserInstanceId:text(request.browserInstanceId,180)||null,tabId:finite(request.tabId),windowId:finite(request.windowId),expectedTitle:text(request.title,240)||null},
-    window:raw?.window?{processId:finite(raw.window.processId),name:text(raw.window.name,300)||null,className:text(raw.window.className,120)||null,rect:rect(raw.window.rect)}:null,
-    focusedControl,addressBar,tabs,controls,
-    signature:text(raw?.signature,96)||null
-  };
+  return {available:raw?.available!==false,observed:raw?.observed===true,reason:text(raw?.reason,120)||null,confidence:text(raw?.confidence,40)||'unknown',source:'windows_uia_read_only',observedAt:finite(raw?.observedAt)||Date.now(),scope:{browserInstanceId:text(request.browserInstanceId,180)||null,tabId:finite(request.tabId),windowId:finite(request.windowId),expectedTitle:text(request.title,240)||null},window:raw?.window?{processId:finite(raw.window.processId),name:text(raw.window.name,300)||null,className:text(raw.window.className,120)||null,rect:rect(raw.window.rect)}:null,focusedControl,addressBar,tabs,controls,signature:text(raw?.signature,96)||null};
 }
+function scopeKey(request={}){return `${text(request.browserInstanceId,180)}|${finite(request.windowId)??'?'}`;}
 
 class WindowsBrowserUiObserver{
-  constructor({platform=process.platform,spawnImpl=spawn,helperPath=path.join(__dirname,'..','native','windows_ui_observer.ps1'),timeoutMs=4500,env=process.env}={}){
-    this.platform=platform;this.spawnImpl=spawnImpl;this.helperPath=helperPath;this.timeoutMs=Math.max(1000,Number(timeoutMs)||4500);this.env=env||{};this.child=null;this.starting=null;this.pending=new Map();this.sequence=0;
+  constructor({platform=process.platform,spawnImpl=spawn,helperPath=path.join(__dirname,'..','native','windows_ui_observer.ps1'),timeoutMs=1500,refreshIntervalMs=250,maxStaleMs=3000,failureCooldownMs=2500}={}){
+    this.platform=platform;this.spawnImpl=spawnImpl;this.helperPath=helperPath;this.timeoutMs=Math.max(500,Number(timeoutMs)||1500);this.refreshIntervalMs=Math.max(100,Number(refreshIntervalMs)||250);this.maxStaleMs=Math.max(this.refreshIntervalMs,Number(maxStaleMs)||3000);this.failureCooldownMs=Math.max(500,Number(failureCooldownMs)||2500);this.child=null;this.starting=null;this.pending=new Map();this.sequence=0;this.cache=new Map();this.inflightScopes=new Map();this.nextRefresh=new Map();this.unavailableUntil=0;
     process.once('exit',()=>{try{this.child?.kill();}catch{}});
   }
-  unsupported(request,reason='platform_unsupported'){return normalizeSnapshot({available:false,observed:false,reason,confidence:'none',controls:[],tabs:[],observedAt:Date.now()},request);}
+  unavailable(request,reason='platform_unsupported'){return normalizeSnapshot({available:false,observed:false,reason,confidence:'none',controls:[],tabs:[],observedAt:Date.now()},request);}
+  pendingSnapshot(request,reason='uia_refresh_pending'){return normalizeSnapshot({available:true,observed:false,reason,confidence:'none',controls:[],tabs:[],observedAt:Date.now()},request);}
   async _spawn(exe,args){return new Promise((resolve,reject)=>{let child;try{child=this.spawnImpl(exe,args,{windowsHide:true,stdio:['pipe','pipe','pipe']});}catch(error){reject(error);return;}const cleanup=()=>{child.off?.('error',onError);child.off?.('spawn',onSpawn);};const onError=error=>{cleanup();try{child.kill();}catch{}reject(error);};const onSpawn=()=>{cleanup();resolve(child);};child.once?.('error',onError);child.once?.('spawn',onSpawn);if(!child.once)resolve(child);});}
   _bind(child){
     this.child=child;const lines=readline.createInterface({input:child.stdout});
-    lines.on('line',line=>{let msg;try{msg=JSON.parse(String(line));}catch{return;}const id=String(msg.id??''),item=this.pending.get(id);if(!item)return;clearTimeout(item.timer);this.pending.delete(id);if(msg.ok===false)item.resolve(this.unsupported(item.request,text(msg.error,120)||'uia_worker_error'));else item.resolve(normalizeSnapshot(msg.snapshot||{},item.request));});
-    child.stderr?.on('data',()=>{});child.once?.('close',code=>{if(this.child===child)this.child=null;for(const [id,item] of this.pending){clearTimeout(item.timer);this.pending.delete(id);item.resolve(this.unsupported(item.request,`uia_worker_closed:${code}`));}});
+    lines.on('line',line=>{let msg;try{msg=JSON.parse(String(line));}catch{return;}const id=String(msg.id??''),item=this.pending.get(id);if(!item)return;clearTimeout(item.timer);this.pending.delete(id);if(msg.ok===false)item.resolve(this.unavailable(item.request,text(msg.error,120)||'uia_worker_error'));else item.resolve(normalizeSnapshot(msg.snapshot||{},item.request));});
+    child.stderr?.on('data',()=>{});child.once?.('close',code=>{if(this.child===child)this.child=null;this.unavailableUntil=Date.now()+this.failureCooldownMs;for(const [id,item] of this.pending){clearTimeout(item.timer);this.pending.delete(id);item.resolve(this.unavailable(item.request,`uia_worker_closed:${code}`));}});
   }
   async start(){
     if(this.platform!=='win32')return null;if(this.child&&!this.child.killed)return this.child;if(this.starting)return this.starting;
     this.starting=(async()=>{const candidates=[['powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',this.helperPath,'worker']],['powershell',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',this.helperPath,'worker']],['pwsh',['-NoProfile','-NonInteractive','-File',this.helperPath,'worker']]];let lastError=null;for(const [exe,args] of candidates){try{const child=await this._spawn(exe,args);this._bind(child);return child;}catch(error){lastError=error;}}throw lastError||new Error('powershell_unavailable');})();
     try{return await this.starting;}finally{this.starting=null;}
   }
-  async observe(request={}){
-    const scoped={browserInstanceId:text(request.browserInstanceId,180),tabId:finite(request.tabId),windowId:finite(request.windowId),title:text(request.title,240)};
-    if(this.platform!=='win32')return this.unsupported(scoped);
-    let child;try{child=await this.start();}catch(error){return this.unsupported(scoped,`uia_worker_unavailable:${text(error?.message||error,100)}`);}
-    const id=String(++this.sequence),result=new Promise(resolve=>{const timer=setTimeout(()=>{this.pending.delete(id);resolve(this.unsupported(scoped,'uia_observe_timeout'));},this.timeoutMs);this.pending.set(id,{resolve,timer,request:scoped});});
-    try{child.stdin.write(JSON.stringify({id,title:scoped.title,windowId:scoped.windowId,tabId:scoped.tabId})+'\n');}catch(error){const item=this.pending.get(id);if(item){clearTimeout(item.timer);this.pending.delete(id);}return this.unsupported(scoped,`uia_worker_write_failed:${text(error?.message||error,100)}`);}
-    return result;
+  async _fresh(scoped){
+    let child;try{child=await this.start();}catch(error){this.unavailableUntil=Date.now()+this.failureCooldownMs;return this.unavailable(scoped,`uia_worker_unavailable:${text(error?.message||error,100)}`);}
+    const id=String(++this.sequence);return new Promise(resolve=>{const timer=setTimeout(()=>{this.pending.delete(id);this.unavailableUntil=Date.now()+this.failureCooldownMs;if(this.child===child){this.child=null;try{child.kill();}catch{}}resolve(this.unavailable(scoped,'uia_observe_timeout'));},this.timeoutMs);this.pending.set(id,{resolve,timer,request:scoped});try{child.stdin.write(JSON.stringify({id,title:scoped.title,windowId:scoped.windowId,tabId:scoped.tabId})+'\n');}catch(error){clearTimeout(timer);this.pending.delete(id);this.unavailableUntil=Date.now()+this.failureCooldownMs;resolve(this.unavailable(scoped,`uia_worker_write_failed:${text(error?.message||error,100)}`));}});
   }
-  async close(){const child=this.child;this.child=null;if(!child)return;try{child.stdin.end();}catch{}await new Promise(resolve=>{child.once?.('close',resolve);setTimeout(()=>{try{child.kill();}catch{}resolve();},300);});}
+  _schedule(scoped,key){
+    if(this.inflightScopes.has(key)||Date.now()<this.unavailableUntil)return;
+    this.nextRefresh.set(key,Date.now()+this.refreshIntervalMs);
+    const work=this._fresh(scoped).then(snapshot=>{if(snapshot.observed===true)this.cache.set(key,{at:Date.now(),snapshot});return snapshot;}).catch(()=>null).finally(()=>this.inflightScopes.delete(key));
+    this.inflightScopes.set(key,work);
+  }
+  async observe(request={}){
+    const scoped={browserInstanceId:text(request.browserInstanceId,180),tabId:finite(request.tabId),windowId:finite(request.windowId),title:text(request.title,240)},key=scopeKey(request),now=Date.now();
+    if(this.platform!=='win32')return this.unavailable(scoped);
+    const cached=this.cache.get(key)||null,next=this.nextRefresh.get(key)||0;
+    if(now>=next)this._schedule(scoped,key);
+    if(cached&&now-cached.at<=this.maxStaleMs)return cached.snapshot;
+    if(now<this.unavailableUntil)return this.unavailable(scoped,'uia_cooldown');
+    return this.pendingSnapshot(scoped);
+  }
+  invalidate(request={}){const key=scopeKey(request);this.cache.delete(key);this.nextRefresh.set(key,0);return true;}
+  async close(){const child=this.child;this.child=null;this.cache.clear();this.inflightScopes.clear();if(!child)return;try{child.stdin.end();}catch{}await new Promise(resolve=>{child.once?.('close',resolve);setTimeout(()=>{try{child.kill();}catch{}resolve();},300);});}
 }
 function createBrowserUiObserver(options={}){return new WindowsBrowserUiObserver(options);}
 
-module.exports={MAX_CONTROLS,MAX_TABS,normalizeSnapshot,WindowsBrowserUiObserver,createBrowserUiObserver};
+module.exports={MAX_CONTROLS,MAX_TABS,normalizeSnapshot,scopeKey,WindowsBrowserUiObserver,createBrowserUiObserver};
