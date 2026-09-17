@@ -19,6 +19,10 @@ test('non-Windows observer stays read-only and fails open as unavailable evidenc
   let spawned=0;const observer=new WindowsBrowserUiObserver({platform:'linux',spawnImpl:()=>{spawned++;throw new Error('must_not_spawn');}});const out=await observer.observe({browserInstanceId:'b',tabId:1,title:'Example'});assert.equal(spawned,0);assert.equal(out.available,false);assert.equal(out.observed,false);assert.equal(out.reason,'platform_unsupported');
 });
 
+test('Windows observation is non-blocking and returns pending while background refresh is scheduled',async()=>{
+  const observer=new WindowsBrowserUiObserver({platform:'win32'});let scheduled=0;observer._schedule=()=>{scheduled++;};const out=await observer.observe({browserInstanceId:'b',tabId:1,windowId:7,title:'Example'});assert.equal(scheduled,1);assert.equal(out.available,true);assert.equal(out.observed,false);assert.equal(out.reason,'uia_refresh_pending');
+});
+
 test('BODY_OBSERVE carries native browser UI facts without changing action execution',async()=>{
   const browser={browserInstanceId:'browser-a',extensionInstanceId:null,online:true,state:'ACTIVE',activeTabId:1,tabs:new Map([[1,{id:1,active:true,windowId:7,title:'Example',siteKey:'example.test',navigationToken:'n1',navigationEpoch:1,status:'complete'}]]),environment:{eligible:true,status:'ELIGIBLE',reasons:[]}};
   const runtime={identity:{identityChain:()=>({browserInstanceId:'browser-a'})},identityForExtension:()=>({browserInstanceId:'browser-a'}),browsers:{require:()=>browser},pointerState:{snapshot:()=>({known:false})},tasks:{get:()=>({workspace:{browserInstanceId:'browser-a',primaryTabId:1,tabIds:[1]}})}};
