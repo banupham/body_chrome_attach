@@ -35,7 +35,7 @@ const rect={x:100,y:120,width:320,height:180};
 // If YouTube exposes the same video through multiple DOM anchors, keep the representation with better observed actionability.
 {
   const card={querySelectorAll(){return [];},getBoundingClientRect(){return rect;}};
-  const makeAnchor=(x,hidden)=>({hidden,inert:false,parentElement:null,href:'https://www.youtube.com/watch?v=sameVideo01',getAttribute(name){if(name==='href')return '/watch?v=sameVideo01';if(name==='title')return 'same video';return null;},closest(selector){return selector.includes('renderer')?card:null;},contains(hit){return hit===this;},getBoundingClientRect(){return {x,y:160,width:220,height:120};}});
+  const makeAnchor=(x,hidden)=>({hidden,inert:false,parentElement:null,href:'https://www.youtube.com/watch?v=sameVideo01',getAttribute(name){if(name==='href')return '/watch?v=sameVideo01';if(name==='title')return 'same video';return null;},closest(selector){return ['ytd-rich-item-renderer','ytd-video-renderer','ytd-grid-video-renderer','ytd-compact-video-renderer','ytd-playlist-panel-video-renderer','yt-lockup-view-model','ytm-shorts-lockup-view-model','ytd-radio-renderer','ytd-playlist-renderer'].includes(selector)?card:null;},contains(hit){return hit===this;},getBoundingClientRect(){return {x,y:160,width:220,height:120};}});
   const a1=makeAnchor(80,true),a2=makeAnchor(360,false),root={querySelectorAll(){return [a1,a2];},getBoundingClientRect(){return {x:0,y:80,width:900,height:500};}};
   const documentRef={querySelector(selector){return selector==='ytd-search #contents'?root:null;},elementFromPoint(x){return x>=360?a2:null;}};
   const windowRef={innerWidth:1000,innerHeight:700,getComputedStyle(){return normalStyle;}};
