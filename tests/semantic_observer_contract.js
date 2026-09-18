@@ -6,11 +6,12 @@ const path=require('node:path');
 const {youtubeRoute,youtubeSemanticObservation}=require('../src/youtube_semantic_observer');
 
 function rect(){return {x:10,y:10,width:120,height:30};}
-const searchInput={tagName:'INPUT',getBoundingClientRect:rect};
+const searchInput={tagName:'INPUT',value:'private typed value',selectionStart:0,selectionEnd:19,selectionDirection:'forward',getBoundingClientRect:rect};
 const searchButton={tagName:'BUTTON',getBoundingClientRect:rect};
 function resultNode(href){return {querySelector(){return {getAttribute(name){return name==='href'?href:null;},href};}};}
 const documentRef={
   activeElement:searchInput,
+  getSelection(){return {isCollapsed:false,rangeCount:1,toString(){return 'private highlighted text';}};},
   querySelector(selector){
     if(selector==='input#search')return searchInput;
     if(selector==='button#search-icon-legacy')return searchButton;
@@ -33,6 +34,11 @@ const observation=youtubeSemanticObservation({documentRef,windowRef,locationRef}
 assert.equal(observation.available,true);
 assert.equal(observation.platform,'youtube');
 assert.equal(observation.controls.searchInput.active,true);
+assert.equal(observation.controls.searchInput.selection.available,true);
+assert.equal(observation.controls.searchInput.selection.fullSelection,true);
+assert.equal(observation.controls.searchInput.selection.selectedLength,19);
+assert.equal(observation.selection.collapsed,false);
+assert.equal(observation.selection.selectedLength,'private highlighted text'.length);
 assert.equal(observation.surfaces[0].surface,'search_results');
 assert.equal(observation.surfaces[0].itemCount,2);
 assert.equal(observation.privacy.searchQueryCaptured,false);
@@ -41,6 +47,8 @@ assert.equal(observation.privacy.textContentCaptured,false);
 const serialized=JSON.stringify(observation);
 assert.equal(serialized.includes('private query must not persist'),false);
 assert.equal(serialized.includes('private+query+must+not+persist'),false);
+assert.equal(serialized.includes('private typed value'),false);
+assert.equal(serialized.includes('private highlighted text'),false);
 
 const unsupported=youtubeSemanticObservation({documentRef,windowRef,locationRef:{href:'https://example.com/'}});
 assert.equal(unsupported.available,false);
