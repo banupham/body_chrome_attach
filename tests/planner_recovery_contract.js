@@ -28,7 +28,7 @@ const world={
   currentIsTarget:false,formatMismatch:false,targetVisible:null,current:{pageType:'watch',topic:'real_estate',videoId:'source',mediaFormat:FORMAT.LONG_FORM},
   viewport:{width:1000,height:700},advertising:{playingAd:false},environment:{online:true},controls:{homeLink:{available:true},activeTarget:null},body:{pointer:{known:true,x:400,y:300}},
   tabs:[{id:1,siteKey:'youtube.com'}],tabId:1,affordances:[],history:failureRows,
-  candidates:[{videoId:'candidate-new',surface:'related',position:1,visible:true,actionRect:{x:700,y:200,width:200,height:100},topic:'real_estate',targetProximity:0.46,targetMatch:false,mediaFormat:FORMAT.LONG_FORM}]
+  candidates:[{videoId:'candidate-new',surface:'related',position:1,visible:true,actionable:true,hitTested:true,actionPoint:{x:800,y:250},visibleRect:{x:700,y:200,width:200,height:100},actionRect:{x:700,y:200,width:200,height:100},evidence:{geometryKnown:true,rectIntersectsViewport:true,hitOwned:true},topic:'real_estate',targetProximity:0.46,targetMatch:false,mediaFormat:FORMAT.LONG_FORM}]
 };
 const task={targetFormat:FORMAT.LONG_FORM},queryPlan={plan:[{query:'cầu tràm nhà đất',score:18}],signals:[{term:'cầu tràm',sources:['title_concept'],searchable:true}],semanticTopics:[]};
 const plan=planner.generate(world,{task,queryPlan,dynamicQueries:[],usedQueries:new Set(),stagnation:3});
