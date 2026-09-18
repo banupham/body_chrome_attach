@@ -255,7 +255,7 @@ class MotorPlanner {
   _type(intent,context) {
     const text=String(intent.text??'');
     if(!text.length) throw new Error('text_required');
-    const clickPlan=this._pointer({type:'click',x:intent.x,y:intent.y,width:intent.width||intent.targetWidth||12,height:intent.height||intent.targetHeight||12,role:intent.role||'textbox'},context);
+    const pointerSteps=intent.preserveFocus===true?[]:this._pointer({type:'click',x:intent.x,y:intent.y,width:intent.width||intent.targetWidth||12,height:intent.height||intent.targetHeight||12,role:intent.role||'textbox'},context).plan.steps;
     const learned=this.model.sampleTyping();
     const intervals=learned?.template?.intervals || [82,76,90,71,88];
     const holds=learned?.template?.holds || [45,48,42,50];
@@ -267,7 +267,7 @@ class MotorPlanner {
       const delayBefore=i===0?80:Math.max(5,interval-hold);
       keySteps.push(...charSteps(chars[i],hold,delayBefore));
     }
-    return this._wrap(intent.type,[...clickPlan.plan.steps,...keySteps],learned?'learned':'bootstrap',learned);
+    return this._wrap(intent.type,[...pointerSteps,...keySteps],learned?'learned':'bootstrap',learned);
   }
 
   _pressKey(intent) {
