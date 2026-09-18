@@ -235,33 +235,17 @@ class AutonomousYouTubeBrainV2 extends AutonomousYouTubeBrain{
     this.ledger('search_submit_verify',{ok,beforeRoute,afterRoute:routeSignature(after?.semantic),routeFingerprint:after?.semantic?.route?.searchQueryFingerprint||null,searchInput:searchControlEvidence(after?.semantic?.controls?.searchInput||{})});if(ok)return after;throw new Error('search_submit_not_verified_after_observed_action');
   }
 
-  async scrollToCandidate(candidate,maxScrolls=10){
-    for(let i=0;i<maxScrolls&&!this.stopRequested;i++){
-      await this.handleAds();const beforeState=await this.observe(`rebind_${candidate.videoId}_${i}`);const semantic=beforeState.semantic;if(!semantic)return null;
-      const match=findCandidate(semantic,candidate);if(match?.visible&&match.actionRect)return match;
-      const point=randomScrollPoint(semantic,candidate.surface),viewport=semantic.viewport||{width:1000,height:700};let delta=match?.actionRect&&Number.isFinite(Number(match.actionRect.centerY))?Number(match.actionRect.centerY)-point.y:randomInt(480,820);
-      if(Math.abs(delta)<170)delta=delta>=0?randomInt(300,520):-randomInt(300,520);delta=bounded(delta,-900,900);delta+=randomInt(-90,90);const beforeY=Number(viewport.scrollY||0),beforeRectY=Number(match?.actionRect?.centerY||NaN);
-      await this.motor({type:'moveTo',x:point.x,y:point.y,role:'page'});await this.motor({type:'scrollVertical',delta});
-      const after=await this.waitForSemantic(s=>{const rebound=findCandidate(s,candidate),afterY=Number(s.viewport?.scrollY||0),afterRectY=Number(rebound?.actionRect?.centerY||NaN);return Boolean(rebound?.visible&&rebound?.actionRect)||Math.abs(afterY-beforeY)>=2||(Number.isFinite(beforeRectY)&&Number.isFinite(afterRectY)&&Math.abs(afterRectY-beforeRectY)>=4);},{timeoutMs:2500,intervalMs:200,reason:'verify_scroll'});
-      const rebound=findCandidate(after?.semantic,candidate),changed=Boolean(rebound?.visible&&rebound?.actionRect)||Math.abs(Number(after?.semantic?.viewport?.scrollY||0)-beforeY)>=2||(Number.isFinite(beforeRectY)&&Number.isFinite(Number(rebound?.actionRect?.centerY))&&Math.abs(Number(rebound.actionRect.centerY)-beforeRectY)>=4);
-      this.ledger('scroll_verify',{attempt:i+1,videoId:candidate.videoId,surface:candidate.surface,mouseX:point.x,mouseY:point.y,pointSource:point.source,delta,changed});if(rebound?.visible&&rebound.actionRect)return rebound;if(!changed)await sleep(180);
-    }
-    return null;
-  }
-
   async clickCandidate(candidate){
     await this.handleAds({waitForSkippable:true,maxWaitMs:3500});
-    for(let attempt=1;attempt<=this.actionRetries;attempt++){
-      const state=await this.observe(`candidate_click_prepare_${candidate.videoId}_${attempt}`);let actionable=findCandidate(state.semantic,candidate)||candidate;
-      if(!actionable?.visible||!actionable?.actionRect)actionable=await this.scrollToCandidate(candidate);if(!actionable?.actionRect){this.ledger('candidate_click_verify',{attempt,videoId:candidate.videoId,ok:false,reason:'unactionable'});continue;}
-      const beforeTabs=await this.browserTabs(),sourceTabId=this.tabId,beforeSig=routeSignature(state.semantic),p=randomPointInRect(actionable.actionRect,{pad:8});
-      const result=await this.motor({type:'click',x:p.x,y:p.y,width:actionable.actionRect.width,height:actionable.actionRect.height,role:'link'});
-      const tabOutcome=await this.reconcileTabEffects(beforeTabs,{reason:'candidate_click',expectedVideoId:candidate.videoId,sourceTabId});
-      if(tabOutcome.expectedFound){this.ledger('candidate_click_verify',{attempt,videoId:candidate.videoId,ok:true,arrival:'tab_workspace',tabId:tabOutcome.tabId,dispatched:result?.execution?.dispatched??null,completed:result?.execution?.completed??null});return {ok:true,result,semantic:tabOutcome.semantic,attempt,tabId:tabOutcome.tabId};}
-      const arrived=await this.waitForSemantic(s=>currentVideoId(s)===String(candidate.videoId)||routeSignature(s)!==beforeSig,{timeoutMs:this.verifyTimeoutMs,intervalMs:280,reason:'verify_candidate_click'});const ok=currentVideoId(arrived?.semantic)===String(candidate.videoId);
-      this.ledger('candidate_click_verify',{attempt,videoId:candidate.videoId,ok,arrival:'current_tab',dispatched:result?.execution?.dispatched??null,completed:result?.execution?.completed??null});if(ok)return {ok:true,result,semantic:arrived.semantic,attempt,tabId:this.tabId};
-    }
-    return {ok:false,reason:'candidate_click_no_expected_state_change'};
+    const state=await this.observe(`candidate_click_prepare_${candidate.videoId}`),observed=findCandidate(state.semantic,candidate)||null;
+    const evidence=observed?{videoId:observed.videoId,surface:observed.surface,visible:observed.visible===true,actionable:observed.actionable===true,reason:observed.reason||null,actionPoint:observed.actionPoint||null,visibleRect:observed.visibleRect||null,actionRect:observed.actionRect||null,evidence:observed.evidence||null,representationCount:Number(observed.representationCount||1)}:{videoId:String(candidate.videoId||''),surface:candidate.surface||null,missing:true};
+    if(!observed?.actionable||!observed?.actionPoint){this.ledger('candidate_click_blocked',{videoId:candidate.videoId,surface:candidate.surface,evidence});return {ok:false,reason:'candidate_not_safely_actionable',actionability:evidence};}
+    const beforeTabs=await this.browserTabs(),sourceTabId=this.tabId,beforeSig=routeSignature(state.semantic),p=observed.actionPoint;
+    const result=await this.motor({type:'click',x:Number(p.x),y:Number(p.y),width:Math.max(8,Number(observed.visibleRect?.width||observed.actionRect?.width||12)),height:Math.max(8,Number(observed.visibleRect?.height||observed.actionRect?.height||12)),role:'link'});
+    const tabOutcome=await this.reconcileTabEffects(beforeTabs,{reason:'candidate_click',expectedVideoId:candidate.videoId,sourceTabId});
+    if(tabOutcome.expectedFound){this.ledger('candidate_click_verify',{attempt:1,videoId:candidate.videoId,ok:true,arrival:'tab_workspace',tabId:tabOutcome.tabId,dispatched:result?.execution?.dispatched??null,completed:result?.execution?.completed??null});return {ok:true,result,semantic:tabOutcome.semantic,attempt:1,tabId:tabOutcome.tabId,actionability:evidence};}
+    const arrived=await this.waitForSemantic(s=>currentVideoId(s)===String(candidate.videoId)||routeSignature(s)!==beforeSig,{timeoutMs:this.verifyTimeoutMs,intervalMs:280,reason:'verify_candidate_click'}),ok=currentVideoId(arrived?.semantic)===String(candidate.videoId);
+    this.ledger('candidate_click_verify',{attempt:1,videoId:candidate.videoId,ok,arrival:'current_tab',dispatched:result?.execution?.dispatched??null,completed:result?.execution?.completed??null});return ok?{ok:true,result,semantic:arrived.semantic,attempt:1,tabId:this.tabId,actionability:evidence}:{ok:false,reason:'candidate_click_no_expected_state_change',result,actionability:evidence};
   }
 
   async verifiedBack(){

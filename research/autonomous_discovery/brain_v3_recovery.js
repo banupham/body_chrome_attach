@@ -59,29 +59,27 @@ class AutonomousYouTubeBrainV3Recovery extends AutonomousYouTubeBrainV3{
     for(const candidate of info.snapshot.candidates||[]){candidate.legacyTargetProximity=Number(candidate.targetProximity||0);candidate.targetProximity=specificPlanningProximity(candidate,this.queryPlan?.fingerprint||{});currentMax=Math.max(currentMax,candidate.targetProximity);}
     info.proximityGain=Math.max(0,currentMax-this.bestSpecificProximity);this.bestSpecificProximity=Math.max(this.bestSpecificProximity,currentMax);this.bestProximity=this.bestSpecificProximity;return info;
   }
-  async prepareCandidateForSafeClick(candidate,{maxScrolls=2}={}){
-    for(let attempt=0;attempt<=maxScrolls;attempt++){
-      this.checkCandidateBudget();
-      const state=await this.observe(`safe_click_prepare_${candidate.videoId}_${attempt+1}`);if(!state.semantic)return null;const match=semanticCandidate(state.semantic,candidate),viewport=state.semantic.viewport||{width:1000,height:700},safeRect=safeContentRect(match?.actionRect,viewport);if(match?.visible!==false&&safeRect)return {state,match,safeRect,scrolls:attempt};if(attempt>=maxScrolls)break;
-      const width=Math.max(320,Number(viewport.width||1000)),height=Math.max(240,Number(viewport.height||700)),mouseX=clamp(Math.round(width*0.48),100,width-100),mouseY=clamp(Math.round(height*0.56),150,height-80),centerY=Number(match?.actionRect?.centerY),targetY=clamp(Math.round(height*0.55),170,height-90);let delta=Number.isFinite(centerY)?centerY-targetY:randomInt(420,700);delta=clamp(delta,-760,760);if(Math.abs(delta)<180)delta=delta>=0?260:-260;
-      await this.motor({type:'moveTo',x:mouseX,y:mouseY,role:'page'});this.checkCandidateBudget();await this.motor({type:'scrollVertical',delta});this.ledger('safe_click_reposition',{videoId:candidate.videoId,attempt:attempt+1,delta,hadCandidate:Boolean(match),rawRect:match?.actionRect||null});await sleep(260);
-    }
-    return null;
+  async prepareCandidateForSafeClick(candidate){
+    this.checkCandidateBudget();
+    const state=await this.observe(`safe_click_prepare_${candidate.videoId}`);if(!state.semantic)return null;
+    const match=semanticCandidate(state.semantic,candidate);
+    if(!match?.actionable||!match?.actionPoint)return {state,match,ready:false,reason:match?.reason||'candidate_not_safely_actionable'};
+    return {state,match,ready:true,actionPoint:match.actionPoint,visibleRect:match.visibleRect||null};
   }
   async clickCandidateSafe(candidate){
-    // Cooperative deadline: await each in-flight BODY operation; never leave an
-    // uncancelled motor request running behind a Promise.race timeout.
+    // Candidate click gets a cooperative deadline, but recovery is never hidden
+    // inside the click. Any blocked candidate returns evidence to the planner.
     const started=Date.now();this.candidateDeadline=started+20000;
-    try{return await this.clickCandidateWithinBudget(candidate);}
-    catch(error){const reason=String(error?.message||error);this.ledger('candidate_click_safe_verify',{videoId:candidate.videoId,ok:false,reason,durationMs:Date.now()-started});return {ok:false,reason};}
+    try{
+      const prepared=await this.prepareCandidateForSafeClick(candidate);
+      if(!prepared?.ready){const reason=prepared?.reason||'candidate_not_safely_actionable';this.ledger('candidate_click_safe_verify',{videoId:candidate.videoId,ok:false,reason,durationMs:Date.now()-started,actionability:prepared?.match?{visible:prepared.match.visible===true,actionable:prepared.match.actionable===true,reason:prepared.match.reason||null,actionPoint:prepared.match.actionPoint||null,evidence:prepared.match.evidence||null}:null});return {ok:false,reason,actionability:prepared?.match||null};}
+      // Reuse the canonical click path, which observes again and requires a
+      // hit-tested actionPoint. It does not scroll or retry a blocked target.
+      const result=await super.clickCandidate(candidate);
+      this.ledger('candidate_click_safe_verify',{videoId:candidate.videoId,ok:result.ok===true,reason:result.reason||null,durationMs:Date.now()-started,actionability:result.actionability||null});
+      return result;
+    }catch(error){const reason=String(error?.message||error);this.ledger('candidate_click_safe_verify',{videoId:candidate.videoId,ok:false,reason,durationMs:Date.now()-started});return {ok:false,reason};}
     finally{this.candidateDeadline=null;}
-  }
-  async clickCandidateWithinBudget(candidate){
-    this.checkCandidateBudget();
-    await this.handleAds({waitForSkippable:true,maxWaitMs:1500});const prepared=await this.prepareCandidateForSafeClick(candidate,{maxScrolls:2});if(!prepared){this.ledger('candidate_click_safe_verify',{videoId:candidate.videoId,ok:false,reason:'candidate_not_safely_actionable'});return {ok:false,reason:'candidate_not_safely_actionable'};}
-    const {match,safeRect,scrolls}=prepared,beforeTabs=await this.browserTabs(),sourceTabId=this.tabId,p=randomPointInRect(safeRect,{pad:8});this.checkCandidateBudget();const result=await this.motor({type:'click',x:p.x,y:p.y,width:safeRect.width,height:safeRect.height,role:'link'}),tabOutcome=await this.reconcileTabEffects(beforeTabs,{reason:'candidate_safe_click',expectedVideoId:candidate.videoId,sourceTabId});
-    if(tabOutcome.expectedFound){this.ledger('candidate_click_safe_verify',{videoId:candidate.videoId,ok:true,arrival:'tab_workspace',tabId:tabOutcome.tabId,scrolls,safeRect,rawRect:match.actionRect});return {ok:true,result,semantic:tabOutcome.semantic,tabId:tabOutcome.tabId};}
-    const arrived=await this.waitForSemantic(s=>currentVideoId(s)===String(candidate.videoId),{timeoutMs:this.verifyTimeoutMs,intervalMs:260,reason:'verify_candidate_safe_click'}),ok=currentVideoId(arrived?.semantic)===String(candidate.videoId);this.ledger('candidate_click_safe_verify',{videoId:candidate.videoId,ok,arrival:'current_tab',scrolls,safeRect,rawRect:match.actionRect,dispatched:result?.execution?.dispatched??null,completed:result?.execution?.completed??null});return ok?{ok:true,result,semantic:arrived.semantic,tabId:this.tabId}:{ok:false,result,reason:'candidate_click_no_expected_video_change'};
   }
   async executeAgentAction(action,snapshotInfo,world){
     if(action.type!=='click_candidate')return super.executeAgentAction(action,snapshotInfo,world);
@@ -90,16 +88,16 @@ class AutonomousYouTubeBrainV3Recovery extends AutonomousYouTubeBrainV3{
     return {success,result,query:null,selected,dwellSec:0,error,durationMs:Date.now()-started};
   }
   rewardAgent(args){
-    const {action,outcome,afterInfo}=args;
+    const {outcome,afterInfo,recovery}=args;
     if(!outcome.success)return outcome.error?-9:-5;
     let value=super.rewardAgent(args);
-    const progress=Boolean(afterInfo.targetCandidate)||Number(afterInfo.proximityGain||0)>=0.025||outcome.previewConfirmed===true||Boolean(outcome.selected?.videoId&&String(outcome.selected.videoId)===String(this.config.target));
+    const progress=Boolean(recovery?.improved)||Boolean(afterInfo.targetCandidate)||Number(afterInfo.proximityGain||0)>=0.025||outcome.previewConfirmed===true||Boolean(outcome.selected?.videoId&&String(outcome.selected.videoId)===String(this.config.target));
     if(!progress)value=Math.min(1,value);
     if(outcome.queryRepeated)value=Math.min(0,value);
     return Number(value.toFixed(3));
   }
 
-  reportObject(status){const report=super.reportObject(status);report.schemaVersion=6;report.autonomy={...report.autonomy,revision:'safe_click_recovery_specificity_v1',safeCandidateClick:'content_viewport_clip_single_click_v2',candidateBudgetMs:20000,maxCandidateScrolls:2};report.agent={...(report.agent||{}),diagnostics:historyDiagnostics(this.agentHistory.slice(-250))};return report;}
+  reportObject(status){const report=super.reportObject(status);report.schemaVersion=6;report.autonomy={...report.autonomy,revision:'evidence_driven_actionability_recovery_v2',safeCandidateClick:'observed_action_point_single_click_v3',candidateBudgetMs:20000,implicitCandidateScrolls:0};report.agent={...(report.agent||{}),diagnostics:historyDiagnostics(this.agentHistory.slice(-250))};return report;}
 }
 
 module.exports={AutonomousYouTubeBrainV3Recovery,safeContentRect,signalEvidence,specificPlanningProximity,historyDiagnostics};

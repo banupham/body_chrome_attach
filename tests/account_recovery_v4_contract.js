@@ -16,7 +16,7 @@ const originalRandom=Math.random;
 const api={stats:()=>({enabled:false}),enrichVideoIds:async()=>new Map()};
 const config={root,target:'target00001',accountId:'account-a',reportEverySteps:10,reportEveryMinutes:10,discoveryMode:'auto',discoverySurface:'auto'};
 const target={videoId:config.target,title:'Target example',categoryId:'22',mediaFormat:{kind:'LONG_FORM'},tags:['Japan culture']};
-const candidate={videoId:'candidate01',surface:'related',position:1,visible:true,actionRect:{x:700,y:200,width:200,height:100},classification:{primary:'food'},targetProximity:0.6,youtubeApi:{mediaFormat:{kind:'LONG_FORM'}}};
+const candidate={videoId:'candidate01',surface:'related',position:1,visible:true,actionable:true,hitTested:true,actionPoint:{x:800,y:250},visibleRect:{x:700,y:200,width:200,height:100,centerX:800,centerY:250},actionRect:{x:700,y:200,width:200,height:100},evidence:{geometryKnown:true,rectIntersectsViewport:true,hitOwned:true},classification:{primary:'food'},targetProximity:0.6,youtubeApi:{mediaFormat:{kind:'LONG_FORM'}}};
 const world=buildWorld({tabId:1,target,semantic:{route:{pageType:'watch',videoId:'current0001'},viewport:{width:1000,height:700}},snapshot:{pageType:'watch',currentVideoId:'current0001',currentTopic:'food',currentMediaFormat:{kind:'LONG_FORM'},candidates:[candidate]}});
 function brain(accountId='account-a'){
   const b=new AutonomousYouTubeBrainV4({...config,accountId},{body:{},api});b.targetApi=target;
@@ -71,13 +71,14 @@ async function main(){
   const event=events.find(row=>row.type==='agent_outcome');assert.ok(event);assert.equal(event.actionType,'click_candidate');
   assert.equal(event.memoryId,id);
 
-  // Keep bounded action recovery on the account-aware V4 execution path.
+  // V4 keeps a bounded click deadline, but blocked-candidate recovery belongs
+  // to the planner. The click path must not hide move/scroll retries.
   const stuck=brain('account-stuck'),commands=[];
   stuck.handleAds=async()=>({handled:false});
-  stuck.observe=async()=>({semantic:{viewport:{width:1000,height:700},surfaces:[{surface:'related',items:[{...candidate,visible:false,actionRect:{x:700,y:4000,width:200,height:100,centerY:4050}}]}]}});
+  stuck.observe=async()=>({semantic:{viewport:{width:1000,height:700},surfaces:[{surface:'related',items:[{...candidate,visible:false,actionable:false,actionPoint:null,reason:'outside_view',evidence:{geometryKnown:true,rectIntersectsViewport:false,hitOwned:false},actionRect:{x:700,y:4000,width:200,height:100,centerY:4050}}]}]}});
   stuck.motor=async intent=>{commands.push(intent.type);return {execution:{completed:true}};};
   const failed=await stuck.clickCandidateSafe(candidate);
-  assert.equal(failed.ok,false);assert.equal(commands.filter(x=>x==='scrollVertical').length,2);assert.ok(!commands.includes('click'));assert.equal(stuck.candidateDeadline,null);
+  assert.equal(failed.ok,false);assert.equal(commands.length,0);assert.equal(stuck.candidateDeadline,null);
   stuck.candidateDeadline=Date.now()-1;commands.length=0;
   await assert.rejects(()=>stuck.prepareCandidateForSafeClick(candidate),/budget_exhausted/);assert.equal(commands.length,0);
   stuck.candidateDeadline=Date.now()+10000;stuck.stopRequested=true;

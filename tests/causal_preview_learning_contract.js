@@ -26,7 +26,7 @@ const task=planner.inferTask(
 const rect=(x,y,w=240,h=120)=>({x,y,width:w,height:h,centerX:x+w/2,centerY:y+h/2});
 const candidate=(id,surface,topic='music',proximity=.35,pos=1)=>({
   videoId:id,surface,topic,targetMatch:false,targetProximity:proximity,position:pos,
-  visible:true,actionRect:rect(80,180+pos*130),mediaFormat:{kind:'LONG_FORM'},isRadio:false
+  visible:true,actionable:true,hitTested:true,actionPoint:{x:200,y:240+pos*130},visibleRect:rect(80,180+pos*130),actionRect:rect(80,180+pos*130),evidence:{geometryKnown:true,rectIntersectsViewport:true,hitOwned:true},mediaFormat:{kind:'LONG_FORM'},isRadio:false
 });
 const world=(overrides={})=>({
   currentIsTarget:false,formatMismatch:false,targetVisible:null,
