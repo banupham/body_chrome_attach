@@ -32,6 +32,41 @@ const rect={x:100,y:120,width:320,height:180};
   assert.ok(actionabilityQuality(occluded)>0);
 }
 
+// aria-hidden describes accessibility exposure; it must not by itself suppress
+// a visually present pointer target. A successful physical hit-test wins while
+// the aria-hidden fact remains available as evidence.
+{
+  const ariaParent={hidden:false,inert:false,parentElement:null,getAttribute(name){return name==='aria-hidden'?'true':null;},getBoundingClientRect(){return {x:80,y:90,width:500,height:300};}};
+  const ariaNode={hidden:false,inert:false,parentElement:ariaParent,getAttribute(){return null;},contains(hit){return hit===this;}};
+  const windowRef={innerWidth:1000,innerHeight:700,getComputedStyle(){return normalStyle;}};
+  const hitView=nodeView(ariaNode,rect,{windowRef,documentRef:{elementFromPoint(){return ariaNode;}}});
+  assert.equal(hitView.evidence.ariaHidden,true);
+  assert.equal(hitView.reason,'hit_test');
+  assert.equal(hitView.visible,true);
+  assert.equal(hitView.hitTested,true);
+  assert.equal(hitView.evidence.hitOwned,true);
+  assert.equal(hitView.actionable,true);
+  assert.ok(hitView.actionPoint);
+
+  // Without a physical hit-test, do not turn aria-hidden geometry into a blind
+  // click. Keep the target visible-but-unverified and return control to Brain.
+  const unverified=nodeView(ariaNode,rect,{windowRef,documentRef:{}});
+  assert.equal(unverified.evidence.ariaHidden,true);
+  assert.equal(unverified.visible,true);
+  assert.equal(unverified.actionable,false);
+  assert.equal(unverified.actionPoint,null);
+  assert.equal(unverified.reason,'aria_hidden_unverified');
+
+  // Strong physical blockers remain blockers even when elementFromPoint would
+  // otherwise report the node.
+  const hardHidden={hidden:true,inert:false,parentElement:ariaParent,getAttribute(){return null;},contains(hit){return hit===this;}};
+  const blocked=nodeView(hardHidden,rect,{windowRef,documentRef:{elementFromPoint(){return hardHidden;}}});
+  assert.equal(blocked.reason,'hidden');
+  assert.equal(blocked.evidence.explicitHidden,true);
+  assert.equal(blocked.evidence.ariaHidden,true);
+  assert.equal(blocked.actionable,false);
+}
+
 // If YouTube exposes the same video through multiple DOM anchors, keep the representation with better observed actionability.
 {
   const card={querySelectorAll(){return [];},getBoundingClientRect(){return rect;}};
