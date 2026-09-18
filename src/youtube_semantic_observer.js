@@ -33,10 +33,20 @@ function rectOf(node){try{const r=node?.getBoundingClientRect?.();if(!r||![r.x,r
 function isVisible(rect,windowRef=globalThis.window){if(!rect)return false;const width=Number(windowRef?.innerWidth||0),height=Number(windowRef?.innerHeight||0);return rect.x<width&&rect.y<height&&rect.x+rect.width>0&&rect.y+rect.height>0;}
 function rectIntersects(a,b){return Boolean(a&&b&&a.width>0&&a.height>0&&b.width>0&&b.height>0&&a.x<b.x+b.width&&a.x+a.width>b.x&&a.y<b.y+b.height&&a.y+a.height>b.y);}
 function firstNode(documentRef,selectors,windowRef=globalThis.window){let fallback=null;for(const selector of selectors){try{let nodes=[...(documentRef?.querySelectorAll?.(selector)||[])];if(!nodes.length){const node=documentRef?.querySelector?.(selector);if(node)nodes=[node];}for(const node of nodes){fallback=fallback||node;if(nodeView(node,rectOf(node),{documentRef,windowRef}).visible)return node;}}catch{}}return fallback;}
+function editableSelection(node,documentRef=globalThis.document){
+  if(!node)return {available:false,active:false,collapsed:true,fullSelection:false,start:null,end:null,direction:null,valueLength:0,selectedLength:0};
+  const active=documentRef?.activeElement===node,value=String(node?.value??''),valueLength=value.length;let start=null,end=null,direction=null;
+  try{if(Number.isInteger(node.selectionStart)&&Number.isInteger(node.selectionEnd)){start=Number(node.selectionStart);end=Number(node.selectionEnd);direction=cleanText(node.selectionDirection||'')||null;}}catch{}
+  const available=Number.isInteger(start)&&Number.isInteger(end),selectedLength=available?Math.max(0,end-start):0;
+  return {available,active,collapsed:!available||selectedLength===0,fullSelection:Boolean(available&&valueLength>0&&start===0&&end===valueLength),start,end,direction,valueLength,selectedLength};
+}
+function documentSelection(documentRef=globalThis.document){
+  try{const selection=documentRef?.getSelection?.();if(!selection)return {available:false,collapsed:true,selectedLength:0,textFingerprint:textFingerprint('')};const text=String(selection.toString?.()||''),selectedLength=text.length;return {available:true,collapsed:Boolean(selection.isCollapsed||selectedLength===0),rangeCount:Number(selection.rangeCount||0),selectedLength,textFingerprint:textFingerprint(text)};}catch{return {available:false,collapsed:true,selectedLength:0,textFingerprint:textFingerprint('')};}
+}
 function controlDescriptor(node,name,{documentRef=globalThis.document,windowRef=globalThis.window,valueFingerprint=false}={}){
-  if(!node)return {name,available:false,visible:false,active:false,tag:null,actionRect:null,...(valueFingerprint?{valueFingerprint:textFingerprint('')}:{})};
+  if(!node)return {name,available:false,visible:false,active:false,tag:null,actionRect:null,...(valueFingerprint?{valueFingerprint:textFingerprint(''),selection:editableSelection(null,documentRef)}:{})};
   const rect=rectOf(node),view=nodeView(node,rect,{documentRef,windowRef}),out={name,available:true,...view,active:documentRef?.activeElement===node,tag:cleanText(node.tagName||'').toLowerCase()||null,actionRect:rect};
-  if(valueFingerprint)out.valueFingerprint=textFingerprint(node?.value||'');return out;
+  if(valueFingerprint){out.valueFingerprint=textFingerprint(node?.value||'');out.selection=editableSelection(node,documentRef);}return out;
 }
 function searchControls(documentRef=globalThis.document,windowRef=globalThis.window){
   const searchInput=firstNode(documentRef,['input#search','input[name="search_query"]','ytd-searchbox input','yt-searchbox input','input[placeholder*="Search"]','input[placeholder*="Tìm kiếm"]'],windowRef);
@@ -63,7 +73,7 @@ function interactiveAffordances(documentRef=globalThis.document,windowRef=global
     let disabled=false,checked=null,selected=null,expanded=null,pressed=null;
     try{disabled=Boolean(node.disabled)||attr(node,'aria-disabled')==='true';checked=typeof node.checked==='boolean'?node.checked:(attr(node,'aria-checked')||null);selected=typeof node.selected==='boolean'?node.selected:(attr(node,'aria-selected')||null);expanded=attr(node,'aria-expanded')||null;pressed=attr(node,'aria-pressed')||null;}catch{}
     let sponsored=false;try{sponsored=Boolean(node.closest?.(AD_CONTAINER_SELECTOR));}catch{}
-    out.push({index:out.length+1,...view,sponsored,tag,role,type,editable:editable&&type!=='password',disabled,label,labelFingerprint:textFingerprint(label||''),link,active:documentRef?.activeElement===node,state:{checked,selected,expanded,pressed,valueNow:attr(node,'aria-valuenow')||null,...(editable&&type!=='password'?{valueFingerprint:textFingerprint(node.value||'')}: {})},actionRect:rect});
+    out.push({index:out.length+1,...view,sponsored,tag,role,type,editable:editable&&type!=='password',disabled,label,labelFingerprint:textFingerprint(label||''),link,active:documentRef?.activeElement===node,state:{checked,selected,expanded,pressed,valueNow:attr(node,'aria-valuenow')||null,...(editable&&type!=='password'?{valueFingerprint:textFingerprint(node.value||''),selection:editableSelection(node,documentRef)}: {})},actionRect:rect});
     if(out.length>=limit)break;
   }
   return out;
@@ -145,7 +155,7 @@ function youtubeSemanticObservation({documentRef=globalThis.document,windowRef=g
   if(['watch','shorts'].includes(route.pageType)){surfaces.push(extractSurface(documentRef,'related',{windowRef,maxItems}));surfaces.push(extractSurface(documentRef,'mix_queue',{windowRef,maxItems}));}
   if(route.pageType==='feed'&&/^\/feed\/history(?:$|[?\/])/i.test(route.path||''))surfaces.push(extractSurface(documentRef,'history_feed',{windowRef,maxItems:Math.max(80,maxItems)}));
   const affordances=interactiveAffordances(documentRef,windowRef,{maxItems:120}),preview=previewObservation(documentRef,windowRef,route);
-  return {available:true,platform:'youtube',observerVersion:7,observedAt:Date.now(),privacy:{searchQueryCaptured:false,searchQueryFingerprintCaptured:true,accountIdentityCaptured:false,textContentCaptured:false,candidateSemanticTextCaptured:true,genericAffordanceLabelsCaptured:true,inputValuesCaptured:false,watchHistorySurfaceCaptured:surfaces.some(x=>x.surface==='history_feed'),hoverPreviewPlaybackCaptured:true},route,currentVideo:currentVideoDescriptor(documentRef,route),signedInState:signedInState(documentRef),controls,advertising,preview,affordances,scene:pageSignals(documentRef,windowRef,accessibleLabel),surfaces,viewport:viewportState(documentRef,windowRef)};
+  return {available:true,platform:'youtube',observerVersion:8,observedAt:Date.now(),privacy:{searchQueryCaptured:false,searchQueryFingerprintCaptured:true,accountIdentityCaptured:false,textContentCaptured:false,candidateSemanticTextCaptured:true,genericAffordanceLabelsCaptured:true,inputValuesCaptured:false,selectionTextCaptured:false,selectionFingerprintCaptured:true,watchHistorySurfaceCaptured:surfaces.some(x=>x.surface==='history_feed'),hoverPreviewPlaybackCaptured:true},route,currentVideo:currentVideoDescriptor(documentRef,route),signedInState:signedInState(documentRef),controls,selection:documentSelection(documentRef),advertising,preview,affordances,scene:pageSignals(documentRef,windowRef,accessibleLabel),surfaces,viewport:viewportState(documentRef,windowRef)};
 }
 
-module.exports={CARD_SELECTORS,AD_CONTAINER_SELECTOR,INTERACTIVE_SELECTOR,cleanText,textFingerprint,safeUrl,isYoutubeHost,youtubeRoute,rectOf,isVisible,controlDescriptor,searchControls,accessibleLabel,linkDescriptor,interactiveAffordances,advertisingObservation,countSearchResults,isDurationOnly,stripDurationNoise,chooseSemanticTitle,candidateFromAnchor,extractSurface,currentVideoDescriptor,previewObservation,viewportState,youtubeSemanticObservation};
+module.exports={CARD_SELECTORS,AD_CONTAINER_SELECTOR,INTERACTIVE_SELECTOR,cleanText,textFingerprint,safeUrl,isYoutubeHost,youtubeRoute,rectOf,isVisible,editableSelection,documentSelection,controlDescriptor,searchControls,accessibleLabel,linkDescriptor,interactiveAffordances,advertisingObservation,countSearchResults,isDurationOnly,stripDurationNoise,chooseSemanticTitle,candidateFromAnchor,extractSurface,currentVideoDescriptor,previewObservation,viewportState,youtubeSemanticObservation};
