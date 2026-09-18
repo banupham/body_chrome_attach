@@ -20,6 +20,12 @@ function fingerprintText(value){
   return {length:text.length,fnv1a32:(hash>>>0).toString(16).padStart(8,'0')};
 }
 function sameFingerprint(a,b){return Boolean(a&&b&&Number(a.length)===Number(b.length)&&String(a.fnv1a32||'')===String(b.fnv1a32||''));}
+function inputSelectionState(control={}){
+  const selection=control?.selection||{},valueLength=Number(control?.valueFingerprint?.length||selection.valueLength||0);
+  return {active:control?.active===true,selectionAvailable:selection.available===true,collapsed:selection.collapsed!==false,fullSelection:selection.fullSelection===true,start:Number.isInteger(selection.start)?selection.start:null,end:Number.isInteger(selection.end)?selection.end:null,valueLength,selectedLength:Number(selection.selectedLength||0)||0};
+}
+function hasFullInputSelection(control={}){const state=inputSelectionState(control);return state.selectionAvailable&&state.fullSelection&&state.valueLength>0;}
+function searchControlEvidence(control={}){return {active:control?.active===true,valueFingerprint:control?.valueFingerprint||null,selection:inputSelectionState(control)};}
 function routeSignature(semantic){
   const route=semantic?.route||{};
   return `${route.pageType||'other'}|${route.videoId||''}|${route.listId||''}|${Number(semantic?.viewport?.scrollY||0)}`;
@@ -193,31 +199,40 @@ class AutonomousYouTubeBrainV2 extends AutonomousYouTubeBrain{
 
   async verifiedSearchField(query){
     const expected=fingerprintText(query);
-    for(let attempt=1;attempt<=this.actionRetries;attempt++){
-      let state=await this.ensureYouTube();await this.handleAds();let input=state.semantic?.controls?.searchInput;
-      if(!input?.actionRect||input.visible===false){await this.browserUi('address','https://www.youtube.com/');state=await this.waitForSemantic(s=>Boolean(s.controls?.searchInput?.actionRect),{timeoutMs:12000,reason:'search_input_ready'});input=state.semantic?.controls?.searchInput;}
-      if(!input?.actionRect)continue;
-      const beforeTabs=await this.browserTabs(),sourceTabId=this.tabId,p=randomPointInRect(input.actionRect,{pad:10});
+    let state=await this.ensureYouTube();await this.handleAds();let input=state.semantic?.controls?.searchInput;
+    if(!input?.actionRect||input.visible===false){await this.browserUi('address','https://www.youtube.com/');state=await this.waitForSemantic(s=>Boolean(s.controls?.searchInput?.actionRect),{timeoutMs:12000,reason:'search_input_ready'});input=state.semantic?.controls?.searchInput;}
+    if(!input?.actionRect)return null;
+    const p=randomPointInRect(input.actionRect,{pad:10});
+    if(!input.active){
+      const before=searchControlEvidence(input),beforeTabs=await this.browserTabs(),sourceTabId=this.tabId;
       await this.motor({type:'click',x:p.x,y:p.y,width:input.actionRect.width,height:input.actionRect.height,role:'textbox'});await this.reconcileTabEffects(beforeTabs,{reason:'search_focus_click',sourceTabId});
-      await this.waitForSemantic(s=>s.controls?.searchInput?.active===true,{timeoutMs:1800,intervalMs:180,reason:'search_focus'});
-      await this.motor({type:'keyCombo',key:'Control+a'});await this.motor({type:'pressKey',key:'Backspace'});await this.motor({type:'typeText',x:p.x,y:p.y,width:input.actionRect.width,height:input.actionRect.height,role:'textbox',text:query});
-      const typed=await this.waitForSemantic(s=>sameFingerprint(s.controls?.searchInput?.valueFingerprint,expected),{timeoutMs:this.verifyTimeoutMs,intervalMs:220,reason:'verify_search_text'});
-      const ok=Boolean(typed?.semantic&&sameFingerprint(typed.semantic.controls?.searchInput?.valueFingerprint,expected));this.ledger('search_text_verify',{attempt,ok,expectedFingerprint:expected,observedFingerprint:typed?.semantic?.controls?.searchInput?.valueFingerprint||null});if(ok)return typed;
+      const focused=await this.waitForSemantic(s=>s.controls?.searchInput?.active===true,{timeoutMs:1800,intervalMs:140,reason:'search_focus'});
+      if(focused?.semantic)state=focused;else state=await this.observe('search_focus_after');input=state.semantic?.controls?.searchInput;
+      this.ledger('search_edit_observed',{phase:'focus',before,after:searchControlEvidence(input),changed:before.active!==Boolean(input?.active)});
+      if(!input?.active)return null;
+    }else this.ledger('search_edit_observed',{phase:'focus_already_present',before:searchControlEvidence(input),after:searchControlEvidence(input),changed:false});
+    if(sameFingerprint(input?.valueFingerprint,expected)){this.ledger('search_text_verify',{phase:'already_exact',ok:true,expectedFingerprint:expected,observedFingerprint:input.valueFingerprint,selection:inputSelectionState(input)});return state;}
+    if(Number(input?.valueFingerprint?.length||0)>0&&!hasFullInputSelection(input)){
+      const before=searchControlEvidence(input);
+      await this.motor({type:'keyCombo',key:'Control+a'});
+      const selected=await this.waitForSemantic(s=>{const c=s.controls?.searchInput;return Boolean(c?.active&&(sameFingerprint(c?.valueFingerprint,expected)||hasFullInputSelection(c)));},{timeoutMs:1800,intervalMs:140,reason:'verify_search_selection'});
+      if(selected?.semantic)state=selected;else state=await this.observe('search_selection_after');input=state.semantic?.controls?.searchInput;
+      const selectedOk=hasFullInputSelection(input)||sameFingerprint(input?.valueFingerprint,expected);this.ledger('search_edit_observed',{phase:'select_existing_text',before,after:searchControlEvidence(input),changed:JSON.stringify(before.selection)!==JSON.stringify(inputSelectionState(input)),selectionConfirmed:selectedOk});
+      if(sameFingerprint(input?.valueFingerprint,expected))return state;if(!hasFullInputSelection(input))return null;
     }
-    return null;
+    const beforeType=searchControlEvidence(input);
+    await this.motor({type:'typeText',x:p.x,y:p.y,width:input.actionRect.width,height:input.actionRect.height,role:'textbox',text:query,preserveFocus:true});
+    const typed=await this.waitForSemantic(s=>sameFingerprint(s.controls?.searchInput?.valueFingerprint,expected),{timeoutMs:Math.min(1800,Number(this.verifyTimeoutMs)||1800),intervalMs:140,reason:'verify_search_text'});
+    if(typed?.semantic)state=typed;else state=await this.observe('search_text_after');input=state.semantic?.controls?.searchInput;
+    const ok=Boolean(input&&sameFingerprint(input.valueFingerprint,expected));this.ledger('search_text_verify',{phase:'type_observed',ok,expectedFingerprint:expected,before:beforeType,after:searchControlEvidence(input),selection:inputSelectionState(input)});return ok?state:null;
   }
 
   async search(queryRow){
     const inspected=inspectQuery(queryRow.query,{targetVideoId:this.targetApi.videoId,targetTitle:this.targetApi.title});this.queryAudit.push({kind:queryRow.kind,source:queryRow.source,...inspected});if(!inspected.allowed)throw new Error(`query_firewall_blocked:${inspected.reason}`);
-    const expected=fingerprintText(inspected.query);
-    for(let submitAttempt=1;submitAttempt<=this.actionRetries;submitAttempt++){
-      const typed=await this.verifiedSearchField(inspected.query);if(!typed)continue;
-      const beforeTabs=await this.browserTabs(),sourceTabId=this.tabId;await this.motor({type:'pressKey',key:'Enter'});await this.reconcileTabEffects(beforeTabs,{reason:'search_submit',sourceTabId});this.queryAttempts++;this.ledger('search_submitted',{query:inspected.query,kind:queryRow.kind,titleOverlap:inspected.titleOverlap,submitAttempt});
-      const result=await this.waitForSemantic(s=>routeType(s)==='search'&&sameFingerprint(s.route?.searchQueryFingerprint,expected)&&flattenCandidates(s).some(x=>x.surface==='search_results'),{timeoutMs:15000,intervalMs:350,reason:'verify_search_results'});
-      const ok=Boolean(result?.semantic&&sameFingerprint(result.semantic.route?.searchQueryFingerprint,expected));this.ledger('search_submit_verify',{submitAttempt,ok,routeFingerprint:result?.semantic?.route?.searchQueryFingerprint||null});if(ok)return result;
-      await this.browserUi('address','https://www.youtube.com/');await sleep(900);
-    }
-    throw new Error('search_query_not_applied_after_retries');
+    const expected=fingerprintText(inspected.query),typed=await this.verifiedSearchField(inspected.query);if(!typed)throw new Error('search_field_not_verified_after_observed_edit');
+    const beforeTabs=await this.browserTabs(),sourceTabId=this.tabId,beforeRoute=routeSignature(typed.semantic);await this.motor({type:'pressKey',key:'Enter'});await this.reconcileTabEffects(beforeTabs,{reason:'search_submit',sourceTabId});this.queryAttempts++;this.ledger('search_submitted',{query:inspected.query,kind:queryRow.kind,titleOverlap:inspected.titleOverlap,beforeRoute});
+    const result=await this.waitForSemantic(s=>routeType(s)==='search'&&sameFingerprint(s.route?.searchQueryFingerprint,expected)&&flattenCandidates(s).some(x=>x.surface==='search_results'),{timeoutMs:15000,intervalMs:300,reason:'verify_search_results'}),after=result?.semantic?result:await this.observe('search_submit_after'),ok=Boolean(after?.semantic&&routeType(after.semantic)==='search'&&sameFingerprint(after.semantic.route?.searchQueryFingerprint,expected));
+    this.ledger('search_submit_verify',{ok,beforeRoute,afterRoute:routeSignature(after?.semantic),routeFingerprint:after?.semantic?.route?.searchQueryFingerprint||null,searchInput:searchControlEvidence(after?.semantic?.controls?.searchInput||{})});if(ok)return after;throw new Error('search_submit_not_verified_after_observed_action');
   }
 
   async scrollToCandidate(candidate,maxScrolls=10){
@@ -312,4 +327,4 @@ class AutonomousYouTubeBrainV2 extends AutonomousYouTubeBrain{
   }
 }
 
-module.exports={AutonomousYouTubeBrainV2,fingerprintText,sameFingerprint,routeSignature,randomScrollPoint,findCandidate,tabSummary,tabIds};
+module.exports={AutonomousYouTubeBrainV2,fingerprintText,sameFingerprint,inputSelectionState,hasFullInputSelection,searchControlEvidence,routeSignature,randomScrollPoint,findCandidate,tabSummary,tabIds};
