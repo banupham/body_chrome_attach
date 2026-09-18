@@ -106,6 +106,9 @@ function worldWith(c,scrollY=0){
   assert.ok(start>=0&&end>start);
   assert.doesNotMatch(clickSource,/scrollToCandidate|scrollVertical|for\s*\(let\s+attempt/);
   assert.match(clickSource,/candidate_not_safely_actionable/);
+  const recoverySource=fs.readFileSync(path.join(__dirname,'..','research','autonomous_discovery','brain_v3_recovery.js'),'utf8'),recoveryStart=recoverySource.indexOf('async prepareCandidateForSafeClick(candidate)'),recoveryEnd=recoverySource.indexOf('async executeAgentAction(action',recoveryStart),recoveryClickSource=recoverySource.slice(recoveryStart,recoveryEnd);
+  assert.ok(recoveryStart>=0&&recoveryEnd>recoveryStart);
+  assert.doesNotMatch(recoveryClickSource,/scrollVertical|moveTo|maxScrolls|safe_click_reposition/);
   const plannerSource=fs.readFileSync(path.join(__dirname,'..','research','autonomous_discovery','agent_planner.js'),'utf8');
   assert.doesNotMatch(plannerSource,/reason\s*===\s*['"](?:hidden|occluded|outside_view)['"][^\n]*scroll/i);
 }
