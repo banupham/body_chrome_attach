@@ -56,14 +56,19 @@ function nodeView(node,rect,{documentRef=node?.ownerDocument||globalThis.documen
   const viewport=viewportEvidence(rect,windowRef),baseEvidence={...viewport,explicitHidden:false,inert:false,ariaHidden:false,displayNone:false,visibilityHidden:false,opacityZero:false,clippedByContainer:false,hitOwned:false,hitPointsTried:0,blocker:null};
   const out={visible:false,actionable:false,reason:'no_geometry',hitTested:false,actionPoint:null,visibleRect:null,evidence:baseEvidence};
   if(!node||!rect)return out;
+  let ariaHiddenObserved=false;
   try{
     for(let parent=node;parent;parent=parent.parentElement){
       const style=windowRef?.getComputedStyle?.(parent),hidden=parent.hidden===true,inert=parent.inert===true,ariaHidden=parent.getAttribute?.('aria-hidden')==='true',displayNone=style?.display==='none',visibilityHidden=['hidden','collapse'].includes(style?.visibility),opacityZero=style?.opacity!==undefined&&style.opacity!==''&&Number(style.opacity)===0;
-      if(hidden||inert||ariaHidden||displayNone||visibilityHidden||opacityZero){
-        return {...out,reason:'hidden',evidence:{...baseEvidence,explicitHidden:hidden,inert,ariaHidden,displayNone,visibilityHidden,opacityZero}};
+      if(ariaHidden)ariaHiddenObserved=true;
+      // aria-hidden is accessibility-tree evidence, not proof that a visual
+      // element cannot receive a physical pointer hit. Preserve it as
+      // evidence and let geometry + elementFromPoint decide actionability.
+      if(hidden||inert||displayNone||visibilityHidden||opacityZero){
+        return {...out,reason:'hidden',evidence:{...baseEvidence,explicitHidden:hidden,inert,ariaHidden:ariaHiddenObserved,displayNone,visibilityHidden,opacityZero}};
       }
     }
-  }catch{return {...out,reason:'style_unavailable'};}
+  }catch{return {...out,reason:'style_unavailable',evidence:{...baseEvidence,ariaHidden:ariaHiddenObserved}};}
   let x=Math.max(0,rect.x),y=Math.max(0,rect.y),right=Math.min(Number(windowRef?.innerWidth||0),rect.x+rect.width),bottom=Math.min(Number(windowRef?.innerHeight||0),rect.y+rect.height),clippedByContainer=false;
   for(let parent=node.parentElement;parent;parent=parent.parentElement){
     const style=windowRef?.getComputedStyle?.(parent),r=parent.getBoundingClientRect?.();if(!style||!r)continue;
@@ -72,13 +77,16 @@ function nodeView(node,rect,{documentRef=node?.ownerDocument||globalThis.documen
     if(/hidden|clip|scroll|auto/.test(style.overflowY||style.overflow||'')){y=Math.max(y,r.y);bottom=Math.min(bottom,r.y+r.height);}
     if(x!==before.x||y!==before.y||right!==before.right||bottom!==before.bottom)clippedByContainer=true;
   }
-  if(right<=x||bottom<=y)return {...out,reason:'outside_view',evidence:{...baseEvidence,clippedByContainer}};
-  out.visibleRect={x,y,width:right-x,height:bottom-y,centerX:(x+right)/2,centerY:(y+bottom)/2};out.visible=true;out.evidence={...baseEvidence,clippedByContainer};
+  if(right<=x||bottom<=y)return {...out,reason:'outside_view',evidence:{...baseEvidence,ariaHidden:ariaHiddenObserved,clippedByContainer}};
+  out.visibleRect={x,y,width:right-x,height:bottom-y,centerX:(x+right)/2,centerY:(y+bottom)/2};out.visible=true;out.evidence={...baseEvidence,ariaHidden:ariaHiddenObserved,clippedByContainer};
   const fractions=[[.5,.5],[.25,.25],[.75,.25],[.25,.75],[.75,.75]];
   let lastBlocker=null,tried=0;
   for(const [fx,fy] of fractions){
     const point={x:x+(right-x)*fx,y:y+(bottom-y)*fy};tried++;
-    if(typeof documentRef?.elementFromPoint!=='function'){out.actionPoint=point;out.actionable=true;out.reason='geometry_only';out.evidence={...out.evidence,hitPointsTried:tried};return out;}
+    if(typeof documentRef?.elementFromPoint!=='function'){
+      if(ariaHiddenObserved){out.reason='aria_hidden_unverified';out.evidence={...out.evidence,hitPointsTried:tried};return out;}
+      out.actionPoint=point;out.actionable=true;out.reason='geometry_only';out.evidence={...out.evidence,hitPointsTried:tried};return out;
+    }
     out.hitTested=true;const hit=documentRef.elementFromPoint(point.x,point.y);
     if(hit&&(hit===node||node.contains?.(hit))){out.actionPoint=point;out.actionable=true;out.reason='hit_test';out.evidence={...out.evidence,hitOwned:true,hitPointsTried:tried};return out;}
     if(hit)lastBlocker=blockerDescriptor(hit);
