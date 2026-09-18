@@ -59,7 +59,7 @@ const rect={x:100,y:120,width:320,height:180};
 
   // Strong physical blockers remain blockers even when elementFromPoint would
   // otherwise report the node.
-  const hardHidden={hidden:true,inert:false,parentElement:ariaParent,getAttribute(){return null;},contains(hit){return hit===this;}};
+  const hardHidden={hidden:true,inert:false,parentElement:ariaParent,getAttribute(name){return name==='aria-hidden'?'true':null;},contains(hit){return hit===this;}};
   const blocked=nodeView(hardHidden,rect,{windowRef,documentRef:{elementFromPoint(){return hardHidden;}}});
   assert.equal(blocked.reason,'hidden');
   assert.equal(blocked.evidence.explicitHidden,true);
