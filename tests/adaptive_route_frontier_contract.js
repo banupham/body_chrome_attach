@@ -19,7 +19,7 @@ const task=planner.inferTask(
 const rect=(x,y,w=180,h=100)=>({x,y,width:w,height:h,centerX:x+w/2,centerY:y+h/2});
 const candidate=(videoId,surface,topic,proximity=.45,pos=1)=>({
   videoId,surface,topic,targetMatch:false,targetProximity:proximity,position:pos,
-  visible:true,actionRect:rect(40,180+pos*115),mediaFormat:{kind:'LONG_FORM'},isRadio:false
+  visible:true,actionable:true,hitTested:true,actionPoint:{x:130,y:240+pos*115},visibleRect:rect(40,180+pos*115),actionRect:rect(40,180+pos*115),evidence:{geometryKnown:true,rectIntersectsViewport:true,hitOwned:true},mediaFormat:{kind:'LONG_FORM'},isRadio:false
 });
 const baseWorld=(overrides={})=>({
   currentIsTarget:false,formatMismatch:false,targetVisible:null,
