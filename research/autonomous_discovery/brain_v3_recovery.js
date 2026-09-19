@@ -98,7 +98,7 @@ class AutonomousYouTubeBrainV3Recovery extends AutonomousYouTubeBrainV3{
     return Number(value.toFixed(3));
   }
 
-  reportObject(status){const report=super.reportObject(status);report.schemaVersion=6;report.autonomy={...report.autonomy,revision:'brain_owned_interaction_decision_v3',bodyRole:'observation_and_execution_only',candidateDecisionOwner:'brain',safeCandidateClick:'brain_selected_hit_evidence_single_click_v4',candidateBudgetMs:20000,implicitCandidateScrolls:0};report.agent={...(report.agent||{}),diagnostics:historyDiagnostics(this.agentHistory.slice(-250))};return report;}
+  reportObject(status){const report=super.reportObject(status);report.schemaVersion=6;report.autonomy={...report.autonomy,revision:'brain_effect_learning_candidate_position_v4',bodyRole:'observation_and_execution_only',candidateDecisionOwner:'brain',safeCandidateClick:'brain_selected_hit_evidence_single_click_v4',candidatePositioningOwner:'brain',candidatePositionLearning:'effect_model_v2',candidateBudgetMs:20000,implicitCandidateScrolls:0};report.agent={...(report.agent||{}),diagnostics:historyDiagnostics(this.agentHistory.slice(-250))};return report;}
 }
 
 module.exports={AutonomousYouTubeBrainV3Recovery,safeContentRect,signalEvidence,specificPlanningProximity,historyDiagnostics};
