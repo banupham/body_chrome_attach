@@ -5,8 +5,8 @@ const fs=require('node:fs');
 const path=require('node:path');
 const {nodeView}=require('../src/dom_perception');
 const {extractSurface}=require('../src/youtube_semantic_observer');
-const {buildWorld,candidateInteractionState,actionabilityDelta}=require('../research/autonomous_discovery/world_model');
-const {AutonomousAgentPlanner}=require('../research/autonomous_discovery/agent_planner');
+const {buildWorld,candidateInteractionState,candidateViewportState,candidateEffectDelta,actionabilityDelta}=require('../research/autonomous_discovery/world_model');
+const {AutonomousAgentPlanner,candidatePositionActions}=require('../research/autonomous_discovery/agent_planner');
 const {AutonomousYouTubeBrainV3}=require('../research/autonomous_discovery/brain_v3');
 
 const normalStyle={display:'block',visibility:'visible',opacity:'1',overflow:'visible',overflowX:'visible',overflowY:'visible'};
@@ -72,6 +72,27 @@ function worldWith(c,scrollY=0){
   return buildWorld({observation:{environment:{online:true,eligible:true},bodyState:{activeTabId:1,pointer:{known:true,x:30,y:30}}},semantic:{route:{pageType:'search'},viewport:{width:1000,height:700,scrollY},controls:{},advertising:{playingAd:false},affordances:[]},snapshot:{pageType:'search',currentTopic:'unknown',candidates:[c]},browser:{tabs:[{id:1,active:true,siteKey:'youtube.com'}]},tabId:1,target:{videoId:'target001',mediaFormat:{kind:'LONG_FORM'}},history:[]});
 }
 
+// Brain models candidate position separately from BODY actionability and learns
+// whether a positioning attempt moved the candidate toward a usable viewport.
+{
+  const below=worldWith(rawCandidate({offscreen:true}),0),state=candidateViewportState(below.targetVisible,below.viewport);
+  assert.equal(state.zone,'below');
+  assert.ok(state.distanceToViewport>0);
+  const generated=candidatePositionActions(below.targetVisible,below,{priority:100});
+  assert.ok(generated.length>=2);
+  assert.ok(generated.every(row=>row.type==='position_candidate'&&row.recoveryTargetVideoId==='target001'));
+  assert.ok(generated.some(row=>Number(row.delta)>0));
+
+  const nearerRaw=rawCandidate({offscreen:true});nearerRaw.representations[0].actionRect={x:100,y:760,width:320,height:180};
+  const fartherRaw=rawCandidate({offscreen:true});fartherRaw.representations[0].actionRect={x:100,y:1250,width:320,height:180};
+  const nearer=worldWith(nearerRaw,300),farther=worldWith(fartherRaw,0);
+  const improved=candidateEffectDelta(below,nearer,'target001'),wrongWay=candidateEffectDelta(below,farther,'target001');
+  assert.equal(improved.improved,true);
+  assert.ok(improved.distanceImprovement>0);
+  assert.equal(wrongWay.regressed,true);
+  assert.ok(wrongWay.distanceImprovement<0);
+}
+
 // Brain alone decides readiness and measures recovery progress from raw evidence.
 {
   const before=worldWith(rawCandidate({owned:false}),0),scrolled=worldWith(rawCandidate({owned:false}),600),ready=worldWith(rawCandidate({owned:true}),600);
@@ -88,12 +109,13 @@ function worldWith(c,scrollY=0){
 
 // Planner consumes Brain-derived readiness, never BODY-provided actionable flags.
 {
-  const memory={ucb(){return 0;},interactionEffectScore(){return 0;},state:{queries:{}}},planner=new AutonomousAgentPlanner({memory,explorationBase:0});
+  const memory={ucb(){return 0;},interactionEffectScore(){return 0;},actionEffectScore(){return 0;},state:{queries:{}}},planner=new AutonomousAgentPlanner({memory,explorationBase:0});
   const task=planner.inferTask({videoId:'target001',mediaFormat:{kind:'LONG_FORM'}},{plan:[{query:'nearby music',score:10}],signals:[],semanticTopics:['music'],fingerprint:{primaryTopic:'music'}});
   const blocked=worldWith(rawCandidate({owned:false}));
   const plan=planner.generate(blocked,{task,queryPlan:{plan:[{query:'nearby music',score:10}],signals:[],semanticTopics:['music']},dynamicQueries:[],usedQueries:new Set(),stagnation:0});
   assert.equal(plan.subgoal.id,'restore_target_actionability');
   assert.equal(plan.actions.some(a=>a.purpose==='open_target'),false);
+  assert.ok(plan.actions.some(a=>a.type==='position_candidate'&&a.recoveryTargetVideoId==='target001'));
   const ready=worldWith(rawCandidate({owned:true}));
   const readyPlan=planner.generate(ready,{task,queryPlan:{plan:[],signals:[],semanticTopics:['music']},dynamicQueries:[],usedQueries:new Set(),stagnation:0});
   assert.equal(readyPlan.subgoal.id,'open_observed_target');
