@@ -39,12 +39,12 @@ function buildWorld({observation=null,semantic=null,snapshot=null,browser=null,t
 function candidateByVideo(world,videoId){return (world?.candidates||[]).find(row=>String(row.videoId||'')===String(videoId||''))||null;}
 function candidateViewportState(candidate={},viewport={}){
   const interaction=actionabilityState(candidate||{}),rect=interaction.actionRect||interaction.visibleRect||candidate?.actionRect||candidate?.visibleRect||null,width=Math.max(1,num(viewport?.width,1000)),height=Math.max(1,num(viewport?.height,700));
-  if(!rect||![rect.x,rect.y,rect.width,rect.height].every(Number.isFinite))return {exists:Boolean(candidate?.videoId),geometryKnown:false,zone:'unknown',signedGap:null,distanceToViewport:null,centerOffsetY:null,inViewport:false,actionable:interaction.actionable===true,score:Number(interaction.score||0)};
+  if(!rect||![rect.x,rect.y,rect.width,rect.height].every(Number.isFinite))return {exists:Boolean(candidate?.videoId),geometryKnown:false,zone:'unknown',signedGap:null,distanceToViewport:null,centerOffsetY:null,inViewport:false,actionable:interaction.actionable===true,score:Number(interaction.score||0),hardStyleHidden:interaction.hardStyleHidden===true};
   const top=Number(rect.y),bottom=top+Number(rect.height),centerY=top+Number(rect.height)/2,viewCenter=height/2;
   let zone='inside',signedGap=0,distanceToViewport=0;
   if(bottom<=0){zone='above';signedGap=bottom;distanceToViewport=Math.abs(bottom);}
   else if(top>=height){zone='below';signedGap=top-height;distanceToViewport=Math.abs(top-height);}
-  return {exists:Boolean(candidate?.videoId),geometryKnown:true,zone,signedGap:Number(signedGap.toFixed(3)),distanceToViewport:Number(distanceToViewport.toFixed(3)),centerOffsetY:Number((centerY-viewCenter).toFixed(3)),inViewport:zone==='inside',actionable:interaction.actionable===true,score:Number(interaction.score||0),rect:{x:Number(rect.x),y:top,width:Number(rect.width),height:Number(rect.height)}};
+  return {exists:Boolean(candidate?.videoId),geometryKnown:true,zone,signedGap:Number(signedGap.toFixed(3)),distanceToViewport:Number(distanceToViewport.toFixed(3)),centerOffsetY:Number((centerY-viewCenter).toFixed(3)),inViewport:zone==='inside',actionable:interaction.actionable===true,score:Number(interaction.score||0),hardStyleHidden:interaction.hardStyleHidden===true,rect:{x:Number(rect.x),y:top,width:Number(rect.width),height:Number(rect.height)}};
 }
 function candidateEffectDelta(before,after,videoId){
   const a=candidateByVideo(before,videoId),b=candidateByVideo(after,videoId),beforeAction=actionabilityState(a||{}),afterAction=actionabilityState(b||{}),beforePosition=candidateViewportState(a||{},before?.viewport||{}),afterPosition=candidateViewportState(b||{},after?.viewport||{}),scoreDelta=afterAction.score-beforeAction.score,changed=candidateActionabilityKey(a||{})!==candidateActionabilityKey(b||{})||JSON.stringify(beforePosition)!==JSON.stringify(afterPosition);
