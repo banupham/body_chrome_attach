@@ -1,7 +1,7 @@
 'use strict';
 
 const {bodyCapabilityCatalog}=require('./body_capabilities');
-const {contextKey}=require('./world_model');
+const {contextKey,candidatePositionState,candidatePositionContext}=require('./world_model');
 const {fold}=require('./topic_classifier');
 const {FORMAT,formatKind,formatRelation}=require('./media_format');
 const {ACCOUNT_STATE}=require('./account_profile');
@@ -10,7 +10,11 @@ const {MODE,SURFACE,normalizeSurface}=require('./surface_policy');
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,Number(v)||0));
 const jitter=(scale=1)=>(Math.random()-0.5)*scale;
 const TRANSIENT_UI_RE=/(?:microphone|mic\b|micr[oô]|voice search|sử dụng micr[oô]|settings|cài đặt|account|tài khoản|notifications?|thông báo|upload|create|subscribe|đăng ký|like\b|share\b|comment\b)/iu;
-function actionKey(action){return `${action.type}|${action.capability||''}|${action.target?.videoId||action.affordance?.index||''}|${action.query||''}|${action.tabId??''}`;}
+function actionKey(action){
+  const target=action.target?.videoId||action.affordance?.index||'';
+  const variant=action.positionVariant||(Number.isFinite(Number(action.delta))?String(Math.round(Number(action.delta))):'');
+  return [action.type,action.capability||'',target,action.query||'',action.tabId??'',variant].join('|');
+}
 function recentPenalty(action,history=[]){const key=actionKey(action),recent=(history||[]).slice(-18);let hits=0;for(const row of recent)if(row.actionKey===key&&row.success===false)hits++;return Math.min(72,hits*18);}
 function memoryBonus(memory,id,context){const value=memory?.ucb?.(id,context,1.05);return Number.isFinite(value)?clamp(value,-12,16):0;}
 // Account history is evidence/context only. It must not pre-rank a route.
@@ -59,8 +63,9 @@ function genericBodyActions(world,{textProbe=null,targetVocabulary=[],targetForm
   const px=world.body.pointer?.known?Number(world.body.pointer.x||0):Math.round(Number(viewport.width||1000)*0.55),py=world.body.pointer?.known?Number(world.body.pointer.y||0):Math.round(Number(viewport.height||700)*0.55);actions.push({type:'body_step',capability:'motor.scrollVertical',step:{kind:'motor',intent:{type:'scrollVertical',delta:520}},purpose:'raw_vertical_environment_probe',baseUtility:world.formatMismatch?-22:(noOpCount>=2?-18:-7),expected:'scroll_or_dom_change'});actions.push({type:'body_step',capability:'motor.scrollHorizontal',step:{kind:'motor',intent:{type:'scrollHorizontal',delta:420}},purpose:'raw_horizontal_environment_probe',baseUtility:-22,expected:'scroll_or_dom_change'});actions.push({type:'body_step',capability:'motor.moveTo',step:{kind:'motor',intent:{type:'moveTo',x:px,y:py,role:'page'}},purpose:'motor_probe',baseUtility:-28,expected:'pointer_change'});return actions;
 }
 
-function actionMemoryId(action){return `${action.capability||action.type}:${action.purpose||'general'}`;}
-
+function actionMemoryId(action){
+  return (action.capability||action.type)+':'+(action.purpose||'general')+(action.learningKey?':'+action.learningKey:'');
+}
 function familyFailurePenalty(action,history=[]){const recent=(history||[]).slice(-24),memoryId=actionMemoryId(action);let hits=0;for(const row of recent){const rowId=`${row.capability||row.type}:${row.purpose||'general'}`;if(rowId===memoryId&&row.success===false&&row.changed===false)hits++;}return Math.min(120,hits*14);}
 
 function candidateFailurePenalty(action,history=[]){const id=String(action.target?.videoId||'');if(!id)return 0;let hits=0;for(const row of (history||[]).slice(-40))if(String(row.videoId||'')===id&&row.success===false)hits++;return Math.min(140,hits*32);}
@@ -70,6 +75,46 @@ function noOpStreak(history=[]){let count=0;for(let i=(history||[]).length-1;i>=
 function candidateReadyForAction(candidate={}){return candidate?.actionable===true&&Boolean(candidate?.actionPoint);}
 
 function safeCandidateRatio(candidate,world){const r=candidate?.actionRect;if(!r)return 0;const width=Math.max(320,Number(world?.viewport?.width||1000)),height=Math.max(240,Number(world?.viewport?.height||700)),x=Number(r.x),y=Number(r.y),w=Number(r.width),h=Number(r.height);if(![x,y,w,h].every(Number.isFinite)||w<=0||h<=0)return 0;const x1=Math.max(8,x),y1=Math.max(105,y),x2=Math.min(width-8,x+w),y2=Math.min(height-24,y+h),vw=Math.max(0,x2-x1),vh=Math.max(0,y2-y1);return (vw*vh)/(w*h);}
+
+function candidatePositionActions(candidate,world,{targetFormat=FORMAT.UNKNOWN,task=null}={}){
+  const position=candidatePositionState(candidate,world);
+  if(position.actionable||!position.geometryKnown||!position.actionRect)return [];
+  const height=Math.max(240,Number(position.band?.height||world?.viewport?.height||700));
+  const offset=Number(position.centerOffsetY),proposals=[];
+  const push=(delta,variant,penalty=0)=>{
+    const limit=Math.max(900,height*2.1);
+    let d=Math.round(clamp(delta,-limit,limit));
+    if(Math.abs(d)<70)d=d<0?-70:70;
+    if(proposals.some(row=>row.delta===d))return;
+    proposals.push({delta:d,variant,penalty});
+  };
+  if(Number.isFinite(offset)&&Math.abs(offset)>=45){
+    push(offset*0.55,'geometry_55',4);
+    push(offset*0.85,'geometry_85',0);
+    push(offset*1.08,'geometry_108',7);
+  }else{
+    const nudge=Math.max(140,Math.round(height*0.3));
+    push(nudge,'nudge_forward',8);
+    push(-nudge,'nudge_backward',8);
+  }
+  const base=targetCandidateScore(candidate,world,targetFormat)+(candidate.targetMatch?24:-10);
+  const effectContext=candidatePositionContext(world,candidate);
+  return proposals.map(row=>({
+    type:'position_candidate',
+    capability:'motor.scrollVertical',
+    target:candidate,
+    delta:row.delta,
+    positionVariant:row.variant,
+    learningKey:'position:'+row.variant,
+    effectContext,
+    purpose:'position_candidate_for_interaction',
+    baseUtility:base-row.penalty,
+    expected:'candidate_interaction_evidence_improves',
+    recoveryTargetVideoId:candidate.videoId,
+    formatRelation:formatRelation(targetFormat,candidate.mediaFormat),
+    positionBefore:position
+  }));
+}
 
 function riskyAffordancePenalty(label=''){return TRANSIENT_UI_RE.test(String(label||''))?48:0;}
 
@@ -94,6 +139,7 @@ function previewRouteFamily(candidate,world,task){
 function actionFamily(action,world=null,task=null){
   if(action.purpose==='open_target')return 'target_open';
   if(action.type==='click_candidate')return candidateRouteFamily(action.target,world,task);
+  if(action.type==='position_candidate')return 'candidate_position_'+(normalizeSurface(action.target?.surface)||'unknown')+'_'+(action.positionVariant||'generic');
   if(action.type==='preview_candidate')return previewRouteFamily(action.target,world,task);
   if(action.type==='search')return 'search_query';
   if(action.type==='home')return 'home_nav';
@@ -111,6 +157,7 @@ function historyRouteFamily(row={}){
   if(row.type==='home')return 'home_nav';
   if(row.type==='topic_filter')return 'topic_filter';
   if(row.type==='click_candidate')return 'candidate_legacy';
+  if(row.type==='position_candidate')return row.routeFamily||'candidate_position_legacy';
   if(row.type==='dwell')return 'dwell';
   if(row.type==='scroll')return 'scroll:any';
   return null;
@@ -163,14 +210,19 @@ class AutonomousAgentPlanner{
     for(const c of world.candidates){const relation=formatRelation(targetFormat,c.mediaFormat);if(!c.targetMatch&&relation==='MISMATCH')continue;if(c.targetMatch)continue;const routeBootstrap=task?.discoveryPolicy?.mode===MODE.SURFACE_TEST&&[SURFACE.RELATED,SURFACE.MIX,SURFACE.HOME].includes(pref)&&c.surface===SURFACE.SEARCH&&!c.targetMatch,surfaceBias=discoverySurfaceBias(task,c.surface,{routeBootstrap}),evidenceScore=targetCandidateScore(c,world,targetFormat);if(candidateReadyForAction(c))actions.push({type:'click_candidate',capability:'motor.click',target:c,purpose:relation==='MATCH'?'follow_same_format_environment_edge':'follow_environment_edge_with_unknown_format',baseUtility:evidenceScore+surfaceBias,expected:`current_video:${c.videoId}`,formatRelation:relation});
       if(!c.targetMatch&&candidateReadyForAction(c)&&!recentPreviewed.has(String(c.videoId))){actions.push({type:'preview_candidate',capability:'motor.hover+preview_wait',target:c,purpose:'test_preview_exposure_effect',baseUtility:evidenceScore+surfaceBias,expected:`preview_exposure:${c.videoId}`,formatRelation:relation});}
     }
+    const blockedCandidates=world.candidates
+      .filter(c=>!candidateReadyForAction(c)&&formatRelation(targetFormat,c.mediaFormat)!=='MISMATCH')
+      .sort((a,b)=>targetCandidateScore(b,world,targetFormat)-targetCandidateScore(a,world,targetFormat))
+      .slice(0,4);
+    for(const c of blockedCandidates)actions.push(...candidatePositionActions(c,world,{targetFormat,task}));
     const allQueries=[...(queryPlan?.plan||[]),...(dynamicQueries||[])];for(const row of allQueries){if(history.slice(-6).some(h=>h.query&&fold(h.query)===fold(row.query)))continue;const used=usedQueries.has(fold(row.query)),learned=this.memory?.state?.queries?.[fold(row.query)],routeBootstrap=task?.discoveryPolicy?.mode===MODE.SURFACE_TEST&&pref!==SURFACE.SEARCH;let utility=18+Number(row.score||0)*1.5+(used?-12:10)+clamp(Number(learned?.meanReward||0)*2,-12,16)+discoverySurfaceBias(task,SURFACE.SEARCH,{routeBootstrap});if(world.current.pageType==='search'&&used)utility-=5;if(world.formatMismatch)utility+=38;actions.push({type:'search',capability:'motor+search_control',query:row.query,queryRow:row,purpose:world.formatMismatch?'leave_mismatched_format_and_acquire_target_evidence':'acquire_target_anchored_evidence',baseUtility:utility,expected:'search_results_for_query'});}
     if(['watch','watch_radio','shorts'].includes(world.current.pageType)&&!world.formatMismatch)actions.push({type:'dwell',capability:'brain.wait',purpose:'observe_recommendation_change',baseUtility:12+Math.min(12,stagnation*2),expected:'time_or_recommendation_change'});
     const scrollBase=world.formatMismatch?-18:8+Math.min(10,stagnation);actions.push({type:'scroll',capability:'motor.scrollVertical',direction:'down',purpose:world.formatMismatch?'low_priority_scroll_on_wrong_format':'expand_visible_environment',baseUtility:scrollBase,expected:blockedTarget?'candidate_actionability_or_environment_change':'scroll_or_candidate_change',recoveryTargetVideoId:blockedTarget?.videoId||null});actions.push({type:'scroll',capability:'motor.scrollVertical',direction:'up',purpose:'reinspect_previous_environment',baseUtility:scrollBase,expected:blockedTarget?'candidate_actionability_or_environment_change':'scroll_or_candidate_change',recoveryTargetVideoId:blockedTarget?.videoId||null});
     if(world.controls.homeLink||world.current.pageType!=='home'){const homeUtility=world.formatMismatch?52:18+discoverySurfaceBias(task,SURFACE.HOME,{routeBootstrap:pref!==SURFACE.HOME});actions.push({type:'home',capability:'motor.click|browser_ui.address',purpose:world.formatMismatch?'leave_mismatched_format_surface':'sample_home_environment',baseUtility:homeUtility,expected:'page_type_home'});}
     for(const tab of world.tabs)if(tab.id!==world.tabId)actions.push({type:'tab_switch',capability:'tab.tab_switch',tabId:tab.id,purpose:'inspect_parallel_environment_branch',baseUtility:8+(tab.siteKey.includes('youtube.com')?10:0)+(world.formatMismatch?8:0),expected:`active_tab:${tab.id}`});actions.push(...topicFilterActions(world));const textProbe=allQueries.find(row=>!usedQueries.has(fold(row.query)))?.query||allQueries[0]?.query||null,targetVocabulary=[...(queryPlan?.signals||[]).map(x=>x.term),...(queryPlan?.semanticTopics||[])],genericStart=actions.length;actions.push(...genericBodyActions(world,{textProbe,targetVocabulary,targetFormat,noOpCount:noOps}));if(blockedTarget){for(let i=genericStart;i<actions.length;i++){const row=actions[i];if(row.type==='body_step'&&!['motor.typeText','motor.keyCombo'].includes(row.capability))row.recoveryTargetVideoId=blockedTarget.videoId;}}
-    const availableFamilies=actions.map(action=>actionFamily(action,world,task));for(const action of actions){const id=actionMemoryId(action);action.memoryId=id;action.context=context;action.subgoal=subgoal;action.actionKey=actionKey(action);action.routeFamily=actionFamily(action,world,task);action.effectId=action.routeFamily;action.routeFrontierAdjustment=routeFrontierAdjustment(action,history,availableFamilies,world,task);action.causalEffectBonus=clamp(Number(this.memory?.interactionEffectScore?.(action.effectId,context)||0),-18,36);action.utility=Number((Number(action.baseUtility||0)+action.routeFrontierAdjustment+action.causalEffectBonus+memoryBonus(this.memory,id,context)-recentPenalty(action,history)-familyFailurePenalty(action,history)-candidateFailurePenalty(action,history)+jitter(1.1)).toFixed(3));}actions.sort((a,b)=>b.utility-a.utility);return {task,subgoal,context,targetFormat,accountState:task?.accountContext?.accountState||null,accountRelationship:task?.accountContext?.relationship?.kind||null,accountPlanMode:task?.accountContext?.plan?.mode||null,discoveryMode:task?.discoveryPolicy?.mode||MODE.AUTO,preferredSurface:task?.discoveryPolicy?.preferredSurface||SURFACE.AUTO,surfaceFallbackActive:task?.discoveryPolicy?.fallbackActive===true,actions};
+    const availableFamilies=actions.map(action=>actionFamily(action,world,task));for(const action of actions){const id=actionMemoryId(action);action.memoryId=id;action.context=context;action.subgoal=subgoal;action.actionKey=actionKey(action);action.routeFamily=actionFamily(action,world,task);action.effectId=action.effectId||action.routeFamily;action.routeFrontierAdjustment=routeFrontierAdjustment(action,history,availableFamilies,world,task);action.causalEffectBonus=clamp(Number(this.memory?.interactionEffectScore?.(action.effectId,context)||0),-18,36);action.learnedEffectBonus=action.effectContext?clamp(Number(this.memory?.actionEffectScore?.(id,action.effectContext)||0),-80,120):0;action.utility=Number((Number(action.baseUtility||0)+action.routeFrontierAdjustment+action.causalEffectBonus+action.learnedEffectBonus+memoryBonus(this.memory,id,context)-recentPenalty(action,history)-familyFailurePenalty(action,history)-candidateFailurePenalty(action,history)+jitter(1.1)).toFixed(3));}actions.sort((a,b)=>b.utility-a.utility);return {task,subgoal,context,targetFormat,accountState:task?.accountContext?.accountState||null,accountRelationship:task?.accountContext?.relationship?.kind||null,accountPlanMode:task?.accountContext?.plan?.mode||null,discoveryMode:task?.discoveryPolicy?.mode||MODE.AUTO,preferredSurface:task?.discoveryPolicy?.preferredSurface||SURFACE.AUTO,surfaceFallbackActive:task?.discoveryPolicy?.fallbackActive===true,actions};
   }
   choose(plan,{stagnation=0}={}){const actions=plan.actions||[];if(!actions.length)return null;const epsilon=clamp(this.explorationBase+Math.min(0.32,Number(stagnation||0)*0.04),0,0.6);if(Math.random()<epsilon){const pool=explorationPool(actions);if(pool.length){const top=Number(pool[0].utility||0),weights=pool.map(row=>Math.max(1,Number(row.utility||0)-(top-100))),total=weights.reduce((a,b)=>a+b,0);let r=Math.random()*total;for(let i=0;i<pool.length;i++){r-=weights[i];if(r<=0)return {...pool[i],selection:'exploration_family_diverse',epsilon};}}}return {...actions[0],selection:'utility_max',epsilon};}
 }
 
-module.exports={actionMemoryId,familyFailurePenalty,candidateFailurePenalty,noOpStreak,candidateReadyForAction,safeCandidateRatio,riskyAffordancePenalty,actionFamily,historyRouteFamily,frontierEligible,routeFrontierStats,routeFrontierAdjustment,topicRelation,candidateRouteFamily,previewRouteFamily,topicFilterAffordances,topicFilterActions,explorationPool,AutonomousAgentPlanner,actionKey,targetCandidateScore,genericBodyActions,affordanceActions,recentPenalty,accountSurfaceBias,accountSearchBias,accountHomeBias,accountPreviewBias,accountNeighborClickBias,accountHomeCheckBias,coldStartState,targetSurfaceAllowed,discoverySurfaceBias,surfaceTestMismatch};
+module.exports={actionMemoryId,familyFailurePenalty,candidateFailurePenalty,noOpStreak,candidateReadyForAction,safeCandidateRatio,candidatePositionActions,riskyAffordancePenalty,actionFamily,historyRouteFamily,frontierEligible,routeFrontierStats,routeFrontierAdjustment,topicRelation,candidateRouteFamily,previewRouteFamily,topicFilterAffordances,topicFilterActions,explorationPool,AutonomousAgentPlanner,actionKey,targetCandidateScore,genericBodyActions,affordanceActions,recentPenalty,accountSurfaceBias,accountSearchBias,accountHomeBias,accountPreviewBias,accountNeighborClickBias,accountHomeCheckBias,coldStartState,targetSurfaceAllowed,discoverySurfaceBias,surfaceTestMismatch};
