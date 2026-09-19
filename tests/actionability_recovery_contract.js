@@ -3,127 +3,104 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
-const {nodeView,actionabilityEvidence,actionabilityQuality}=require('../src/dom_perception');
+const {nodeView}=require('../src/dom_perception');
 const {extractSurface}=require('../src/youtube_semantic_observer');
-const {buildWorld,actionabilityDelta}=require('../research/autonomous_discovery/world_model');
+const {buildWorld,candidateInteractionState,actionabilityDelta}=require('../research/autonomous_discovery/world_model');
 const {AutonomousAgentPlanner}=require('../research/autonomous_discovery/agent_planner');
 const {AutonomousYouTubeBrainV3}=require('../research/autonomous_discovery/brain_v3');
 
 const normalStyle={display:'block',visibility:'visible',opacity:'1',overflow:'visible',overflowX:'visible',overflowY:'visible'};
 const rect={x:100,y:120,width:320,height:180};
 
-// Perception must preserve why a target is blocked instead of collapsing every case to "not visible".
+// BODY is eyes only: geometry/style/hit samples are observations, not action decisions.
 {
-  const hidden={hidden:true,inert:false,parentElement:null,getAttribute(){return null;},contains(){return false;}};
-  const hiddenView=nodeView(hidden,rect,{windowRef:{innerWidth:1000,innerHeight:700,getComputedStyle(){return normalStyle;}},documentRef:{elementFromPoint(){return hidden;}}});
-  assert.equal(hiddenView.reason,'hidden');
-  assert.equal(hiddenView.evidence.explicitHidden,true);
-  assert.equal(hiddenView.evidence.geometryKnown,true);
-  assert.equal(hiddenView.evidence.rectIntersectsViewport,true);
-
-  const blocker={tagName:'DIV',className:'overlay',getAttribute(){return 'dialog';}};
-  const node={hidden:false,inert:false,parentElement:null,getAttribute(){return null;},contains(){return false;}};
-  const occluded=nodeView(node,rect,{windowRef:{innerWidth:1000,innerHeight:700,getComputedStyle(){return normalStyle;}},documentRef:{elementFromPoint(){return blocker;}}});
-  assert.equal(occluded.reason,'occluded');
-  assert.equal(occluded.hitTested,true);
-  assert.equal(occluded.evidence.hitOwned,false);
-  assert.equal(occluded.evidence.blocker.tag,'div');
-  assert.equal(occluded.evidence.blocker.role,'dialog');
-  assert.ok(actionabilityQuality(occluded)>0);
+  const node={hidden:false,inert:false,parentElement:null,getAttribute(){return null;},contains(hit){return hit===this;}};
+  const view=nodeView(node,rect,{windowRef:{innerWidth:1000,innerHeight:700,getComputedStyle(){return normalStyle;}},documentRef:{elementFromPoint(){return node;}}});
+  assert.equal(view.visible,true);
+  assert.equal(view.hitTested,true);
+  assert.equal(view.hitSamples.length,5);
+  assert.equal(view.hitSamples.some(row=>row.owned),true);
+  assert.equal(Object.hasOwn(view,'actionable'),false);
+  assert.equal(Object.hasOwn(view,'actionPoint'),false);
+  assert.equal(Object.hasOwn(view,'reason'),false);
 }
 
-// aria-hidden describes accessibility exposure; it must not by itself suppress
-// a visually present pointer target. A successful physical hit-test wins while
-// the aria-hidden fact remains available as evidence.
+// aria-hidden and ancestor clipping remain evidence only. They must not prevent
+// BODY from collecting physical hit-test facts for an in-viewport rectangle.
 {
-  const ariaParent={hidden:false,inert:false,parentElement:null,getAttribute(name){return name==='aria-hidden'?'true':null;},getBoundingClientRect(){return {x:80,y:90,width:500,height:300};}};
-  const ariaNode={hidden:false,inert:false,parentElement:ariaParent,getAttribute(){return null;},contains(hit){return hit===this;}};
-  const windowRef={innerWidth:1000,innerHeight:700,getComputedStyle(){return normalStyle;}};
-  const hitView=nodeView(ariaNode,rect,{windowRef,documentRef:{elementFromPoint(){return ariaNode;}}});
-  assert.equal(hitView.evidence.ariaHidden,true);
-  assert.equal(hitView.reason,'hit_test');
-  assert.equal(hitView.visible,true);
-  assert.equal(hitView.hitTested,true);
-  assert.equal(hitView.evidence.hitOwned,true);
-  assert.equal(hitView.actionable,true);
-  assert.ok(hitView.actionPoint);
-
-  // Without a physical hit-test, do not turn aria-hidden geometry into a blind
-  // click. Keep the target visible-but-unverified and return control to Brain.
-  const unverified=nodeView(ariaNode,rect,{windowRef,documentRef:{}});
-  assert.equal(unverified.evidence.ariaHidden,true);
-  assert.equal(unverified.visible,true);
-  assert.equal(unverified.actionable,false);
-  assert.equal(unverified.actionPoint,null);
-  assert.equal(unverified.reason,'aria_hidden_unverified');
-
-  // Strong physical blockers remain blockers even when elementFromPoint would
-  // otherwise report the node.
-  const hardHidden={hidden:true,inert:false,parentElement:ariaParent,getAttribute(name){return name==='aria-hidden'?'true':null;},contains(hit){return hit===this;}};
-  const blocked=nodeView(hardHidden,rect,{windowRef,documentRef:{elementFromPoint(){return hardHidden;}}});
-  assert.equal(blocked.reason,'hidden');
-  assert.equal(blocked.evidence.explicitHidden,true);
-  assert.equal(blocked.evidence.ariaHidden,true);
-  assert.equal(blocked.actionable,false);
+  const clipParent={hidden:false,inert:false,parentElement:null,getAttribute(name){return name==='aria-hidden'?'true':null;},getBoundingClientRect(){return {x:0,y:0,width:50,height:50};}};
+  const node={hidden:false,inert:false,parentElement:clipParent,getAttribute(){return null;},contains(hit){return hit===this;}};
+  const windowRef={innerWidth:1000,innerHeight:700,getComputedStyle(n){return n===clipParent?{...normalStyle,overflow:'hidden',overflowX:'hidden',overflowY:'hidden'}:normalStyle;}};
+  const view=nodeView(node,rect,{windowRef,documentRef:{elementFromPoint(){return node;}}});
+  assert.equal(view.evidence.rectIntersectsViewport,true);
+  assert.equal(view.evidence.rectFullyInViewport,true);
+  assert.equal(view.evidence.ariaHidden,true);
+  assert.equal(view.evidence.clippedByContainer,true);
+  assert.equal(view.evidence.clippedRect,null);
+  assert.equal(view.hitTested,true);
+  assert.equal(view.hitSamples.some(row=>row.owned),true);
 }
 
-// If YouTube exposes the same video through multiple DOM anchors, keep the representation with better observed actionability.
+// Same video can have multiple DOM representations. BODY preserves all raw
+// representations; Brain, not BODY, chooses the representation and click point.
 {
   const card={querySelectorAll(){return [];},getBoundingClientRect(){return rect;}};
-  const makeAnchor=(x,hidden)=>({hidden,inert:false,parentElement:null,href:'https://www.youtube.com/watch?v=sameVideo01',getAttribute(name){if(name==='href')return '/watch?v=sameVideo01';if(name==='title')return 'same video';return null;},closest(selector){return ['ytd-rich-item-renderer','ytd-video-renderer','ytd-grid-video-renderer','ytd-compact-video-renderer','ytd-playlist-panel-video-renderer','yt-lockup-view-model','ytm-shorts-lockup-view-model','ytd-radio-renderer','ytd-playlist-renderer'].includes(selector)?card:null;},contains(hit){return hit===this;},getBoundingClientRect(){return {x,y:160,width:220,height:120};}});
-  const a1=makeAnchor(80,true),a2=makeAnchor(360,false),root={querySelectorAll(){return [a1,a2];},getBoundingClientRect(){return {x:0,y:80,width:900,height:500};}};
-  const documentRef={querySelector(selector){return selector==='ytd-search #contents'?root:null;},elementFromPoint(x){return x>=360?a2:null;}};
+  const makeAnchor=(x,hitOwned)=>({hidden:false,inert:false,parentElement:null,href:'https://www.youtube.com/watch?v=sameVideo01',getAttribute(name){if(name==='href')return '/watch?v=sameVideo01';if(name==='title')return 'same video';return null;},closest(selector){return ['ytd-rich-item-renderer','ytd-video-renderer','ytd-grid-video-renderer','ytd-compact-video-renderer','ytd-playlist-panel-video-renderer','yt-lockup-view-model','ytm-shorts-lockup-view-model','ytd-radio-renderer','ytd-playlist-renderer'].includes(selector)?card:null;},contains(hit){return hit===this;},getBoundingClientRect(){return {x,y:160,width:220,height:120};},hitOwned});
+  const a1=makeAnchor(80,false),a2=makeAnchor(360,true),root={querySelectorAll(){return [a1,a2];},getBoundingClientRect(){return {x:0,y:80,width:900,height:500};}};
+  const blocker={tagName:'DIV',className:'overlay',getAttribute(){return 'dialog';}};
+  const documentRef={querySelector(selector){return selector==='ytd-search #contents'?root:null;},elementFromPoint(x){return x>=360?a2:blocker;}};
   const windowRef={innerWidth:1000,innerHeight:700,getComputedStyle(){return normalStyle;}};
-  const surface=extractSurface(documentRef,'search_results',{windowRef,maxItems:10});
+  const surface=extractSurface(documentRef,'search_results',{windowRef,maxItems:10}),raw=surface.items[0];
   assert.equal(surface.items.length,1);
-  assert.equal(surface.items[0].videoId,'sameVideo01');
-  assert.equal(surface.items[0].representationCount,2);
-  assert.equal(surface.items[0].actionable,true);
-  assert.ok(surface.items[0].actionPoint);
-  assert.equal(surface.items[0].representations.length,2);
+  assert.equal(raw.videoId,'sameVideo01');
+  assert.equal(raw.representationCount,2);
+  assert.equal(raw.representations.length,2);
+  assert.equal(Object.hasOwn(raw,'actionable'),false);
+  assert.equal(Object.hasOwn(raw,'actionPoint'),false);
+  const decision=candidateInteractionState(raw);
+  assert.equal(decision.actionable,true);
+  assert.equal(decision.index,1);
+  assert.ok(decision.actionPoint);
+  assert.equal(decision.reason,'owned_hit_sample');
 }
 
-// Actionability progress is separate from generic world changes such as scrollY.
-function candidate({actionable=false,reason='occluded',scoreStage='blocked'}={}){
-  const ready=actionable;
-  return {videoId:'target001',surface:'search_results',position:1,targetMatch:true,targetProximity:1,visible:ready,actionable:ready,reason,hitTested:true,actionPoint:ready?{x:240,y:220}:null,visibleRect:{x:100,y:120,width:320,height:180},actionRect:{x:100,y:120,width:320,height:180},evidence:{geometryKnown:true,rectIntersectsViewport:true,rectFullyInViewport:true,hitOwned:ready,hitPointsTried:ready?1:5,blocker:ready?null:{tag:'div',role:'dialog'},reason},mediaFormat:{kind:'LONG_FORM'},topic:'music',isRadio:false};
+function rawCandidate({owned=false,offscreen=false}={}){
+  const actionRect=offscreen?{x:100,y:900,width:320,height:180}:{x:100,y:120,width:320,height:180};
+  return {videoId:'target001',surface:'search_results',position:1,targetMatch:true,targetProximity:1,mediaFormat:{kind:'LONG_FORM'},topic:'music',isRadio:false,representationCount:1,representations:[{visible:!offscreen,visibleRect:offscreen?null:{x:100,y:120,width:320,height:180,centerX:260,centerY:210},hitTested:!offscreen,hitSamples:offscreen?[]:[{x:260,y:210,owned,blocker:owned?null:{tag:'div',role:'dialog'}}],actionRect,evidence:{geometryKnown:true,rectIntersectsViewport:!offscreen,rectFullyInViewport:!offscreen,explicitHidden:false,inert:false,ariaHidden:false,displayNone:false,visibilityHidden:false,opacityZero:false,clippedByContainer:false}}]};
 }
 function worldWith(c,scrollY=0){
   return buildWorld({observation:{environment:{online:true,eligible:true},bodyState:{activeTabId:1,pointer:{known:true,x:30,y:30}}},semantic:{route:{pageType:'search'},viewport:{width:1000,height:700,scrollY},controls:{},advertising:{playingAd:false},affordances:[]},snapshot:{pageType:'search',currentTopic:'unknown',candidates:[c]},browser:{tabs:[{id:1,active:true,siteKey:'youtube.com'}]},tabId:1,target:{videoId:'target001',mediaFormat:{kind:'LONG_FORM'}},history:[]});
 }
+
+// Brain alone decides readiness and measures recovery progress from raw evidence.
 {
-  const before=worldWith(candidate({actionable:false}),0),scrolled=worldWith(candidate({actionable:false}),600),ready=worldWith(candidate({actionable:true,reason:'hit_test'}),600);
+  const before=worldWith(rawCandidate({owned:false}),0),scrolled=worldWith(rawCandidate({owned:false}),600),ready=worldWith(rawCandidate({owned:true}),600);
+  assert.equal(before.targetVisible.actionable,false);
+  assert.equal(ready.targetVisible.actionable,true);
+  assert.ok(ready.targetVisible.actionPoint);
   const noProgress=actionabilityDelta(before,scrolled,'target001');
   assert.equal(noProgress.improved,false);
-  assert.equal(noProgress.scoreDelta,0);
   const progress=actionabilityDelta(scrolled,ready,'target001');
   assert.equal(progress.improved,true);
   assert.equal(progress.becameActionable,true);
   assert.ok(progress.scoreDelta>0);
 }
 
-// Planner must not attempt a blocked target directly or hide a scroll inside click execution.
+// Planner consumes Brain-derived readiness, never BODY-provided actionable flags.
 {
   const memory={ucb(){return 0;},interactionEffectScore(){return 0;},state:{queries:{}}},planner=new AutonomousAgentPlanner({memory,explorationBase:0});
   const task=planner.inferTask({videoId:'target001',mediaFormat:{kind:'LONG_FORM'}},{plan:[{query:'nearby music',score:10}],signals:[],semanticTopics:['music'],fingerprint:{primaryTopic:'music'}});
-  const blocked=worldWith(candidate({actionable:false}));
+  const blocked=worldWith(rawCandidate({owned:false}));
   const plan=planner.generate(blocked,{task,queryPlan:{plan:[{query:'nearby music',score:10}],signals:[],semanticTopics:['music']},dynamicQueries:[],usedQueries:new Set(),stagnation:0});
   assert.equal(plan.subgoal.id,'restore_target_actionability');
   assert.equal(plan.actions.some(a=>a.purpose==='open_target'),false);
-  const reobserve=plan.actions.find(a=>a.type==='reobserve'),down=plan.actions.find(a=>a.type==='scroll'&&a.direction==='down'),up=plan.actions.find(a=>a.type==='scroll'&&a.direction==='up');
-  assert.ok(reobserve);assert.ok(down);assert.ok(up);
-  assert.equal(reobserve.recoveryTargetVideoId,'target001');
-  assert.equal(down.recoveryTargetVideoId,'target001');
-  assert.equal(up.recoveryTargetVideoId,'target001');
-  assert.equal(down.baseUtility,up.baseUtility);
-
-  const ready=worldWith(candidate({actionable:true,reason:'hit_test'}));
+  const ready=worldWith(rawCandidate({owned:true}));
   const readyPlan=planner.generate(ready,{task,queryPlan:{plan:[],signals:[],semanticTopics:['music']},dynamicQueries:[],usedQueries:new Set(),stagnation:0});
   assert.equal(readyPlan.subgoal.id,'open_observed_target');
   assert.ok(readyPlan.actions.some(a=>a.purpose==='open_target'));
 }
 
-// Recovery reward must depend on actionability improvement, not on the fact that the page scrolled.
+// Recovery reward remains a Brain concern.
 {
   const brain=Object.create(AutonomousYouTubeBrainV3.prototype);
   const unchanged=brain.rewardAgent({action:{},outcome:{success:true,error:null},delta:{changed:true,reasons:['scroll','signature']},afterInfo:{},recovery:{improved:false,regressed:false,scoreDelta:0,becameActionable:false}});
@@ -132,20 +109,22 @@ function worldWith(c,scrollY=0){
   assert.ok(improved>0);
 }
 
-// Architecture guard: candidate click may not call an implicit scroll-recovery loop.
+// Architecture guard: BODY may observe, never judge or choose an action target.
 {
-  const source=fs.readFileSync(path.join(__dirname,'..','research','autonomous_discovery','brain_v2.js'),'utf8');
-  const start=source.indexOf('async clickCandidate(candidate)');
-  const end=source.indexOf('async verifiedBack()',start);
-  const clickSource=source.slice(start,end);
-  assert.ok(start>=0&&end>start);
-  assert.doesNotMatch(clickSource,/scrollToCandidate|scrollVertical|for\s*\(let\s+attempt/);
-  assert.match(clickSource,/candidate_not_safely_actionable/);
-  const recoverySource=fs.readFileSync(path.join(__dirname,'..','research','autonomous_discovery','brain_v3_recovery.js'),'utf8'),recoveryStart=recoverySource.indexOf('async prepareCandidateForSafeClick(candidate)'),recoveryEnd=recoverySource.indexOf('async executeAgentAction(action',recoveryStart),recoveryClickSource=recoverySource.slice(recoveryStart,recoveryEnd);
-  assert.ok(recoveryStart>=0&&recoveryEnd>recoveryStart);
-  assert.doesNotMatch(recoveryClickSource,/scrollVertical|moveTo|maxScrolls|safe_click_reposition/);
-  const plannerSource=fs.readFileSync(path.join(__dirname,'..','research','autonomous_discovery','agent_planner.js'),'utf8');
-  assert.doesNotMatch(plannerSource,/reason\s*===\s*['"](?:hidden|occluded|outside_view)['"][^\n]*scroll/i);
+  const bodySource=fs.readFileSync(path.join(__dirname,'..','src','dom_perception.js'),'utf8');
+  const semanticSource=fs.readFileSync(path.join(__dirname,'..','src','youtube_semantic_observer.js'),'utf8');
+  assert.doesNotMatch(bodySource,/actionabilityQuality|actionPoint\s*:|actionable\s*:/);
+  assert.doesNotMatch(semanticSource,/actionabilityQuality|useNew=.*actionability|actionPoint\s*:|actionable\s*:/);
+  assert.match(bodySource,/hitSamples/);
+  assert.match(semanticSource,/representations/);
+
+  const brainSource=fs.readFileSync(path.join(__dirname,'..','research','autonomous_discovery','brain_v2.js'),'utf8'),clickStart=brainSource.indexOf('async clickCandidate(candidate)'),clickEnd=brainSource.indexOf('async verifiedBack()',clickStart),clickSource=brainSource.slice(clickStart,clickEnd);
+  const worldSource=fs.readFileSync(path.join(__dirname,'..','research','autonomous_discovery','world_model.js'),'utf8');
+  assert.ok(clickStart>=0&&clickEnd>clickStart);
+  assert.match(clickSource,/candidateInteractionState/);
+  assert.match(worldSource,/candidateInteractionState/);
+  assert.match(worldSource,/owned_hit_sample/);
+  assert.doesNotMatch(clickSource,/scrollToCandidate|for\s*\(let\s+attempt/);
 }
 
 console.log('actionability_recovery_contract: PASS');

@@ -8,6 +8,7 @@ const {
   contextKey
 }=require('./brain');
 const {inspectQuery}=require('./query_firewall');
+const {candidateInteractionState}=require('./world_model');
 
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,Math.max(0,Number(ms)||0)));
 const bounded=(v,a,b)=>Math.max(a,Math.min(b,Number(v)||0));
@@ -237,11 +238,11 @@ class AutonomousYouTubeBrainV2 extends AutonomousYouTubeBrain{
 
   async clickCandidate(candidate){
     await this.handleAds({waitForSkippable:true,maxWaitMs:3500});
-    const state=await this.observe(`candidate_click_prepare_${candidate.videoId}`),observed=findCandidate(state.semantic,candidate)||null;
-    const evidence=observed?{videoId:observed.videoId,surface:observed.surface,visible:observed.visible===true,actionable:observed.actionable===true,reason:observed.reason||null,actionPoint:observed.actionPoint||null,visibleRect:observed.visibleRect||null,actionRect:observed.actionRect||null,evidence:observed.evidence||null,representationCount:Number(observed.representationCount||1)}:{videoId:String(candidate.videoId||''),surface:candidate.surface||null,missing:true};
-    if(!observed?.actionable||!observed?.actionPoint){this.ledger('candidate_click_blocked',{videoId:candidate.videoId,surface:candidate.surface,evidence});return {ok:false,reason:'candidate_not_safely_actionable',actionability:evidence};}
-    const beforeTabs=await this.browserTabs(),sourceTabId=this.tabId,beforeSig=routeSignature(state.semantic),p=observed.actionPoint;
-    const result=await this.motor({type:'click',x:Number(p.x),y:Number(p.y),width:Math.max(8,Number(observed.visibleRect?.width||observed.actionRect?.width||12)),height:Math.max(8,Number(observed.visibleRect?.height||observed.actionRect?.height||12)),role:'link'});
+    const state=await this.observe(`candidate_click_prepare_${candidate.videoId}`),observed=findCandidate(state.semantic,candidate)||null,interaction=candidateInteractionState(observed||{});
+    const evidence=observed?{videoId:observed.videoId,surface:observed.surface,representationCount:interaction.representationCount,selectedRepresentation:interaction.index,reason:interaction.reason,actionPoint:interaction.actionPoint,assessments:interaction.assessments}:{videoId:String(candidate.videoId||''),surface:candidate.surface||null,missing:true};
+    if(!observed||!interaction.actionable||!interaction.actionPoint){this.ledger('candidate_click_blocked',{videoId:candidate.videoId,surface:candidate.surface,evidence});return {ok:false,reason:'candidate_not_safely_actionable',actionability:evidence};}
+    const beforeTabs=await this.browserTabs(),sourceTabId=this.tabId,beforeSig=routeSignature(state.semantic),p=interaction.actionPoint,r=interaction.visibleRect||interaction.actionRect||{width:12,height:12};
+    const result=await this.motor({type:'click',x:Number(p.x),y:Number(p.y),width:Math.max(8,Number(r.width||12)),height:Math.max(8,Number(r.height||12)),role:'link'});
     const tabOutcome=await this.reconcileTabEffects(beforeTabs,{reason:'candidate_click',expectedVideoId:candidate.videoId,sourceTabId});
     if(tabOutcome.expectedFound){this.ledger('candidate_click_verify',{attempt:1,videoId:candidate.videoId,ok:true,arrival:'tab_workspace',tabId:tabOutcome.tabId,dispatched:result?.execution?.dispatched??null,completed:result?.execution?.completed??null});return {ok:true,result,semantic:tabOutcome.semantic,attempt:1,tabId:tabOutcome.tabId,actionability:evidence};}
     const arrived=await this.waitForSemantic(s=>currentVideoId(s)===String(candidate.videoId)||routeSignature(s)!==beforeSig,{timeoutMs:this.verifyTimeoutMs,intervalMs:280,reason:'verify_candidate_click'}),ok=currentVideoId(arrived?.semantic)===String(candidate.videoId);

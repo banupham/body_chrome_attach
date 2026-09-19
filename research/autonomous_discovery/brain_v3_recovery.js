@@ -5,6 +5,7 @@ const {flattenCandidates,currentVideoId}=require('./brain');
 const {fold}=require('./topic_classifier');
 const {queryTokens}=require('./query_firewall');
 const {noOpStreak}=require('./agent_planner');
+const {candidateInteractionState}=require('./world_model');
 
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,Math.max(0,Number(ms)||0)));
 const randomInt=(a,b)=>Math.floor(a+Math.random()*(Math.max(a,b)-a+1));
@@ -62,9 +63,9 @@ class AutonomousYouTubeBrainV3Recovery extends AutonomousYouTubeBrainV3{
   async prepareCandidateForSafeClick(candidate){
     this.checkCandidateBudget();
     const state=await this.observe(`safe_click_prepare_${candidate.videoId}`);if(!state.semantic)return null;
-    const match=semanticCandidate(state.semantic,candidate);
-    if(!match?.actionable||!match?.actionPoint)return {state,match,ready:false,reason:match?.reason||'candidate_not_safely_actionable'};
-    return {state,match,ready:true,actionPoint:match.actionPoint,visibleRect:match.visibleRect||null};
+    const match=semanticCandidate(state.semantic,candidate),interaction=candidateInteractionState(match||{});
+    if(!match||!interaction.actionable||!interaction.actionPoint)return {state,match,interaction,ready:false,reason:interaction.reason||'candidate_not_safely_actionable'};
+    return {state,match,interaction,ready:true,actionPoint:interaction.actionPoint,visibleRect:interaction.visibleRect||null};
   }
   async clickCandidateSafe(candidate){
     // Candidate click gets a cooperative deadline, but recovery is never hidden
@@ -72,7 +73,7 @@ class AutonomousYouTubeBrainV3Recovery extends AutonomousYouTubeBrainV3{
     const started=Date.now();this.candidateDeadline=started+20000;
     try{
       const prepared=await this.prepareCandidateForSafeClick(candidate);
-      if(!prepared?.ready){const reason=prepared?.reason||'candidate_not_safely_actionable';this.ledger('candidate_click_safe_verify',{videoId:candidate.videoId,ok:false,reason,durationMs:Date.now()-started,actionability:prepared?.match?{visible:prepared.match.visible===true,actionable:prepared.match.actionable===true,reason:prepared.match.reason||null,actionPoint:prepared.match.actionPoint||null,evidence:prepared.match.evidence||null}:null});return {ok:false,reason,actionability:prepared?.match||null};}
+      if(!prepared?.ready){const reason=prepared?.reason||'candidate_not_safely_actionable';this.ledger('candidate_click_safe_verify',{videoId:candidate.videoId,ok:false,reason,durationMs:Date.now()-started,actionability:prepared?.interaction||null});return {ok:false,reason,actionability:prepared?.interaction||null};}
       // Reuse the canonical click path, which observes again and requires a
       // hit-tested actionPoint. It does not scroll or retry a blocked target.
       const result=await super.clickCandidate(candidate);
@@ -97,7 +98,7 @@ class AutonomousYouTubeBrainV3Recovery extends AutonomousYouTubeBrainV3{
     return Number(value.toFixed(3));
   }
 
-  reportObject(status){const report=super.reportObject(status);report.schemaVersion=6;report.autonomy={...report.autonomy,revision:'evidence_driven_actionability_recovery_v2',safeCandidateClick:'observed_action_point_single_click_v3',candidateBudgetMs:20000,implicitCandidateScrolls:0};report.agent={...(report.agent||{}),diagnostics:historyDiagnostics(this.agentHistory.slice(-250))};return report;}
+  reportObject(status){const report=super.reportObject(status);report.schemaVersion=6;report.autonomy={...report.autonomy,revision:'brain_owned_interaction_decision_v3',bodyRole:'observation_and_execution_only',candidateDecisionOwner:'brain',safeCandidateClick:'brain_selected_hit_evidence_single_click_v4',candidateBudgetMs:20000,implicitCandidateScrolls:0};report.agent={...(report.agent||{}),diagnostics:historyDiagnostics(this.agentHistory.slice(-250))};return report;}
 }
 
 module.exports={AutonomousYouTubeBrainV3Recovery,safeContentRect,signalEvidence,specificPlanningProximity,historyDiagnostics};
