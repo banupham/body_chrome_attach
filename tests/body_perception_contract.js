@@ -25,19 +25,32 @@ link.style = { ...style, visibility: 'hidden' };
 assert.equal(interactiveAffordances(doc, win).length, 0);
 delete link.style;
 link.parentElement = node({ hidden: true });
-assert.equal(nodeView(link, rect, { documentRef: doc, windowRef: win }).reason, 'hidden');
+const hiddenView=nodeView(link, rect, { documentRef: doc, windowRef: win });
+assert.equal(hiddenView.visible, false);
+assert.equal(hiddenView.evidence.explicitHidden, true);
+assert.equal(Object.hasOwn(hiddenView, 'reason'), false);
 link.parentElement = null;
 doc.elementFromPoint = () => node({ tagName: 'DIALOG' });
 const covered = candidateFromAnchor(link, 'related', 1, { windowRef: win });
-assert.equal(covered.visible, false);
-assert.equal(covered.actionable, false);
-assert.equal(covered.reason, 'occluded');
+assert.equal(covered.visible, true);
+assert.equal(covered.hitTested, true);
+assert.equal(covered.hitSamples.some(row => row.owned), false);
+assert.equal(Object.hasOwn(covered, 'actionable'), false);
+assert.equal(Object.hasOwn(covered, 'actionPoint'), false);
+assert.equal(Object.hasOwn(covered, 'reason'), false);
 doc.elementFromPoint = x => x > 150 ? link : node({ tagName: 'DIALOG' });
 const partial = nodeView(link, rect, { documentRef: doc, windowRef: win });
-assert.equal(partial.actionable, true);
-assert.ok(partial.actionPoint.x > 150);
+assert.equal(partial.hitTested, true);
+assert.ok(partial.hitSamples.some(row => row.owned && row.x > 150));
+assert.equal(Object.hasOwn(partial, 'actionable'), false);
+assert.equal(Object.hasOwn(partial, 'actionPoint'), false);
 link.parentElement = node({ style: { ...style, overflow: 'hidden' }, getBoundingClientRect: () => ({ x: 0, y: 0, width: 100, height: 100 }) });
-assert.equal(nodeView(link, rect, { documentRef: doc, windowRef: win }).reason, 'outside_view');
+const clipped=nodeView(link, rect, { documentRef: doc, windowRef: win });
+assert.equal(clipped.evidence.rectIntersectsViewport, true);
+assert.equal(clipped.evidence.clippedByContainer, true);
+assert.equal(clipped.evidence.clippedRect, null);
+assert.equal(clipped.hitTested, true);
+assert.equal(Object.hasOwn(clipped, 'reason'), false);
 link.parentElement = null;
 
 const hiddenInput = node({ hidden: true, tagName: 'INPUT' });
@@ -89,4 +102,4 @@ for (const file of ['dom_perception.js', 'youtube_semantic_observer.js']) {
     assert.equal(source.includes(forbidden), false, `${file}: forbidden action ${forbidden}`);
   }
 }
-console.log('body_perception_contract: PASS (read-only visibility, focus, dialogs, errors, controls, channel feed)');
+console.log('body_perception_contract: PASS (read-only raw geometry/style/hit evidence, focus, dialogs, errors, controls, channel feed)');
