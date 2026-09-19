@@ -1,7 +1,7 @@
 'use strict';
 
 const {bodyCapabilityCatalog}=require('./body_capabilities');
-const {contextKey}=require('./world_model');
+const {contextKey,candidateViewportState}=require('./world_model');
 const {fold}=require('./topic_classifier');
 const {FORMAT,formatKind,formatRelation}=require('./media_format');
 const {ACCOUNT_STATE}=require('./account_profile');
@@ -59,7 +59,8 @@ function genericBodyActions(world,{textProbe=null,targetVocabulary=[],targetForm
   const px=world.body.pointer?.known?Number(world.body.pointer.x||0):Math.round(Number(viewport.width||1000)*0.55),py=world.body.pointer?.known?Number(world.body.pointer.y||0):Math.round(Number(viewport.height||700)*0.55);actions.push({type:'body_step',capability:'motor.scrollVertical',step:{kind:'motor',intent:{type:'scrollVertical',delta:520}},purpose:'raw_vertical_environment_probe',baseUtility:world.formatMismatch?-22:(noOpCount>=2?-18:-7),expected:'scroll_or_dom_change'});actions.push({type:'body_step',capability:'motor.scrollHorizontal',step:{kind:'motor',intent:{type:'scrollHorizontal',delta:420}},purpose:'raw_horizontal_environment_probe',baseUtility:-22,expected:'scroll_or_dom_change'});actions.push({type:'body_step',capability:'motor.moveTo',step:{kind:'motor',intent:{type:'moveTo',x:px,y:py,role:'page'}},purpose:'motor_probe',baseUtility:-28,expected:'pointer_change'});return actions;
 }
 
-function actionMemoryId(action){return `${action.capability||action.type}:${action.purpose||'general'}`;}
+function positioningVariant(delta=0){const n=Math.abs(Number(delta)||0),dir=Number(delta)>=0?'forward':'backward',size=n<260?'small':n<620?'medium':'large';return `${dir}_${size}`;}
+function actionMemoryId(action){if(action.type==='position_candidate')return `${action.capability||'motor.scrollVertical'}:position_candidate:${action.positionVariant||positioningVariant(action.delta)}`;return `${action.capability||action.type}:${action.purpose||'general'}`;}
 
 function familyFailurePenalty(action,history=[]){const recent=(history||[]).slice(-24),memoryId=actionMemoryId(action);let hits=0;for(const row of recent){const rowId=`${row.capability||row.type}:${row.purpose||'general'}`;if(rowId===memoryId&&row.success===false&&row.changed===false)hits++;}return Math.min(120,hits*14);}
 
@@ -68,6 +69,15 @@ function candidateFailurePenalty(action,history=[]){const id=String(action.targe
 function noOpStreak(history=[]){let count=0;for(let i=(history||[]).length-1;i>=0;i--){const row=history[i];if(row.success===false&&row.changed===false)count++;else break;}return count;}
 
 function candidateReadyForAction(candidate={}){return candidate?.actionable===true&&Boolean(candidate?.actionPoint);}
+function clampScroll(value){const n=Number(value);if(!Number.isFinite(n))return null;const sign=n<0?-1:1,mag=Math.max(120,Math.min(1100,Math.abs(n)));return Math.round(sign*mag);}
+function candidatePositionActions(candidate,world,{priority=0}={}){
+  if(!candidate||candidateReadyForAction(candidate))return [];
+  const state=candidateViewportState(candidate,world?.viewport||{});if(!state.geometryKnown||state.hardStyleHidden===true)return [];
+  const offset=Number(state.centerOffsetY);if(!Number.isFinite(offset)||Math.abs(offset)<24)return [];
+  const raw=[offset*0.55,offset*0.9,offset*1.2],seen=new Set(),actions=[];
+  for(const value of raw){const delta=clampScroll(value);if(!delta||seen.has(delta))continue;seen.add(delta);const variant=positioningVariant(delta);actions.push({type:'position_candidate',capability:'motor.scrollVertical',target:candidate,delta,positionVariant:variant,purpose:'position_observed_candidate',baseUtility:Number(priority||0),expected:`candidate_effect:${candidate.videoId}`,recoveryTargetVideoId:candidate.videoId});}
+  return actions;
+}
 
 function safeCandidateRatio(candidate,world){const r=candidate?.actionRect;if(!r)return 0;const width=Math.max(320,Number(world?.viewport?.width||1000)),height=Math.max(240,Number(world?.viewport?.height||700)),x=Number(r.x),y=Number(r.y),w=Number(r.width),h=Number(r.height);if(![x,y,w,h].every(Number.isFinite)||w<=0||h<=0)return 0;const x1=Math.max(8,x),y1=Math.max(105,y),x2=Math.min(width-8,x+w),y2=Math.min(height-24,y+h),vw=Math.max(0,x2-x1),vh=Math.max(0,y2-y1);return (vw*vh)/(w*h);}
 
@@ -99,6 +109,7 @@ function actionFamily(action,world=null,task=null){
   if(action.type==='home')return 'home_nav';
   if(action.type==='topic_filter')return 'topic_filter';
   if(action.type==='reobserve')return 'actionability_reobserve';
+  if(action.type==='position_candidate')return `candidate_position:${action.positionVariant||positioningVariant(action.delta)}`;
   if(action.type==='scroll')return `scroll:${action.direction||'any'}`;
   if(action.type==='tab_switch')return 'tab_switch';
   if(action.type==='dwell')return 'dwell';
@@ -112,11 +123,12 @@ function historyRouteFamily(row={}){
   if(row.type==='topic_filter')return 'topic_filter';
   if(row.type==='click_candidate')return 'candidate_legacy';
   if(row.type==='dwell')return 'dwell';
+  if(row.type==='position_candidate')return `candidate_position:${row.positionVariant||'legacy'}`;
   if(row.type==='scroll')return 'scroll:any';
   return null;
 }
 function frontierEligible(family=''){
-  return family==='search_query'||family==='home_nav'||family==='topic_filter'||family==='actionability_reobserve'||/^(?:preview_|search_neighbor|home_neighbor|related_|mix_neighbor|candidate_)/.test(family);
+  return family==='search_query'||family==='home_nav'||family==='topic_filter'||family==='actionability_reobserve'||/^(?:candidate_position:|preview_|search_neighbor|home_neighbor|related_|mix_neighbor|candidate_)/.test(family);
 }
 function routeFrontierStats(history=[]){
   const rows=(history||[]).slice(-24),stats=new Map();
@@ -160,7 +172,10 @@ class AutonomousAgentPlanner{
     const blockedTarget=world.targetVisible&&targetSurfaceAllowed(task,world.targetVisible.surface)&&!candidateReadyForAction(world.targetVisible)?world.targetVisible:null;
     if(world.targetVisible&&targetSurfaceAllowed(task,world.targetVisible.surface)&&candidateReadyForAction(world.targetVisible)){const c=world.targetVisible;actions.push({type:'click_candidate',capability:'motor.click',target:c,purpose:'open_target',baseUtility:1500+discoverySurfaceBias(task,c.surface),expected:'target_video_current'});}
     if(blockedTarget)actions.push({type:'reobserve',capability:'brain.observe_wait',purpose:'reobserve_candidate_actionability',baseUtility:18,expected:'candidate_actionability_change',recoveryTargetVideoId:blockedTarget.videoId});
+    if(blockedTarget){const priority=targetCandidateScore(blockedTarget,world,targetFormat)+38;actions.push(...candidatePositionActions(blockedTarget,world,{priority}));}
+    let blockedNeighborBudget=2;
     for(const c of world.candidates){const relation=formatRelation(targetFormat,c.mediaFormat);if(!c.targetMatch&&relation==='MISMATCH')continue;if(c.targetMatch)continue;const routeBootstrap=task?.discoveryPolicy?.mode===MODE.SURFACE_TEST&&[SURFACE.RELATED,SURFACE.MIX,SURFACE.HOME].includes(pref)&&c.surface===SURFACE.SEARCH&&!c.targetMatch,surfaceBias=discoverySurfaceBias(task,c.surface,{routeBootstrap}),evidenceScore=targetCandidateScore(c,world,targetFormat);if(candidateReadyForAction(c))actions.push({type:'click_candidate',capability:'motor.click',target:c,purpose:relation==='MATCH'?'follow_same_format_environment_edge':'follow_environment_edge_with_unknown_format',baseUtility:evidenceScore+surfaceBias,expected:`current_video:${c.videoId}`,formatRelation:relation});
+      else if(blockedNeighborBudget>0&&relation!=='MISMATCH'){const generated=candidatePositionActions(c,world,{priority:evidenceScore+surfaceBias-8});if(generated.length){actions.push(...generated);blockedNeighborBudget--;}}
       if(!c.targetMatch&&candidateReadyForAction(c)&&!recentPreviewed.has(String(c.videoId))){actions.push({type:'preview_candidate',capability:'motor.hover+preview_wait',target:c,purpose:'test_preview_exposure_effect',baseUtility:evidenceScore+surfaceBias,expected:`preview_exposure:${c.videoId}`,formatRelation:relation});}
     }
     const allQueries=[...(queryPlan?.plan||[]),...(dynamicQueries||[])];for(const row of allQueries){if(history.slice(-6).some(h=>h.query&&fold(h.query)===fold(row.query)))continue;const used=usedQueries.has(fold(row.query)),learned=this.memory?.state?.queries?.[fold(row.query)],routeBootstrap=task?.discoveryPolicy?.mode===MODE.SURFACE_TEST&&pref!==SURFACE.SEARCH;let utility=18+Number(row.score||0)*1.5+(used?-12:10)+clamp(Number(learned?.meanReward||0)*2,-12,16)+discoverySurfaceBias(task,SURFACE.SEARCH,{routeBootstrap});if(world.current.pageType==='search'&&used)utility-=5;if(world.formatMismatch)utility+=38;actions.push({type:'search',capability:'motor+search_control',query:row.query,queryRow:row,purpose:world.formatMismatch?'leave_mismatched_format_and_acquire_target_evidence':'acquire_target_anchored_evidence',baseUtility:utility,expected:'search_results_for_query'});}
@@ -168,9 +183,9 @@ class AutonomousAgentPlanner{
     const scrollBase=world.formatMismatch?-18:8+Math.min(10,stagnation);actions.push({type:'scroll',capability:'motor.scrollVertical',direction:'down',purpose:world.formatMismatch?'low_priority_scroll_on_wrong_format':'expand_visible_environment',baseUtility:scrollBase,expected:blockedTarget?'candidate_actionability_or_environment_change':'scroll_or_candidate_change',recoveryTargetVideoId:blockedTarget?.videoId||null});actions.push({type:'scroll',capability:'motor.scrollVertical',direction:'up',purpose:'reinspect_previous_environment',baseUtility:scrollBase,expected:blockedTarget?'candidate_actionability_or_environment_change':'scroll_or_candidate_change',recoveryTargetVideoId:blockedTarget?.videoId||null});
     if(world.controls.homeLink||world.current.pageType!=='home'){const homeUtility=world.formatMismatch?52:18+discoverySurfaceBias(task,SURFACE.HOME,{routeBootstrap:pref!==SURFACE.HOME});actions.push({type:'home',capability:'motor.click|browser_ui.address',purpose:world.formatMismatch?'leave_mismatched_format_surface':'sample_home_environment',baseUtility:homeUtility,expected:'page_type_home'});}
     for(const tab of world.tabs)if(tab.id!==world.tabId)actions.push({type:'tab_switch',capability:'tab.tab_switch',tabId:tab.id,purpose:'inspect_parallel_environment_branch',baseUtility:8+(tab.siteKey.includes('youtube.com')?10:0)+(world.formatMismatch?8:0),expected:`active_tab:${tab.id}`});actions.push(...topicFilterActions(world));const textProbe=allQueries.find(row=>!usedQueries.has(fold(row.query)))?.query||allQueries[0]?.query||null,targetVocabulary=[...(queryPlan?.signals||[]).map(x=>x.term),...(queryPlan?.semanticTopics||[])],genericStart=actions.length;actions.push(...genericBodyActions(world,{textProbe,targetVocabulary,targetFormat,noOpCount:noOps}));if(blockedTarget){for(let i=genericStart;i<actions.length;i++){const row=actions[i];if(row.type==='body_step'&&!['motor.typeText','motor.keyCombo'].includes(row.capability))row.recoveryTargetVideoId=blockedTarget.videoId;}}
-    const availableFamilies=actions.map(action=>actionFamily(action,world,task));for(const action of actions){const id=actionMemoryId(action);action.memoryId=id;action.context=context;action.subgoal=subgoal;action.actionKey=actionKey(action);action.routeFamily=actionFamily(action,world,task);action.effectId=action.routeFamily;action.routeFrontierAdjustment=routeFrontierAdjustment(action,history,availableFamilies,world,task);action.causalEffectBonus=clamp(Number(this.memory?.interactionEffectScore?.(action.effectId,context)||0),-18,36);action.utility=Number((Number(action.baseUtility||0)+action.routeFrontierAdjustment+action.causalEffectBonus+memoryBonus(this.memory,id,context)-recentPenalty(action,history)-familyFailurePenalty(action,history)-candidateFailurePenalty(action,history)+jitter(1.1)).toFixed(3));}actions.sort((a,b)=>b.utility-a.utility);return {task,subgoal,context,targetFormat,accountState:task?.accountContext?.accountState||null,accountRelationship:task?.accountContext?.relationship?.kind||null,accountPlanMode:task?.accountContext?.plan?.mode||null,discoveryMode:task?.discoveryPolicy?.mode||MODE.AUTO,preferredSurface:task?.discoveryPolicy?.preferredSurface||SURFACE.AUTO,surfaceFallbackActive:task?.discoveryPolicy?.fallbackActive===true,actions};
+    const availableFamilies=actions.map(action=>actionFamily(action,world,task));for(const action of actions){const id=actionMemoryId(action);action.memoryId=id;action.context=context;action.subgoal=subgoal;action.actionKey=actionKey(action);action.routeFamily=actionFamily(action,world,task);action.effectId=action.routeFamily;action.routeFrontierAdjustment=routeFrontierAdjustment(action,history,availableFamilies,world,task);action.causalEffectBonus=clamp(Number(this.memory?.interactionEffectScore?.(action.effectId,context)||0),-18,36);action.effectLearningBonus=clamp(Number(this.memory?.actionEffectScore?.(id,context)||0),-32,52);action.utility=Number((Number(action.baseUtility||0)+action.routeFrontierAdjustment+action.causalEffectBonus+action.effectLearningBonus+memoryBonus(this.memory,id,context)-recentPenalty(action,history)-familyFailurePenalty(action,history)-candidateFailurePenalty(action,history)+jitter(1.1)).toFixed(3));}actions.sort((a,b)=>b.utility-a.utility);return {task,subgoal,context,targetFormat,accountState:task?.accountContext?.accountState||null,accountRelationship:task?.accountContext?.relationship?.kind||null,accountPlanMode:task?.accountContext?.plan?.mode||null,discoveryMode:task?.discoveryPolicy?.mode||MODE.AUTO,preferredSurface:task?.discoveryPolicy?.preferredSurface||SURFACE.AUTO,surfaceFallbackActive:task?.discoveryPolicy?.fallbackActive===true,actions};
   }
   choose(plan,{stagnation=0}={}){const actions=plan.actions||[];if(!actions.length)return null;const epsilon=clamp(this.explorationBase+Math.min(0.32,Number(stagnation||0)*0.04),0,0.6);if(Math.random()<epsilon){const pool=explorationPool(actions);if(pool.length){const top=Number(pool[0].utility||0),weights=pool.map(row=>Math.max(1,Number(row.utility||0)-(top-100))),total=weights.reduce((a,b)=>a+b,0);let r=Math.random()*total;for(let i=0;i<pool.length;i++){r-=weights[i];if(r<=0)return {...pool[i],selection:'exploration_family_diverse',epsilon};}}}return {...actions[0],selection:'utility_max',epsilon};}
 }
 
-module.exports={actionMemoryId,familyFailurePenalty,candidateFailurePenalty,noOpStreak,candidateReadyForAction,safeCandidateRatio,riskyAffordancePenalty,actionFamily,historyRouteFamily,frontierEligible,routeFrontierStats,routeFrontierAdjustment,topicRelation,candidateRouteFamily,previewRouteFamily,topicFilterAffordances,topicFilterActions,explorationPool,AutonomousAgentPlanner,actionKey,targetCandidateScore,genericBodyActions,affordanceActions,recentPenalty,accountSurfaceBias,accountSearchBias,accountHomeBias,accountPreviewBias,accountNeighborClickBias,accountHomeCheckBias,coldStartState,targetSurfaceAllowed,discoverySurfaceBias,surfaceTestMismatch};
+module.exports={actionMemoryId,positioningVariant,candidatePositionActions,familyFailurePenalty,candidateFailurePenalty,noOpStreak,candidateReadyForAction,safeCandidateRatio,riskyAffordancePenalty,actionFamily,historyRouteFamily,frontierEligible,routeFrontierStats,routeFrontierAdjustment,topicRelation,candidateRouteFamily,previewRouteFamily,topicFilterAffordances,topicFilterActions,explorationPool,AutonomousAgentPlanner,actionKey,targetCandidateScore,genericBodyActions,affordanceActions,recentPenalty,accountSurfaceBias,accountSearchBias,accountHomeBias,accountPreviewBias,accountNeighborClickBias,accountHomeCheckBias,coldStartState,targetSurfaceAllowed,discoverySurfaceBias,surfaceTestMismatch};
