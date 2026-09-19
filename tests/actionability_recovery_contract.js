@@ -8,6 +8,8 @@ const {extractSurface}=require('../src/youtube_semantic_observer');
 const {buildWorld,candidateInteractionState,candidateViewportState,candidateEffectDelta,actionabilityDelta}=require('../research/autonomous_discovery/world_model');
 const {AutonomousAgentPlanner,candidatePositionActions}=require('../research/autonomous_discovery/agent_planner');
 const {AutonomousYouTubeBrainV3}=require('../research/autonomous_discovery/brain_v3');
+const {ExperienceMemory}=require('../research/autonomous_discovery/experience_memory');
+const os=require('node:os');
 
 const normalStyle={display:'block',visibility:'visible',opacity:'1',overflow:'visible',overflowX:'visible',overflowY:'visible'};
 const rect={x:100,y:120,width:320,height:180};
@@ -120,6 +122,17 @@ function worldWith(c,scrollY=0){
   const readyPlan=planner.generate(ready,{task,queryPlan:{plan:[],signals:[],semanticTopics:['music']},dynamicQueries:[],usedQueries:new Set(),stagnation:0});
   assert.equal(readyPlan.subgoal.id,'open_observed_target');
   assert.ok(readyPlan.actions.some(a=>a.purpose==='open_target'));
+}
+
+// Effect memory learns from observed outcome, not merely successful dispatch.
+{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'brain-effect-v2-')),file=path.join(dir,'memory.json'),memory=new ExperienceMemory(file),context='effect_v2|watch|food|test';
+  memory.recordActionEffect('motor.scrollVertical:position_candidate:forward_medium',{context,executionSuccess:true,expectedEffectObserved:false,regressed:true,effectValue:-18});
+  memory.recordActionEffect('motor.scrollVertical:position_candidate:forward_medium',{context,executionSuccess:true,expectedEffectObserved:false,regressed:true,effectValue:-12});
+  memory.recordActionEffect('motor.scrollVertical:position_candidate:forward_large',{context,executionSuccess:true,expectedEffectObserved:true,regressed:false,targetProgress:true,effectValue:22});
+  assert.ok(memory.actionEffectScore('motor.scrollVertical:position_candidate:forward_large',context)>memory.actionEffectScore('motor.scrollVertical:position_candidate:forward_medium',context));
+  assert.equal(memory.state.effectSchema,'candidate_effect_v2');
+  fs.rmSync(dir,{recursive:true,force:true});
 }
 
 // Recovery reward remains a Brain concern.
