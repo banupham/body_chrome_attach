@@ -68,7 +68,7 @@ function actionMemoryId(action){
 }
 function familyFailurePenalty(action,history=[]){const recent=(history||[]).slice(-24),memoryId=actionMemoryId(action);let hits=0;for(const row of recent){const rowId=`${row.capability||row.type}:${row.purpose||'general'}`;if(rowId===memoryId&&row.success===false&&row.changed===false)hits++;}return Math.min(120,hits*14);}
 
-function candidateFailurePenalty(action,history=[]){const id=String(action.target?.videoId||'');if(!id)return 0;let hits=0;for(const row of (history||[]).slice(-40))if(String(row.videoId||'')===id&&row.success===false)hits++;return Math.min(140,hits*32);}
+function candidateFailurePenalty(action,history=[]){const id=String(action.target?.videoId||'');if(!id)return 0;let hits=0;for(const row of (history||[]).slice(-40)){if(String(row.videoId||'')!==id||row.success!==false)continue;if(action.type==='position_candidate'&&row.type==='position_candidate'&&String(row.positionVariant||'')!==String(action.positionVariant||''))continue;hits++;}return Math.min(140,hits*32);}
 
 function noOpStreak(history=[]){let count=0;for(let i=(history||[]).length-1;i>=0;i--){const row=history[i];if(row.success===false&&row.changed===false)count++;else break;}return count;}
 
@@ -88,14 +88,15 @@ function candidatePositionActions(candidate,world,{targetFormat=FORMAT.UNKNOWN,t
     if(proposals.some(row=>row.delta===d))return;
     proposals.push({delta:d,variant,penalty});
   };
-  if(Number.isFinite(offset)&&Math.abs(offset)>=45){
-    push(offset*0.55,'geometry_55',4);
-    push(offset*0.85,'geometry_85',0);
-    push(offset*1.08,'geometry_108',7);
-  }else{
+  if(position.verticalRelation==='intersects'){
     const nudge=Math.max(140,Math.round(height*0.3));
     push(nudge,'nudge_forward',8);
     push(-nudge,'nudge_backward',8);
+    if(Number.isFinite(offset)&&Math.abs(offset)>=70)push(offset*0.6,'geometry_60',5);
+  }else if(Number.isFinite(offset)){
+    push(offset*0.55,'geometry_55',4);
+    push(offset*0.85,'geometry_85',0);
+    push(offset*1.08,'geometry_108',7);
   }
   const base=targetCandidateScore(candidate,world,targetFormat)+(candidate.targetMatch?24:-10);
   const effectContext=candidatePositionContext(world,candidate);
