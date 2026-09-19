@@ -55,8 +55,8 @@ class ExperienceMemory{
     const row=this.actionEffect(id,context),delta=Math.max(-2,Math.min(2,Number(effectDelta)||0));row.attempts++;if(executionSuccess)row.executionSuccesses++;if(environmentChanged)row.environmentChanges++;if(expectedEffectObserved)row.expectedEffectHits++;if(targetProgress)row.targetProgressHits++;if(goalSuccess)row.goalSuccesses++;if(regressed)row.regressions++;row.effectDeltaSum+=delta;row.meanEffectDelta=Number((row.effectDeltaSum/row.attempts).toFixed(4));row.lastObservedAt=nowIso();return clone(row);
   }
   actionEffectScore(id,context='global'){
-    const row=this.state.actionEffects[key('effect_model_v2',context,id)];if(!row||!row.attempts)return 0;const n=row.attempts,expected=row.expectedEffectHits/n,progress=row.targetProgressHits/n,goal=row.goalSuccesses/n,regress=row.regressions/n,execution=row.executionSuccesses/n;
-    return Number(Math.max(-80,Math.min(120,row.meanEffectDelta*34+(expected-0.5)*24+progress*34+goal*90-regress*56+(execution-0.5)*4)).toFixed(3));
+    const row=this.state.actionEffects[key('effect_model_v2',context,id)];if(!row||!row.attempts)return 0;const n=row.attempts,expected=row.expectedEffectHits/n,progress=row.targetProgressHits/n,goal=row.goalSuccesses/n,regress=row.regressions/n,execution=row.executionSuccesses/n,confidence=n/(n+3),raw=row.meanEffectDelta*34+(expected-0.5)*24+progress*34+goal*90-regress*56+(execution-0.5)*4;
+    return Number(Math.max(-80,Math.min(120,raw*confidence)).toFixed(3));
   }
   addLesson(text,evidence={}){const row={at:nowIso(),text:String(text),evidence:clone(evidence)};this.state.lessons.push(row);if(this.state.lessons.length>200)this.state.lessons.splice(0,this.state.lessons.length-200);return row;}
   startRun(){this.state.totalRuns++;this.save();}
