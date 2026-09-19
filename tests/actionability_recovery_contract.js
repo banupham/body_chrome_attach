@@ -118,8 +118,9 @@ function worldWith(c,scrollY=0){
   assert.match(bodySource,/hitSamples/);
   assert.match(semanticSource,/representations/);
 
-  const clickSource=fs.readFileSync(path.join(__dirname,'..','research','autonomous_discovery','brain_v2.js'),'utf8');
+  const brainSource=fs.readFileSync(path.join(__dirname,'..','research','autonomous_discovery','brain_v2.js'),'utf8'),clickStart=brainSource.indexOf('async clickCandidate(candidate)'),clickEnd=brainSource.indexOf('async verifiedBack()',clickStart),clickSource=brainSource.slice(clickStart,clickEnd);
   const worldSource=fs.readFileSync(path.join(__dirname,'..','research','autonomous_discovery','world_model.js'),'utf8');
+  assert.ok(clickStart>=0&&clickEnd>clickStart);
   assert.match(clickSource,/candidateInteractionState/);
   assert.match(worldSource,/candidateInteractionState/);
   assert.match(worldSource,/owned_hit_sample/);
