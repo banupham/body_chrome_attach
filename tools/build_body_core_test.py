@@ -59,7 +59,7 @@ def copy_body_daemon() -> Path:
         target / "body_bootstrap.js",
         target / "server.js",
         target / "src" / "daemon_runtime.js",
-        target / "src" / "guardian_authority_gate.js",
+        target / "src" / "guardian_protection_state.js",
     ]
     for path in required:
         if not path.exists():
