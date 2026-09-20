@@ -3,14 +3,17 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
-const crypto=require('node:crypto');
-
-function gitBlobSha(filePath){
-  const data=fs.readFileSync(filePath);
-  return crypto.createHash('sha1').update(Buffer.from(`blob ${data.length}\0`)).update(data).digest('hex');
-}
+const {execFileSync}=require('node:child_process');
 
 const root=path.join(__dirname,'..');
+
+function gitBlobSha(relativePath){
+  return execFileSync('git',['hash-object','--',relativePath],{
+    cwd:root,
+    encoding:'utf8',
+    windowsHide:true
+  }).trim();
+}
 const stable={
   'src/cdp_input_gateway.js':'6ec877a40d7a3311f26bdd489ae82878970dc906',
   'src/page_motor_core.js':'1e7123a5e3a136eac54773017eace1ac0552cf72',
@@ -23,7 +26,7 @@ const stable={
 };
 
 for(const [relative,expected] of Object.entries(stable)){
-  const actual=gitBlobSha(path.join(root,relative));
+  const actual=gitBlobSha(relative);
   assert.equal(actual,expected,`${relative} changed from frozen stable CDP/motor baseline`);
 }
 
