@@ -32,12 +32,14 @@ class GuardianRuntime{
     environmentGuardian=null,
     now=()=>Date.now(),
     setIntervalImpl=setInterval,
-    clearIntervalImpl=clearInterval
+    clearIntervalImpl=clearInterval,
+    log=()=>{}
   }={}){
     this.env=env||{};
     this.now=now;
     this.setIntervalImpl=setIntervalImpl;
     this.clearIntervalImpl=clearIntervalImpl;
+    this.log=typeof log==='function'?log:()=>{};
     this.client=client||new GuardianBodyClient({env:this.env});
     this.registry=registry||new GuardianBrowserRegistry();
     this.behavior=behavior||new BehaviorGuardian({now});
@@ -131,6 +133,7 @@ class GuardianRuntime{
     const learningChanged=!previous||previous.learningAllowed!==decision.learningAllowed||JSON.stringify(previous.learningReasons||[])!==JSON.stringify(decision.learningReasons||[]);
     if(browserChanged)await this.client.setBrowserVerdict(browserInstanceId,{valid:decision.browserValid,reasons:decision.browserReasons});
     if(decision.browserValid===true&&learningChanged)await this.client.setLearning(browserInstanceId,{allowed:decision.learningAllowed,reasons:decision.learningReasons});
+    if(browserChanged||learningChanged)this.log({event:'guardianDecision',browserInstanceId, browserValid:decision.browserValid, browserReasons:decision.browserReasons, learningAllowed:decision.learningAllowed, learningReasons:decision.learningReasons, decidedAt:decision.decidedAt});
     this.decisions.set(browserInstanceId,{...decision});
     return decision;
   }
