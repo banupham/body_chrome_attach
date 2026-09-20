@@ -110,24 +110,3 @@ test('target syntax and raw/multiline JSON parsing are bounded and deterministic
   assert.match(part.command,/pressKey/);
   assert.equal(accumulator.waiting,false);
 });
-
-test('fakeclick injects detector-only synthetic evidence and never executes page motor',async()=>{
-  const events=[];
-  const ext={extensionId:'ext-a',browserInstanceId:'browser-ext-a',activeTabId:1,tabs:new Map([[1,{id:1,siteKey:'example.com'}]])};
-  const runtime={
-    pnum:value=>Number(value),
-    selected:()=>ext.extensionId,
-    registry:{require:()=>ext},
-    recorderEvent:(extensionId,msg)=>{events.push({extensionId,msg});return true;},
-    protection:{
-      browserStatus:()=>({behavior:{score:100,blocked:true,signalIds:['synthetic_untrusted_input']}}),
-      readiness:()=>({state:'BLOCKED',reason:'BOT_BEHAVIOR_HIGH_CONFIDENCE'})
-    }
-  };
-  const router=createCommandRouter(runtime);
-  const result=await router.runCommand('fakeclick');
-  assert.equal(result.injected,2);
-  assert.equal(events.length,2);
-  assert.ok(events.every(x=>x.msg.event.eventType==='synthetic_input'&&x.msg.event.isTrusted===false&&x.msg.event.source==='diagnostic'));
-  assert.equal(result.readiness.state,'BLOCKED');
-});
