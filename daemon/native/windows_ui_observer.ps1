@@ -6,6 +6,20 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class NativeWindowProbe {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+}
+"@
+
 function Clean-Text([object]$Value, [int]$Max = 240) {
     if ($null -eq $Value) { return '' }
     $text = ([string]$Value -replace '\s+', ' ').Trim()
@@ -89,6 +103,9 @@ function New-ControlSnapshot($Element, [int]$Index) {
     try { $name = Clean-Text $Element.Current.Name 240 } catch {}
     try { $automationId = Clean-Text $Element.Current.AutomationId 160 } catch {}
     try { $className = Clean-Text $Element.Current.ClassName 160 } catch {}
+    $processId = $null; $nativeWindowHandle = $null
+    try { $processId = [int]$Element.Current.ProcessId } catch {}
+    try { $nativeWindowHandle = [int64]$Element.Current.NativeWindowHandle } catch {}
     return [pscustomobject]@{
         index=$Index
         surface=(Get-Surface $type $name)
@@ -96,6 +113,8 @@ function New-ControlSnapshot($Element, [int]$Index) {
         name= $(if ($name) { $name } else { $null })
         automationId= $(if ($automationId) { $automationId } else { $null })
         className= $(if ($className) { $className } else { $null })
+        processId=$processId
+        nativeWindowHandle=$nativeWindowHandle
         rect=(Get-Rect $Element)
         state=(Get-State $Element)
         valueFingerprint=(Get-ValueFingerprint $Element $type)
@@ -183,6 +202,109 @@ function Get-BrowserControls($WindowElement) {
     return @($controls)
 }
 
+function Get-IntersectionRect($A, $B) {
+    if ($null -eq $A -or $null -eq $B) { return $null }
+    $left = [Math]::Max([double]$A.x, [double]$B.x)
+    $top = [Math]::Max([double]$A.y, [double]$B.y)
+    $right = [Math]::Min([double]$A.x + [double]$A.width, [double]$B.x + [double]$B.width)
+    $bottom = [Math]::Min([double]$A.y + [double]$A.height, [double]$B.y + [double]$B.height)
+    if ($right -le $left -or $bottom -le $top) { return $null }
+    return [pscustomobject]@{ x=$left; y=$top; width=($right-$left); height=($bottom-$top) }
+}
+
+function Get-NativeRect([IntPtr]$Handle) {
+    if ($Handle -eq [IntPtr]::Zero) { return $null }
+    $r = New-Object NativeWindowProbe+RECT
+    if (-not [NativeWindowProbe]::GetWindowRect($Handle, [ref]$r)) { return $null }
+    $width = [double]($r.Right-$r.Left); $height = [double]($r.Bottom-$r.Top)
+    if ($width -le 0 -or $height -le 0) { return $null }
+    return [pscustomobject]@{ x=[double]$r.Left; y=[double]$r.Top; width=$width; height=$height }
+}
+
+function Get-NativeWindowSnapshot([IntPtr]$Handle, [int]$ZOrder = 0) {
+    if ($Handle -eq [IntPtr]::Zero) { return $null }
+    [uint32]$pid = 0
+    [void][NativeWindowProbe]::GetWindowThreadProcessId($Handle, [ref]$pid)
+    $processName = $null
+    try { if ($pid -gt 0) { $processName = [System.Diagnostics.Process]::GetProcessById([int]$pid).ProcessName } } catch {}
+    $name = $null; $className = $null; $controlType = $null
+    try {
+        $element = [System.Windows.Automation.AutomationElement]::FromHandle($Handle)
+        if ($null -ne $element) {
+            try { $name = Clean-Text $element.Current.Name 300 } catch {}
+            try { $className = Clean-Text $element.Current.ClassName 160 } catch {}
+            try { $controlType = Get-TypeName $element } catch {}
+        }
+    } catch {}
+    return [pscustomobject]@{
+        handle=[int64]$Handle.ToInt64()
+        processId=[int]$pid
+        processName=$(if ($processName) { [string]$processName } else { $null })
+        name=$(if ($name) { $name } else { $null })
+        className=$(if ($className) { $className } else { $null })
+        controlType=$(if ($controlType) { $controlType } else { $null })
+        rect=(Get-NativeRect $Handle)
+        zOrder=$ZOrder
+    }
+}
+
+function Get-ContentRect($WindowElement) {
+    try {
+        $condition = New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::Document
+        )
+        $doc = $WindowElement.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+        if ($null -ne $doc) { return Get-Rect $doc }
+    } catch {}
+    return $null
+}
+
+function Get-NativeFacts($WindowRow) {
+    $targetHandle = [IntPtr]::Zero
+    try { $targetHandle = [IntPtr]([int64]$WindowRow.element.Current.NativeWindowHandle) } catch {}
+    $contentRect = Get-ContentRect $WindowRow.element
+    $foregroundHandle = [NativeWindowProbe]::GetForegroundWindow()
+    $foreground = Get-NativeWindowSnapshot $foregroundHandle 0
+    $focused = $null
+    try {
+        $element = [System.Windows.Automation.AutomationElement]::FocusedElement
+        if ($null -ne $element) { $focused = New-ControlSnapshot $element 0 }
+    } catch {}
+    $occluders = @()
+    if ($targetHandle -ne [IntPtr]::Zero) {
+        $cursor = [NativeWindowProbe]::GetWindow($targetHandle, 3)
+        $z = 0
+        while ($cursor -ne [IntPtr]::Zero -and $z -lt 40 -and $occluders.Count -lt 20) {
+            $z++
+            if ([NativeWindowProbe]::IsWindowVisible($cursor)) {
+                $row = Get-NativeWindowSnapshot $cursor $z
+                if ($null -ne $row -and $null -ne $row.rect) {
+                    $windowOverlap = Get-IntersectionRect $row.rect $WindowRow.rect
+                    $contentOverlap = Get-IntersectionRect $row.rect $contentRect
+                    if ($null -ne $windowOverlap) {
+                        $occluders += [pscustomobject]@{
+                            handle=$row.handle; processId=$row.processId; processName=$row.processName; name=$row.name; className=$row.className; controlType=$row.controlType
+                            rect=$row.rect; zOrder=$row.zOrder; windowIntersection=$windowOverlap; contentIntersection=$contentOverlap
+                        }
+                    }
+                }
+            }
+            $cursor = [NativeWindowProbe]::GetWindow($cursor, 3)
+        }
+    }
+    $targetForeground = $false
+    if ($targetHandle -ne [IntPtr]::Zero -and $foregroundHandle -eq $targetHandle) { $targetForeground = $true }
+    return [pscustomobject]@{
+        targetWindowHandle=$(if ($targetHandle -ne [IntPtr]::Zero) { [int64]$targetHandle.ToInt64() } else { $null })
+        targetWindowForeground=$targetForeground
+        contentRect=$contentRect
+        foregroundWindow=$foreground
+        focusedElement=$focused
+        topLevelOccluders=$occluders
+    }
+}
+
 function Observe-BrowserUi([string]$ExpectedTitle, $RequestedWindowId) {
     $selected = Select-ChromeWindow $ExpectedTitle
     $now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
@@ -193,12 +315,21 @@ function Observe-BrowserUi([string]$ExpectedTitle, $RequestedWindowId) {
     $controls = @(Get-BrowserControls $w.element)
     $tabs = @($controls | Where-Object { $_.controlType -eq 'TabItem' })
     $addressBar = $controls | Where-Object { $_.controlType -eq 'Edit' -and ($_.name -match '(?i)address|search|omnibox|địa chỉ|tìm kiếm') } | Select-Object -First 1
-    $focused = $controls | Where-Object { $_.state.focused -eq $true } | Select-Object -First 1
+    $native = Get-NativeFacts $w
+    $focused = $native.focusedElement
+    if ($null -eq $focused) { $focused = $controls | Where-Object { $_.state.focused -eq $true } | Select-Object -First 1 }
     $sigRows = @($controls | ForEach-Object { $vf = if ($null -ne $_.valueFingerprint) { $_.valueFingerprint.sha256 } else { '' }; '{0}|{1}|{2}|{3}|{4}|{5}|{6}' -f $_.controlType,$_.name,$_.state.focused,$_.state.selected,$_.state.expanded,$_.state.toggle,$vf })
-    $signature = (Get-Hash ($sigRows -join "`n")).Substring(0, 32)
+    $nativeSig = @(
+        "foreground=$($native.targetWindowForeground)",
+        "focusPid=$($native.focusedElement.processId)",
+        "focusType=$($native.focusedElement.controlType)",
+        "content=$($native.contentRect.x),$($native.contentRect.y),$($native.contentRect.width),$($native.contentRect.height)"
+    ) + @($native.topLevelOccluders | ForEach-Object { "occ=$($_.handle):$($_.rect.x),$($_.rect.y),$($_.rect.width),$($_.rect.height)" })
+    $signature = (Get-Hash (($sigRows + $nativeSig) -join "`n")).Substring(0, 32)
     return [pscustomobject]@{
         available=$true; observed=$true; reason=$null; confidence=$selected.confidence; observedAt=$now
         window=[pscustomobject]@{ processId=$w.processId; name=$w.name; className=$w.className; rect=$w.rect; requestedWindowId=$RequestedWindowId }
+        native=$native
         controls=$controls; tabs=$tabs; addressBar=$addressBar; focusedControl=$focused; signature=$signature
     }
 }
