@@ -9,7 +9,7 @@ const {BodyStepGateway,BODY_CONTRACT_VERSION,judgmentPaths,validateBodyStepComma
 const {BodyStepLedger}=require('./src/body_step_ledger');
 
 function tmp(name){return fs.mkdtempSync(path.join(os.tmpdir(),`${name}-`));}
-function gateway(runtime,options={}){const guardianGate=options.guardianGate||{assertAllowed:()=>({allowed:true,code:'guardian_cdp_allowed'})};return new BodyStepGateway(runtime,{baseDir:options.baseDir||tmp('body-step-gateway'),now:options.now||(()=>Date.now()),guardianGate});}
+function gateway(runtime,options={}){return new BodyStepGateway(runtime,{baseDir:options.baseDir||tmp('body-step-gateway'),now:options.now||(()=>Date.now())});}
 function runtimeStub({taskState='RUNNING'}={}){
   const browser={browserInstanceId:'browser-a',extensionInstanceId:'ext-a',online:true,state:'ONLINE',activeTabId:1,tabs:new Map([[1,{id:1,active:true,windowId:7,title:'Example',siteKey:'example.test',navigationToken:'nav-1',navigationEpoch:1,status:'complete'}],[2,{id:2,active:false,windowId:7,title:'Other',siteKey:'example.test',navigationToken:'nav-2',navigationEpoch:1,status:'complete'}]])};
   const calls={contexts:0,motor:0,browser:0,switch:0,eyes:0,lastContextOptions:null};
@@ -62,14 +62,14 @@ test('BODY_STEP cannot implicitly start a READY Task',async()=>{
   const runtime=runtimeStub({taskState:'READY'}),body=gateway(runtime);const result=await body.execute({contractVersion:'1.0',type:'BODY_STEP',stepId:'STEP-R',taskId:'TASK-1',step:{kind:'motor',intent:{type:'pressKey',key:'Enter'}}});assert.equal(runtime.calls.contexts,1);assert.equal(runtime.calls.motor,0);assert.equal(result.execution.accepted,false);assert.equal(result.execution.attemptCount,0);assert.match(result.execution.error.message,/task_not_executable/);
 });
 
-test('external Guardian grant is required immediately before Brain physical execution',async()=>{
-  const runtime=runtimeStub(),guardianGate={assertAllowed:()=>{const error=new Error('guardian_cdp_blocked:browser-a');error.code='guardian_cdp_blocked';throw error;}},body=gateway(runtime,{guardianGate});
-  const result=await body.execute({contractVersion:'1.0',type:'BODY_STEP',stepId:'STEP-GATE',taskId:'TASK-1',step:{kind:'motor',intent:{type:'click',x:10,y:20}}});
-  assert.equal(runtime.calls.motor,0);
-  assert.equal(result.execution.accepted,true);
-  assert.equal(result.execution.attemptCount,0);
-  assert.equal(result.execution.dispatched,false);
-  assert.equal(result.execution.error.code,'guardian_cdp_blocked');
+
+
+test('Guardian is not on the Brain BODY_STEP execution path',async()=>{
+  const runtime=runtimeStub(),body=gateway(runtime);
+  const result=await body.execute({contractVersion:'1.0',type:'BODY_STEP',stepId:'STEP-NO-GUARDIAN-GATE',taskId:'TASK-1',step:{kind:'motor',intent:{type:'click',x:10,y:20}}});
+  assert.equal(runtime.calls.motor,1);
+  assert.equal(result.execution.dispatched,true);
+  assert.equal(result.execution.completed,true);
 });
 
 test('technical execution error reports unknown dispatch truth and never retries',async()=>{
