@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
-
-from desktop.paths import default_desktop_root
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -13,7 +12,14 @@ ROOT = Path(__file__).resolve().parents[1]
 def main() -> int:
     result = subprocess.run([sys.executable,str(ROOT / "desktop" / "main.py"),"--check","--json","--ready-timeout","0.5"], cwd=str(ROOT), capture_output=True, text=True, timeout=25, check=False)
     if result.returncode != 2:
-        log_path = default_desktop_root() / "logs" / "body-runtime.log"
+        explicit = str(os.environ.get("BODYBRAIN_HOME", "")).strip()
+        if explicit:
+            root = Path(explicit).expanduser()
+        elif os.name == "nt" and str(os.environ.get("LOCALAPPDATA", "")).strip():
+            root = Path(os.environ["LOCALAPPDATA"]).expanduser() / "BodyBrain"
+        else:
+            root = Path.home() / ".bodybrain"
+        log_path = root / "logs" / "body-runtime.log"
         try:
             worker_log = log_path.read_text(encoding="utf-8", errors="replace")[-12000:]
         except OSError:
