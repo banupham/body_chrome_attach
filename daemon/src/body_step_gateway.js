@@ -49,10 +49,10 @@ function validateBodyStepCommand(message){
 }
 
 class BodyStepGateway{
-  constructor(runtime,{now=()=>Date.now(),baseDir=null,ledger=null,browserUiObserver=null}={}){
+  constructor(runtime,{now=()=>Date.now(),baseDir=null,ledger=null,browserUiObserver=null,guardianGate=null}={}){
     if(!runtime)throw new Error('body_step_gateway_runtime_required');
     if(!ledger&&!baseDir)throw new Error('body_step_gateway_ledger_required');
-    this.runtime=runtime;this.now=now;this.ledger=ledger||new BodyStepLedger(baseDir,{now});this.inflight=new Map();this.lastLedgerError=null;
+    this.runtime=runtime;this.now=now;this.ledger=ledger||new BodyStepLedger(baseDir,{now});this.guardianGate=guardianGate;this.inflight=new Map();this.lastLedgerError=null;
     this.semantic=new Map();this.page=new Map();this.tabContext=new Map();this.controls=new Map();this.browserUiObserver=browserUiObserver||createBrowserUiObserver();
   }
   key(browserInstanceId,tabId){return `${String(browserInstanceId||'')}/${Number(tabId)}`;}
@@ -82,7 +82,7 @@ class BodyStepGateway{
     const windowId=optionalInteger(context?.windowId??tab.windowId),title=context?.title??tab.title??null;
     let browserUi={available:false,observed:false,reason:'browser_ui_observer_unavailable',confidence:'none',source:'windows_uia_read_only',observedAt:now,scope:{browserInstanceId,tabId:Number(tabId),windowId,title},window:null,focusedControl:null,addressBar:null,tabs:[],controls:[],signature:null};
     if(this.browserUiObserver&&typeof this.browserUiObserver.observe==='function')try{browserUi=await this.browserUiObserver.observe({browserInstanceId,tabId:Number(tabId),windowId,title});}catch(error){browserUi={...browserUi,reason:'browser_ui_observer_error',error:technicalError(error)};}
-    const observation={contractVersion:BODY_CONTRACT_VERSION,observedAt:now,scope:{browserInstanceId,extensionInstanceId,tabId:Number(tabId),siteKey:context?.siteKey??tab.siteKey??null,title,windowId,navigationToken:context?.navigationToken??tab.navigationToken??null,navigationEpoch:optionalInteger(context?.navigationEpoch??tab.navigationEpoch),status:context?.status??tab.status??null},bodyState:{pointer:clone(pointer),browserState:String(browser.state||'UNKNOWN'),activeTabId:optionalInteger(browser.activeTabId)},browserUi:clone(browserUi),control:{activeTarget:page?.activeTarget?clone(page.activeTarget):null,lastObservedTarget:controlRow?clone(controlRow.value):null,semanticControls:semantic?.controls?clone(semantic.controls):null},content:{tabContext:context?clone(context):null,page:page?clone(page):null,semantic:semantic?clone(semantic):null},environment:{online:browser.online===true,browserState:String(browser.state||'UNKNOWN'),eligible:browser.environment?.eligible===true,status:String(browser.environment?.status||'UNKNOWN'),reasons:Array.isArray(browser.environment?.reasons)?browser.environment.reasons.map(String):[]},freshness:{liveRefreshAttempted:refresh.attempted===true,liveRefreshSucceeded:refresh.succeeded===true,browserUiAgeMs:finiteNumber(browserUi?.observedAt)?Math.max(0,Math.trunc(now-Number(browserUi.observedAt))):null,tabContextAgeMs:ageMs(now,contextRow),pageAgeMs:ageMs(now,pageRow),semanticAgeMs:ageMs(now,semanticRow),controlAgeMs:ageMs(now,controlRow)}};
+    const observation={contractVersion:BODY_CONTRACT_VERSION,observedAt:now,scope:{browserInstanceId,extensionInstanceId,tabId:Number(tabId),siteKey:context?.siteKey??tab.siteKey??null,title,windowId,navigationToken:context?.navigationToken??tab.navigationToken??null,navigationEpoch:optionalInteger(context?.navigationEpoch??tab.navigationEpoch),status:context?.status??tab.status??null},bodyState:{pointer:clone(pointer),online:browser.online===true,activeTabId:optionalInteger(browser.activeTabId)},browserUi:clone(browserUi),control:{activeTarget:page?.activeTarget?clone(page.activeTarget):null,lastObservedTarget:controlRow?clone(controlRow.value):null,semanticControls:semantic?.controls?clone(semantic.controls):null},content:{tabContext:context?clone(context):null,page:page?clone(page):null,semantic:semantic?clone(semantic):null},freshness:{liveRefreshAttempted:refresh.attempted===true,liveRefreshSucceeded:refresh.succeeded===true,browserUiAgeMs:finiteNumber(browserUi?.observedAt)?Math.max(0,Math.trunc(now-Number(browserUi.observedAt))):null,tabContextAgeMs:ageMs(now,contextRow),pageAgeMs:ageMs(now,pageRow),semanticAgeMs:ageMs(now,semanticRow),controlAgeMs:ageMs(now,controlRow)}};
     return stripJudgment(observation);
   }
 
@@ -95,6 +95,8 @@ class BodyStepGateway{
     try{
       context=this.runtime.tasks.executionContext(command.taskId,tabRef,{autoStart:false});accepted=true;
       before=await this.observe({browserInstanceId:context.browserInstanceId,tabId:context.tabId});
+      if(!this.guardianGate||typeof this.guardianGate.assertAllowed!=='function')throw errorWithCode('guardian_authority_gate_unavailable');
+      this.guardianGate.assertAllowed(context.browserInstanceId);
       attemptCount=1;
       if(command.step.kind==='motor')raw=await this.runtime.executeIntent(command.step.intent,{extensionId:context.extensionInstanceId,tabId:context.tabId});
       else if(command.step.kind==='browser_ui')raw=await this.runtime.executeBrowserCommand(command.step.action,{extensionId:context.extensionInstanceId,tabId:context.tabId,value:command.step.value??null});
