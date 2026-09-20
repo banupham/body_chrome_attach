@@ -18,13 +18,13 @@ class SupervisorError(RuntimeError):
 
 
 class BodyRuntimeSupervisor:
-    """Owns the hidden BODY/Guardian worker and its complete process tree."""
+    """Owns the hidden BODY worker and its complete process tree."""
 
-    def __init__(self, config: RuntimeConfig, root: Path = SOURCE_ROOT, *, bootstrap_name: str = "guardian_bootstrap.js", guardian_mode: str | None = None):
+    def __init__(self, config: RuntimeConfig, root: Path = SOURCE_ROOT, *, bootstrap_name: str = "body_bootstrap.js", guardian_mode: str | None = None):
         self.config = config
         self.root = Path(root)
         self.daemon_dir = self.root / "daemon"
-        self.bootstrap_name = str(bootstrap_name or "guardian_bootstrap.js")
+        self.bootstrap_name = str(bootstrap_name or "body_bootstrap.js")
         self.guardian_mode = str(guardian_mode).strip() if guardian_mode else None
         self.paths = ensure_runtime_dirs()
         self.logger = HostLogger(self.paths["logs"] / "desktop-host.log")
