@@ -207,6 +207,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--url", default="https://example.com")
     p.add_argument("--find-text", default="BODY_TEST")
     p.add_argument("--continue-on-error", action="store_true")
+    p.add_argument("--log-after", type=int, default=200, help="log lines printed after --suite-visible")
     p.add_argument("command", nargs=argparse.REMAINDER, help="single BODY debug command")
     return p
 
@@ -216,7 +217,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.log is not None:
         return tail_log(args.log)
     if args.suite_visible:
-        return run_commands(visible_suite(args), continue_on_error=True)
+        code = run_commands(visible_suite(args), continue_on_error=True)
+        print("\n===== BODY RUNTIME LOG =====")
+        log_code = tail_log(args.log_after)
+        return code or log_code
     command = " ".join(args.command).strip()
     if not command:
         parser().print_help()
