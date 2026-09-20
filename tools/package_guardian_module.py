@@ -15,6 +15,8 @@ FILES = [
     "daemon/src/behavior_guardian.js",
     "daemon/src/external_controller_probe.js",
     "daemon/src/device_network_probe.js",
+    "daemon/src/safe_json_persistence.js",
+    "daemon/src/runtime_data_dir.js",
 ]
 
 
