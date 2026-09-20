@@ -20,10 +20,12 @@ class SupervisorError(RuntimeError):
 class BodyRuntimeSupervisor:
     """Owns the hidden BODY/Guardian worker and its complete process tree."""
 
-    def __init__(self, config: RuntimeConfig, root: Path = SOURCE_ROOT):
+    def __init__(self, config: RuntimeConfig, root: Path = SOURCE_ROOT, *, bootstrap_name: str = "guardian_bootstrap.js", guardian_mode: str | None = None):
         self.config = config
         self.root = Path(root)
         self.daemon_dir = self.root / "daemon"
+        self.bootstrap_name = str(bootstrap_name or "guardian_bootstrap.js")
+        self.guardian_mode = str(guardian_mode).strip() if guardian_mode else None
         self.paths = ensure_runtime_dirs()
         self.logger = HostLogger(self.paths["logs"] / "desktop-host.log")
         self.workers = WorkerSupervisor(logger=self.logger, stop_timeout_seconds=5.0)
@@ -152,6 +154,8 @@ class BodyRuntimeSupervisor:
             "BODY_DESKTOP_HOSTED": "1",
             "BODY_DESKTOP_PARENT_PID": str(os.getpid()),
         }
+        if self.guardian_mode:
+            env["BODY_GUARDIAN_MODE"] = self.guardian_mode
         native_helper = self._native_helper()
         if native_helper is not None:
             env["BODY_WINDOWS_INPUT_HELPER_EXE"] = str(native_helper)
@@ -159,7 +163,7 @@ class BodyRuntimeSupervisor:
             self._node(),
             "-r",
             str(self.daemon_dir / "src" / "sticky_runtime_port_preload.js"),
-            str(self.daemon_dir / "guardian_bootstrap.js"),
+            str(self.daemon_dir / self.bootstrap_name),
         ]
         spec = WorkerSpec(
             name="body-runtime",
