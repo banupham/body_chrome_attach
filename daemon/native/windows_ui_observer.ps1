@@ -142,12 +142,12 @@ function Get-ChromeWindows {
             $className = [string]$e.Current.ClassName
             if ($className -notlike 'Chrome_WidgetWin_*') { continue }
             if ($e.Current.IsOffscreen) { continue }
-            $pid = [int]$e.Current.ProcessId
-            $process = [System.Diagnostics.Process]::GetProcessById($pid)
+            $processId = [int]$e.Current.ProcessId
+            $process = [System.Diagnostics.Process]::GetProcessById($processId)
             if ($process.ProcessName -ne 'chrome') { continue }
             $rect = Get-Rect $e
             if ($null -eq $rect) { continue }
-            $out += [pscustomobject]@{ element=$e; processId=$pid; name=(Clean-Text $e.Current.Name 300); className=$className; rect=$rect }
+            $out += [pscustomobject]@{ element=$e; processId=$processId; name=(Clean-Text $e.Current.Name 300); className=$className; rect=$rect }
         } catch {}
     }
     return @($out)
@@ -234,10 +234,10 @@ function Get-NativeRect([IntPtr]$Handle) {
 
 function Get-NativeWindowSnapshot([IntPtr]$Handle, [int]$ZOrder = 0) {
     if ($Handle -eq [IntPtr]::Zero) { return $null }
-    [uint32]$pid = 0
-    [void][NativeWindowProbe]::GetWindowThreadProcessId($Handle, [ref]$pid)
+    [uint32]$processId = 0
+    [void][NativeWindowProbe]::GetWindowThreadProcessId($Handle, [ref]$processId)
     $processName = $null
-    try { if ($pid -gt 0) { $processName = [System.Diagnostics.Process]::GetProcessById([int]$pid).ProcessName } } catch {}
+    try { if ($processId -gt 0) { $processName = [System.Diagnostics.Process]::GetProcessById([int]$processId).ProcessName } } catch {}
     $name = $null; $className = $null; $controlType = $null
     try {
         $element = [System.Windows.Automation.AutomationElement]::FromHandle($Handle)
@@ -249,7 +249,7 @@ function Get-NativeWindowSnapshot([IntPtr]$Handle, [int]$ZOrder = 0) {
     } catch {}
     return [pscustomobject]@{
         handle=[int64]$Handle.ToInt64()
-        processId=[int]$pid
+        processId=[int]$processId
         processName=$(if ($processName) { [string]$processName } else { $null })
         name=$(if ($name) { $name } else { $null })
         className=$(if ($className) { $className } else { $null })
