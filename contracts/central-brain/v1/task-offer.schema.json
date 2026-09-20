@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "central-brain/v1/task-offer.schema.json",
+  "title": "Central -> Brain TASK_OFFER",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "protocolVersion",
+    "taskId",
+    "targetId",
+    "authorizationRef",
+    "issuedAt",
+    "expiresAt"
+  ],
+  "properties": {
+    "type": {
+      "const": "TASK_OFFER"
+    },
+    "protocolVersion": {
+      "const": 1
+    },
+    "taskId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "targetId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "authorizationRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "issuedAt": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "expiresAt": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}
