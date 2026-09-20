@@ -3,28 +3,35 @@ Guardian standalone module — split-test track
 Authority order:
 HUMAN > GUARDIAN > BRAIN > BODY
 
-Guardian is a separate runtime, not a BODY mode and not a BODY policy class.
+Guardian is a separate protection runtime. It does not plan tasks and it does not sit on the Brain -> BODY_STEP execution path.
 
-Responsibilities owned by Guardian:
+Guardian owns two protections:
+
+1. Chrome/browser validity
 - device/network inspection;
 - Chrome/browser environment inspection;
 - public IP / proxy / VPN observation;
 - deep browser fingerprint/protection signals;
+- invalid Chrome/browser instance => Guardian tells BODY to disconnect that Browser Instance.
+
+2. Human-learning provenance
 - external Chrome controller / WebDriver / automation process detection;
 - raw mouse/keyboard behavior observation, including mousemove/click/wheel/key events;
-- allow/revoke decisions for Brain physical execution.
+- if third-party automation or synthetic/machine behavior is detected, Guardian disables HUMAN LEARNING for that Browser Instance;
+- BODY may still observe the event and Brain tasks may still execute;
+- the blocked event must not be learned as human behavior.
 
 BODY responsibilities:
 - observe browser/page/UI facts;
-- execute physical commands;
-- forward raw facts/events;
-- enforce only the opaque Guardian grant immediately before Brain physical execution.
+- execute Brain physical commands;
+- forward raw facts/events to Guardian;
+- enforce Guardian browser-validity disconnect requests;
+- enforce Guardian HUMAN-LEARNING allow/block state when ingesting recorder events.
 
 BODY does not evaluate:
 - device/IP/proxy/VPN policy;
 - controller conflict policy;
 - behavior/bot policy;
-- READY/BLOCKED/QUARANTINED semantics;
 - target quality, retry, next action or goal success.
 
 Guardian transport:
@@ -37,22 +44,21 @@ Guardian commands:
 - GUARDIAN_BODY_STATUS
 - GUARDIAN_BODY_OBSERVE
 - GUARDIAN_EXTENSION_ENVIRONMENT_PROBE
-- GUARDIAN_GATE_STATUS
-- GUARDIAN_GATE_SET
-- GUARDIAN_GATE_REVOKE
+- GUARDIAN_PROTECTION_STATUS
+- GUARDIAN_BROWSER_VERDICT
+- GUARDIAN_LEARNING_SET
 
 BODY -> Guardian events:
 - browserOnline / browserOffline
 - tabContext and tab lifecycle facts
 - input facts: mousemove, mousedown, mouseup, click, dblclick, wheel, keydown, keyup
 
-Gate behavior:
-- grants are short-lived per Browser Instance;
-- Guardian refreshes grants while checks remain valid;
-- explicit deny blocks Brain physical execution;
-- Guardian disconnect clears all grants;
-- no Guardian/grant => Brain physical execution fails closed;
-- Human local/operator control remains higher authority.
+Protection behavior:
+- browserValid=false => BODY disconnects that Browser Instance;
+- learningAllowed=false => BODY keeps observing but does not feed HUMAN recorder events into learning;
+- Guardian disconnect => HUMAN learning fails closed until Guardian returns;
+- Brain TASK_CREATE / TASK_START / BODY_STEP execution is not gated by Guardian;
+- Human local/operator control remains highest authority.
 
 Standalone entry:
   node guardian/main.js
