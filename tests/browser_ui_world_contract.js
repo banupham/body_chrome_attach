@@ -2,12 +2,21 @@
 
 const assert=require('node:assert/strict');
 const {buildWorld,worldDelta}=require('../research/autonomous_discovery/world_model');
+const {nativeTypingFocusEvidence}=require('../research/autonomous_discovery/brain_v2');
 
 const semantic={route:{pageType:'home',path:'/'},viewport:{width:1000,height:700,scrollX:0,scrollY:0},controls:{},advertising:{},affordances:[]};
 const browser={tabs:[{id:1,active:true,windowId:7,siteKey:'youtube.com',title:'YouTube',navigationToken:'n1'}]};
 function observation(signature,focused='Address and search bar'){return {browserUi:{available:true,observed:true,reason:null,confidence:'title_match',source:'windows_uia_read_only',observedAt:100,signature,window:{name:'YouTube - Google Chrome'},focusedControl:{controlType:'Edit',name:focused},addressBar:{controlType:'Edit',name:'Address and search bar'},tabs:[],controls:[]},content:{page:{}},control:{},environment:{online:true,eligible:true,status:'ELIGIBLE',browserState:'ACTIVE'},bodyState:{activeTabId:1,pointer:null}};}
 const before=buildWorld({observation:observation('ui-1'),semantic,browser,tabId:1,target:{}});const after=buildWorld({observation:observation('ui-2','Customize and control Google Chrome'),semantic,browser,tabId:1,target:{}});
 assert.equal(before.browserUi.observed,true);assert.equal(before.browserUi.source,'windows_uia_read_only');assert.equal(before.browserUi.addressBar.name,'Address and search bar');assert.ok(worldDelta(before,after).reasons.includes('browser_ui'));
+
+const partialObservation=observation('ui-partial');
+partialObservation.browserUi.native={targetWindowHandle:100,targetWindowForeground:null,targetWindowMinimized:false,windowSource:'win32',uiAutomationAvailable:false,contentRect:null,contentRectSource:null,foregroundWindow:null,focusedElement:null,topLevelOccluders:[]};
+const partial=buildWorld({observation:partialObservation,semantic,browser,tabId:1,target:{}});
+assert.equal(partial.browserUi.native.targetWindowForeground,null);
+assert.equal(partial.browserUi.native.contentRect,null);
+assert.equal(partial.browserUi.native.uiAutomationAvailable,false);
+assert.equal(nativeTypingFocusEvidence(partial).ok,true);
 
 
 const ownedRep={visible:true,visibleRect:{x:100,y:500,width:200,height:100},hitTested:true,hitSamples:[{x:200,y:550,owned:true,blocker:null}],actionRect:{x:100,y:500,width:200,height:100},evidence:{geometryKnown:true,rectIntersectsViewport:true,rectFullyInViewport:true}};

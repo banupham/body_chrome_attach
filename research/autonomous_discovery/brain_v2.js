@@ -29,7 +29,7 @@ function hasFullInputSelection(control={}){const state=inputSelectionState(contr
 function searchControlEvidence(control={}){return {active:control?.active===true,valueFingerprint:control?.valueFingerprint||null,selection:inputSelectionState(control)};}
 function nativeTypingFocusEvidence(state={}){
   const ui=state?.browserUi||{},native=ui.native||{},browserPid=Number(ui?.window?.processId),focusPid=Number(native?.focusedElement?.processId??ui?.focusedControl?.processId),foregroundPid=Number(native?.foregroundWindow?.processId);
-  const targetWindowForeground=native.targetWindowForeground===true;
+  const targetWindowForeground=native.targetWindowForeground===true?true:native.targetWindowForeground===false?false:null;
   if(ui.observed!==true)return {known:false,ok:true,reason:'native_ui_unobserved'};
   if(Number.isFinite(browserPid)&&Number.isFinite(focusPid)&&focusPid>0&&browserPid>0&&focusPid!==browserPid)return {known:true,ok:false,reason:'native_focus_outside_browser',browserPid,focusPid,foregroundPid,targetWindowForeground};
   if(native.targetWindowHandle!=null&&native.foregroundWindow?.handle!=null&&targetWindowForeground===false&&Number(native.foregroundWindow.handle)!==Number(native.targetWindowHandle))return {known:true,ok:false,reason:'browser_not_foreground',browserPid,focusPid,foregroundPid,targetWindowForeground};

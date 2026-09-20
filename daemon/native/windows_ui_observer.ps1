@@ -9,25 +9,44 @@ Add-Type -AssemblyName UIAutomationTypes
 Add-Type -TypeDefinition @"
 using System;
 using System.Collections.Generic;
+using System.Text;
 using System.Runtime.InteropServices;
 public static class NativeWindowProbe {
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetWindowTextLength(IntPtr hWnd);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-    public static IntPtr[] GetTopLevelWindows() {
-        var windows = new List<IntPtr>();
-        EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
-            windows.Add(hWnd);
-            return true;
-        }, IntPtr.Zero);
-        return windows.ToArray();
-    }
     [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsIconic(IntPtr hWnd);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    public static IntPtr[] GetTopLevelWindows() {
+        var windows = new List<IntPtr>();
+        EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) { windows.Add(hWnd); return true; }, IntPtr.Zero);
+        return windows.ToArray();
+    }
+    public static IntPtr[] GetChildWindows(IntPtr parent) {
+        var windows = new List<IntPtr>();
+        EnumChildWindows(parent, delegate(IntPtr hWnd, IntPtr lParam) { windows.Add(hWnd); return true; }, IntPtr.Zero);
+        return windows.ToArray();
+    }
+    public static string GetTitle(IntPtr hWnd) {
+        int length = GetWindowTextLength(hWnd);
+        var buffer = new StringBuilder(Math.Max(1, length + 1));
+        GetWindowText(hWnd, buffer, buffer.Capacity);
+        return buffer.ToString();
+    }
+    public static string GetClass(IntPtr hWnd) {
+        var buffer = new StringBuilder(512);
+        GetClassName(hWnd, buffer, buffer.Capacity);
+        return buffer.ToString();
+    }
 }
 "@
 
@@ -137,17 +156,28 @@ function Get-ChromeWindows {
     foreach ($handle in [NativeWindowProbe]::GetTopLevelWindows()) {
         try {
             if (-not [NativeWindowProbe]::IsWindowVisible($handle)) { continue }
-            $e = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
-            if ($null -eq $e) { continue }
-            $className = [string]$e.Current.ClassName
-            if ($className -notlike 'Chrome_WidgetWin_*') { continue }
-            if ($e.Current.IsOffscreen) { continue }
-            $processId = [int]$e.Current.ProcessId
-            $process = [System.Diagnostics.Process]::GetProcessById($processId)
+            [uint32]$processId = 0
+            [void][NativeWindowProbe]::GetWindowThreadProcessId($handle, [ref]$processId)
+            if ($processId -le 0) { continue }
+            $process = [System.Diagnostics.Process]::GetProcessById([int]$processId)
             if ($process.ProcessName -ne 'chrome') { continue }
-            $rect = Get-Rect $e
-            if ($null -eq $rect) { continue }
-            $out += [pscustomobject]@{ element=$e; processId=$processId; name=(Clean-Text $e.Current.Name 300); className=$className; rect=$rect }
+            $className = Clean-Text ([NativeWindowProbe]::GetClass($handle)) 160
+            if ($className -notlike 'Chrome_WidgetWin_*') { continue }
+            $name = Clean-Text ([NativeWindowProbe]::GetTitle($handle)) 300
+            $element = $null
+            try { $element = [System.Windows.Automation.AutomationElement]::FromHandle($handle) } catch {}
+            if (-not $name -and $null -ne $element) { try { $name = Clean-Text $element.Current.Name 300 } catch {} }
+            $minimized = [NativeWindowProbe]::IsIconic($handle)
+            $rect = if ($minimized) { $null } else { Get-NativeRect $handle }
+            $out += [pscustomobject]@{
+                handle=[int64]$handle.ToInt64()
+                element=$element
+                processId=[int]$processId
+                name=$(if ($name) { $name } else { $null })
+                className=$className
+                rect=$rect
+                minimized=[bool]$minimized
+            }
         } catch {}
     }
     return @($out)
@@ -181,9 +211,10 @@ function Select-ChromeWindow([string]$ExpectedTitle) {
     return [pscustomobject]@{ element=$null; confidence='none'; reason='ambiguous_chrome_window'; candidates=$windows.Count }
 }
 
-function Get-BrowserControls($WindowElement) {
+function Get-BrowserControls($WindowElement, $NativeWindowRect = $null) {
+    if ($null -eq $WindowElement) { return @() }
     $allowed = @('Tab','TabItem','ToolBar','Button','Edit','MenuBar','MenuItem','ComboBox','SplitButton','Window')
-    $windowRect = Get-Rect $WindowElement
+    $windowRect = if ($null -ne $NativeWindowRect) { $NativeWindowRect } else { Get-Rect $WindowElement }
     $queue = New-Object System.Collections.Queue
     $queue.Enqueue([pscustomobject]@{ element=$WindowElement; depth=0 })
     $controls = @(); $index = 0
@@ -224,7 +255,7 @@ function Get-IntersectionRect($A, $B) {
 }
 
 function Get-NativeRect([IntPtr]$Handle) {
-    if ($Handle -eq [IntPtr]::Zero) { return $null }
+    if ($Handle -eq [IntPtr]::Zero -or [NativeWindowProbe]::IsIconic($Handle)) { return $null }
     $r = New-Object NativeWindowProbe+RECT
     if (-not [NativeWindowProbe]::GetWindowRect($Handle, [ref]$r)) { return $null }
     $width = [double]($r.Right-$r.Left); $height = [double]($r.Bottom-$r.Top)
@@ -238,12 +269,14 @@ function Get-NativeWindowSnapshot([IntPtr]$Handle, [int]$ZOrder = 0) {
     [void][NativeWindowProbe]::GetWindowThreadProcessId($Handle, [ref]$processId)
     $processName = $null
     try { if ($processId -gt 0) { $processName = [System.Diagnostics.Process]::GetProcessById([int]$processId).ProcessName } } catch {}
-    $name = $null; $className = $null; $controlType = $null
+    $name = Clean-Text ([NativeWindowProbe]::GetTitle($Handle)) 300
+    $className = Clean-Text ([NativeWindowProbe]::GetClass($Handle)) 160
+    $controlType = $null
     try {
         $element = [System.Windows.Automation.AutomationElement]::FromHandle($Handle)
         if ($null -ne $element) {
-            try { $name = Clean-Text $element.Current.Name 300 } catch {}
-            try { $className = Clean-Text $element.Current.ClassName 160 } catch {}
+            if (-not $name) { try { $name = Clean-Text $element.Current.Name 300 } catch {} }
+            if (-not $className) { try { $className = Clean-Text $element.Current.ClassName 160 } catch {} }
             try { $controlType = Get-TypeName $element } catch {}
         }
     } catch {}
@@ -255,11 +288,13 @@ function Get-NativeWindowSnapshot([IntPtr]$Handle, [int]$ZOrder = 0) {
         className=$(if ($className) { $className } else { $null })
         controlType=$(if ($controlType) { $controlType } else { $null })
         rect=(Get-NativeRect $Handle)
+        minimized=[bool][NativeWindowProbe]::IsIconic($Handle)
         zOrder=$ZOrder
     }
 }
 
 function Get-ContentRect($WindowElement) {
+    if ($null -eq $WindowElement) { return $null }
     try {
         $condition = New-Object System.Windows.Automation.PropertyCondition(
             [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
@@ -271,10 +306,51 @@ function Get-ContentRect($WindowElement) {
     return $null
 }
 
+function Get-Win32ContentRect($WindowRow) {
+    if ($null -eq $WindowRow -or $null -eq $WindowRow.handle -or $null -eq $WindowRow.rect) { return $null }
+    $parent = [IntPtr]([int64]$WindowRow.handle)
+    if ($parent -eq [IntPtr]::Zero) { return $null }
+    $best = $null; $bestArea = 0.0
+    foreach ($handle in [NativeWindowProbe]::GetChildWindows($parent)) {
+        try {
+            if (-not [NativeWindowProbe]::IsWindowVisible($handle)) { continue }
+            $className = Clean-Text ([NativeWindowProbe]::GetClass($handle)) 160
+            if ($className -ne 'Chrome_RenderWidgetHostHWND') { continue }
+            $rect = Get-NativeRect $handle
+            if ($null -eq $rect) { continue }
+            $inside = Get-IntersectionRect $rect $WindowRow.rect
+            if ($null -eq $inside) { continue }
+            $area = [double]$inside.width * [double]$inside.height
+            if ($area -gt $bestArea) { $bestArea = $area; $best = $inside }
+        } catch {}
+    }
+    return $best
+}
+
+function Rect-Signature($Rect) {
+    if ($null -eq $Rect) { return 'null' }
+    try { return ('{0},{1},{2},{3}' -f $Rect.x,$Rect.y,$Rect.width,$Rect.height) } catch { return 'null' }
+}
+
+function Fact-Text($Value) {
+    if ($null -eq $Value) { return '' }
+    return [string]$Value
+}
+
 function Get-NativeFacts($WindowRow) {
     $targetHandle = [IntPtr]::Zero
-    try { $targetHandle = [IntPtr]([int64]$WindowRow.element.Current.NativeWindowHandle) } catch {}
-    $contentRect = Get-ContentRect $WindowRow.element
+    try { if ($null -ne $WindowRow.handle) { $targetHandle = [IntPtr]([int64]$WindowRow.handle) } } catch {}
+    if ($targetHandle -eq [IntPtr]::Zero -and $null -ne $WindowRow.element) {
+        try { $targetHandle = [IntPtr]([int64]$WindowRow.element.Current.NativeWindowHandle) } catch {}
+    }
+
+    $contentRect = Get-Win32ContentRect $WindowRow
+    $contentRectSource = if ($null -ne $contentRect) { 'win32_render_widget' } else { $null }
+    if ($null -eq $contentRect) {
+        $contentRect = Get-ContentRect $WindowRow.element
+        if ($null -ne $contentRect) { $contentRectSource = 'uia_document' }
+    }
+
     $foregroundHandle = [NativeWindowProbe]::GetForegroundWindow()
     $foreground = Get-NativeWindowSnapshot $foregroundHandle 0
     $focused = $null
@@ -282,13 +358,14 @@ function Get-NativeFacts($WindowRow) {
         $element = [System.Windows.Automation.AutomationElement]::FocusedElement
         if ($null -ne $element) { $focused = New-ControlSnapshot $element 0 }
     } catch {}
+
     $occluders = @()
-    if ($targetHandle -ne [IntPtr]::Zero) {
+    if ($targetHandle -ne [IntPtr]::Zero -and $null -ne $WindowRow.rect) {
         $cursor = [NativeWindowProbe]::GetWindow($targetHandle, 3)
         $z = 0
         while ($cursor -ne [IntPtr]::Zero -and $z -lt 40 -and $occluders.Count -lt 20) {
             $z++
-            if ([NativeWindowProbe]::IsWindowVisible($cursor)) {
+            if ([NativeWindowProbe]::IsWindowVisible($cursor) -and -not [NativeWindowProbe]::IsIconic($cursor)) {
                 $row = Get-NativeWindowSnapshot $cursor $z
                 if ($null -ne $row -and $null -ne $row.rect) {
                     $windowOverlap = Get-IntersectionRect $row.rect $WindowRow.rect
@@ -296,7 +373,7 @@ function Get-NativeFacts($WindowRow) {
                     if ($null -ne $windowOverlap) {
                         $occluders += [pscustomobject]@{
                             handle=$row.handle; processId=$row.processId; processName=$row.processName; name=$row.name; className=$row.className; controlType=$row.controlType
-                            rect=$row.rect; zOrder=$row.zOrder; windowIntersection=$windowOverlap; contentIntersection=$contentOverlap
+                            rect=$row.rect; minimized=$row.minimized; zOrder=$row.zOrder; windowIntersection=$windowOverlap; contentIntersection=$contentOverlap
                         }
                     }
                 }
@@ -304,12 +381,22 @@ function Get-NativeFacts($WindowRow) {
             $cursor = [NativeWindowProbe]::GetWindow($cursor, 3)
         }
     }
-    $targetForeground = $false
-    if ($targetHandle -ne [IntPtr]::Zero -and $foregroundHandle -eq $targetHandle) { $targetForeground = $true }
+
+    $targetForeground = $null
+    if ($targetHandle -ne [IntPtr]::Zero -and $foregroundHandle -ne [IntPtr]::Zero) {
+        $targetForeground = [bool]($foregroundHandle -eq $targetHandle)
+    }
+    $targetMinimized = $null
+    if ($targetHandle -ne [IntPtr]::Zero) { $targetMinimized = [bool][NativeWindowProbe]::IsIconic($targetHandle) }
+
     return [pscustomobject]@{
         targetWindowHandle=$(if ($targetHandle -ne [IntPtr]::Zero) { [int64]$targetHandle.ToInt64() } else { $null })
         targetWindowForeground=$targetForeground
+        targetWindowMinimized=$targetMinimized
+        windowSource='win32'
+        uiAutomationAvailable=[bool]($null -ne $WindowRow.element)
         contentRect=$contentRect
+        contentRectSource=$contentRectSource
         foregroundWindow=$foreground
         focusedElement=$focused
         topLevelOccluders=$occluders
@@ -323,23 +410,32 @@ function Observe-BrowserUi([string]$ExpectedTitle, $RequestedWindowId) {
         return [pscustomobject]@{ available=$true; observed=$false; reason=$selected.reason; confidence=$selected.confidence; observedAt=$now; window=$null; controls=@(); tabs=@(); addressBar=$null; focusedControl=$null; signature=$null }
     }
     $w = $selected.element
-    $controls = @(Get-BrowserControls $w.element)
+    $controls = @(Get-BrowserControls $w.element $w.rect)
     $tabs = @($controls | Where-Object { $_.controlType -eq 'TabItem' })
     $addressBar = $controls | Where-Object { $_.controlType -eq 'Edit' -and ($_.name -match '(?i)address|search|omnibox') } | Select-Object -First 1
     $native = Get-NativeFacts $w
     $focused = $native.focusedElement
     if ($null -eq $focused) { $focused = $controls | Where-Object { $_.state.focused -eq $true } | Select-Object -First 1 }
     $sigRows = @($controls | ForEach-Object { $vf = if ($null -ne $_.valueFingerprint) { $_.valueFingerprint.sha256 } else { '' }; '{0}|{1}|{2}|{3}|{4}|{5}|{6}' -f $_.controlType,$_.name,$_.state.focused,$_.state.selected,$_.state.expanded,$_.state.toggle,$vf })
+    $focusPid = ''; $focusType = ''
+    if ($null -ne $native.focusedElement) {
+        $focusPid = Fact-Text $native.focusedElement.processId
+        $focusType = Fact-Text $native.focusedElement.controlType
+    }
+    $contentSig = Rect-Signature $native.contentRect
     $nativeSig = @(
-        "foreground=$($native.targetWindowForeground)",
-        "focusPid=$($native.focusedElement.processId)",
-        "focusType=$($native.focusedElement.controlType)",
-        "content=$($native.contentRect.x),$($native.contentRect.y),$($native.contentRect.width),$($native.contentRect.height)"
-    ) + @($native.topLevelOccluders | ForEach-Object { "occ=$($_.handle):$($_.rect.x),$($_.rect.y),$($_.rect.width),$($_.rect.height)" })
+        "foreground=$(Fact-Text $native.targetWindowForeground)",
+        "minimized=$(Fact-Text $native.targetWindowMinimized)",
+        "focusPid=$focusPid",
+        "focusType=$focusType",
+        "contentSource=$(Fact-Text $native.contentRectSource)",
+        "content=$contentSig"
+    )
+    $nativeSig += @($native.topLevelOccluders | ForEach-Object { $r = Rect-Signature $_.rect; "occ=$($_.handle):$r" })
     $signature = (Get-Hash (($sigRows + $nativeSig) -join "`n")).Substring(0, 32)
     return [pscustomobject]@{
         available=$true; observed=$true; reason=$null; confidence=$selected.confidence; observedAt=$now
-        window=[pscustomobject]@{ processId=$w.processId; name=$w.name; className=$w.className; rect=$w.rect; requestedWindowId=$RequestedWindowId }
+        window=[pscustomobject]@{ handle=$w.handle; processId=$w.processId; name=$w.name; className=$w.className; rect=$w.rect; minimized=$w.minimized; requestedWindowId=$RequestedWindowId }
         native=$native
         controls=$controls; tabs=$tabs; addressBar=$addressBar; focusedControl=$focused; signature=$signature
     }
