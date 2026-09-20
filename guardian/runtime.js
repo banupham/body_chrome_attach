@@ -93,8 +93,9 @@ class GuardianRuntime{
     const controller=this.controllerByBrowser.get(id)||{available:false,reason:'controller_scan_pending',score:0,blocked:false,review:false,signalIds:[],details:{}};
     const behavior=this.behavior.status(id);
     const browserReasons=[];
-    if(environment.eligible!==true)browserReasons.push(...(Array.isArray(environment.reasons)&&environment.reasons.length?environment.reasons:['ENVIRONMENT_NOT_ELIGIBLE']));
-    const browserValid=browser.online===true&&environment.eligible===true;
+    const environmentStatus=String(environment.status||'PENDING').toUpperCase();
+    const browserValid=!browser.online?false:(environmentStatus==='ELIGIBLE'?true:(['INELIGIBLE','ERROR','BLOCKED'].includes(environmentStatus)?false:null));
+    if(browserValid!==true)browserReasons.push(...(Array.isArray(environment.reasons)&&environment.reasons.length?environment.reasons:[browserValid===false?'ENVIRONMENT_NOT_ELIGIBLE':'ENVIRONMENT_CHECK_PENDING']));
 
     const learningReasons=[];
     if(!browserValid)learningReasons.push('BROWSER_INVALID');
@@ -102,7 +103,7 @@ class GuardianRuntime{
     if(controller.blocked===true)learningReasons.push('EXTERNAL_CONTROLLER_CONFLICT');
     else if(controller.review===true)learningReasons.push('EXTERNAL_CONTROLLER_SUSPECT');
     if(behavior.blocked===true)learningReasons.push('BOT_BEHAVIOR_HIGH_CONFIDENCE');
-    const learningAllowed=browserValid&&controller.blocked!==true&&controller.review!==true&&behavior.blocked!==true&&(!this.policy.controllerUnavailableBlocks||controller.available===true);
+    const learningAllowed=browserValid===true&&controller.blocked!==true&&controller.review!==true&&behavior.blocked!==true&&(!this.policy.controllerUnavailableBlocks||controller.available===true);
 
     return {
       browserInstanceId:id,
@@ -142,7 +143,10 @@ class GuardianRuntime{
       return null;
     }
     if(probeEnvironment){
-      try{await this.environment.probeBrowser(id);}
+      try{
+        const environmentResult=await this.environment.probeBrowser(id);
+        if(environmentResult&&String(environmentResult.status||'').toUpperCase()==='PENDING')this.registry.setEnvironment(id,environmentResult,'environment_check_pending');
+      }
       catch(error){
         browser.environment={eligible:false,status:'ERROR',observedAt:new Date(this.now()).toISOString(),reasons:['ENVIRONMENT_PROBE_ERROR:'+String(error?.message||error)],evidence:[]};
       }
