@@ -13,6 +13,7 @@ STAGE = WORK / "body-stage"
 HELPER_DIST = WORK / "helper-dist"
 HELPER_WORK = WORK / "helper-work"
 BODY_WORK = WORK / "body-work"
+CMD_WORK = WORK / "cmd-work"
 SPEC_DIR = WORK / "spec"
 
 GUARDIAN_IMPLEMENTATION_FILES = {
@@ -79,6 +80,20 @@ def build_helper() -> Path:
     return helper
 
 
+def build_cmd() -> Path:
+    pyinstaller(
+        "--noconfirm","--clean","--onefile","--console","--noupx","--name","BodyCmd",
+        "--distpath",str(OUT),"--workpath",str(CMD_WORK),"--specpath",str(SPEC_DIR),
+        "--paths",str(ROOT),
+        "--add-data",add_data(ROOT / "config","config"),
+        str(ROOT / "desktop" / "body_cmd.py"),
+    )
+    executable = OUT / "BodyCmd.exe"
+    if not executable.exists():
+        raise BuildError("body_cmd_executable_missing")
+    return executable
+
+
 def build() -> Path:
     if os.name != "nt":
         raise BuildError("body_core_build_windows_only")
@@ -110,6 +125,7 @@ def build() -> Path:
     if not executable.exists():
         raise BuildError("body_core_executable_missing")
     run([str(executable), "--check", "--json"])
+    build_cmd()
     return executable
 
 
@@ -117,6 +133,7 @@ if __name__ == "__main__":
     try:
         artifact = build()
         print(f"Built BODY-only artifact: {artifact}")
+        print(f"Built BODY CMD client: {OUT / 'BodyCmd.exe'}")
     except BuildError as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(1)
