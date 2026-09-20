@@ -95,3 +95,21 @@ test('invalid Chrome is rejected at browser level',async()=>{
   assert.ok(decision.browserReasons.includes('INVALID_CHROME'));
   await runtime.stop();
 });
+
+
+test('common auto-click process names disable Human learning without invalidating Chrome',async()=>{
+  const client=new FakeClient(),registry=new GuardianBrowserRegistry(),environment=new FakeEnvironment(registry);
+  const runtime=new GuardianRuntime({
+    client,registry,environmentGuardian:environment,now:()=>1000,
+    controllerProbe:{probe:async()=>({available:true,driverProcesses:[],frameworkProcesses:[],inputAutomationProcesses:[{name:'autoclicker.exe',pid:10}],browserAutomationFlags:[],browserRemoteDebugFlags:[],suspectUdpEndpoints:[]})},
+    setIntervalImpl:()=>null,clearIntervalImpl:()=>{}
+  });
+  await runtime.start();
+  const decision=runtime.decisions.get('browser-a');
+  assert.equal(decision.browserValid,true);
+  assert.equal(decision.learningAllowed,false);
+  assert.ok(decision.learningReasons.includes('EXTERNAL_CONTROLLER_CONFLICT')||decision.controller.review===true);
+  assert.equal(client.browserVerdicts.at(-1).valid,true);
+  assert.equal(client.learning.at(-1).allowed,false);
+  await runtime.stop();
+});
