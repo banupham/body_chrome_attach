@@ -67,6 +67,20 @@ function staleDiscoveryOwner(task,conflict){
   return task.state==='RECOVERY_REQUIRED'&&capability==='youtube.content_discovery'&&String(ws.browserInstanceId||'')===String(conflict.browserInstanceId)&&tabs.includes(Number(conflict.tabId));
 }
 
+function browserStartupReadiness(status,browser){
+  const browserInstanceId=String(browser?.browserInstanceId||''),browserState=String(browser?.state||'').toUpperCase();
+  const protection=status?.environment?.protection||{},protectionRow=browserInstanceId?protection?.browsers?.[browserInstanceId]||null:null,initialCheck=protectionRow?.initialCheck||null;
+  if(browser?.online!==true)return {state:'BLOCKED',reason:'browser_offline',browserState,eligible:browser?.environment?.eligible===true,initialCheck};
+  if(['QUARANTINED','ERROR','OFFLINE'].includes(browserState))return {state:'BLOCKED',reason:String(browser?.stateReason||browserState||'browser_blocked'),browserState,eligible:browser?.environment?.eligible===true,initialCheck};
+  if(protectionRow?.blocked===true)return {state:'BLOCKED',reason:String((protectionRow.reasons||[])[0]||'protection_blocked'),browserState,eligible:browser?.environment?.eligible===true,initialCheck};
+  if(browser?.environment?.eligible!==true)return {state:'CHECKING',reason:'environment_pending',browserState,eligible:false,initialCheck};
+  if(!protectionRow||!initialCheck)return {state:'CHECKING',reason:'protection_status_pending',browserState,eligible:true,initialCheck:null};
+  if(initialCheck.controllerFailed===true)return {state:'BLOCKED',reason:String(initialCheck.controllerReason||'controller_probe_unavailable'),browserState,eligible:true,initialCheck};
+  if(initialCheck.complete!==true)return {state:'CHECKING',reason:String((initialCheck.reasons||[])[0]||'protection_pending'),browserState,eligible:true,initialCheck};
+  if(browserState!=='ACTIVE')return {state:'CHECKING',reason:`browser_not_active:${browserState||'UNKNOWN'}`,browserState,eligible:true,initialCheck};
+  return {state:'READY',reason:null,browserState,eligible:true,initialCheck};
+}
+
 class AutonomousYouTubeBrainV2 extends AutonomousYouTubeBrain{
   constructor(config,deps={}){
     super(config,deps);
@@ -107,19 +121,24 @@ class AutonomousYouTubeBrainV2 extends AutonomousYouTubeBrain{
   async selectBrowser(){
     const deadline=Date.now()+this.browserWaitSec*1000;let lastSummary=[];
     while(Date.now()<deadline){
-      const status=await this.body.status();const all=Array.isArray(status.browsers)?status.browsers:[];
-      lastSummary=all.map(b=>({browserInstanceId:b.browserInstanceId,online:b.online,state:b.state,eligible:b.environment?.eligible,tabCount:(b.tabs||[]).length}));
-      const rows=all.filter(b=>b.online===true&&!['QUARANTINED','ERROR','OFFLINE'].includes(String(b.state||''))&&(b.tabs||[]).length>0);
-      let browser=this.config.browser?rows.find(b=>String(b.browserInstanceId)===String(this.config.browser)):null;
-      if(!browser)browser=rows.find(b=>(b.tabs||[]).some(t=>String(t.siteKey||'').includes('youtube.com')))||rows.find(b=>String(b.state||'').toUpperCase()==='READY')||rows[0];
+      const status=await this.body.status(),all=Array.isArray(status.browsers)?status.browsers:[];
+      const assessed=all.map(browser=>({browser,readiness:browserStartupReadiness(status,browser)}));
+      lastSummary=assessed.map(({browser,readiness})=>({browserInstanceId:browser.browserInstanceId,online:browser.online,state:browser.state,eligible:browser.environment?.eligible,tabCount:(browser.tabs||[]).length,readiness:readiness.state,readinessReason:readiness.reason,protectionStatus:readiness.initialCheck?.status||null}));
+      const configured=this.config.browser?assessed.find(({browser})=>String(browser.browserInstanceId)===String(this.config.browser)):null;
+      if(configured?.readiness?.state==='BLOCKED')throw new Error(`configured_body_browser_blocked:${configured.browser.browserInstanceId}:${configured.readiness.reason||'blocked'}`);
+      const rows=assessed.filter(({browser,readiness})=>readiness.state==='READY'&&(browser.tabs||[]).length>0).map(({browser})=>browser);
+      let browser=configured?.readiness?.state==='READY'&&((configured.browser.tabs||[]).length>0)?configured.browser:null;
+      if(!browser&&!this.config.browser)browser=rows.find(b=>(b.tabs||[]).some(t=>String(t.siteKey||'').includes('youtube.com')))||rows[0]||null;
       if(browser){
         const tabs=browser.tabs||[];let tab=this.config.tab!=null?tabs.find(t=>Number(t.id)===Number(this.config.tab)):null;
         if(!tab)tab=tabs.find(t=>t.active&&String(t.siteKey||'').includes('youtube.com'))||tabs.find(t=>String(t.siteKey||'').includes('youtube.com'))||tabs.find(t=>t.active)||tabs[0];
         if(tab){
           this.browser=browser;this.tabId=Number(tab.id);this.initialTabIds=tabIds(tabs);this.knownTabs=new Map(tabs.map(t=>[Number(t.id),tabSummary(t)]));
-          this.ledger('browser_selected',{browserInstanceId:browser.browserInstanceId,tabId:this.tabId,siteKey:tab.siteKey||null,eligible:browser.environment?.eligible??null,selectionPolicy:'online_non_quarantined',visibleTabs:tabs.map(tabSummary)});return;
+          this.ledger('browser_selected',{browserInstanceId:browser.browserInstanceId,tabId:this.tabId,siteKey:tab.siteKey||null,eligible:browser.environment?.eligible??null,selectionPolicy:'guardian_ready_eligible',visibleTabs:tabs.map(tabSummary)});return;
         }
       }
+      const candidates=assessed.filter(({browser})=>browser.online===true&&(browser.tabs||[]).length>0);
+      if(!this.config.browser&&candidates.length&&candidates.every(({readiness})=>readiness.state==='BLOCKED'))throw new Error(`no_assignable_body_browser:${JSON.stringify(lastSummary)}`);
       this.ledger('browser_waiting',{remainingMs:Math.max(0,deadline-Date.now()),browsers:lastSummary});await sleep(1000);
     }
     throw new Error(`no_ready_body_browser_after_wait:${JSON.stringify(lastSummary)}`);
@@ -339,4 +358,4 @@ class AutonomousYouTubeBrainV2 extends AutonomousYouTubeBrain{
   }
 }
 
-module.exports={AutonomousYouTubeBrainV2,fingerprintText,sameFingerprint,inputSelectionState,hasFullInputSelection,searchControlEvidence,routeSignature,randomScrollPoint,findCandidate,tabSummary,tabIds,tabOwnershipConflict,staleDiscoveryOwner};
+module.exports={AutonomousYouTubeBrainV2,fingerprintText,sameFingerprint,inputSelectionState,hasFullInputSelection,searchControlEvidence,routeSignature,randomScrollPoint,findCandidate,tabSummary,tabIds,tabOwnershipConflict,staleDiscoveryOwner,browserStartupReadiness};
