@@ -9,6 +9,7 @@ const {buildWorld,candidateInteractionState,candidateViewportState,candidateEffe
 const {AutonomousAgentPlanner,candidatePositionActions,affordanceActions}=require('../research/autonomous_discovery/agent_planner');
 const {AutonomousYouTubeBrainV3,progressSignals,candidateEffectValue,findSemanticAffordance,semanticTextVerification,rawBodySemanticEffect}=require('../research/autonomous_discovery/brain_v3');
 const {ExperienceMemory}=require('../research/autonomous_discovery/experience_memory');
+const {FORMAT}=require('../research/autonomous_discovery/media_format');
 const os=require('node:os');
 
 const normalStyle={display:'block',visibility:'visible',opacity:'1',overflow:'visible',overflowX:'visible',overflowY:'visible'};
