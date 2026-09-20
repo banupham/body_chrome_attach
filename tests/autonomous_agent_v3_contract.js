@@ -7,7 +7,7 @@ const {AutonomousAgentPlanner}=require('../research/autonomous_discovery/agent_p
 const {adaptiveQueryPlan}=require('../research/autonomous_discovery/adaptive_query_planner');
 const {bodyCapabilityCatalog}=require('../research/autonomous_discovery/body_capabilities');
 const {buildAccountProfile,contextForTarget,ACCOUNT_STATE,RELATION}=require('../research/autonomous_discovery/account_profile');
-const {tabOwnershipConflict,staleDiscoveryOwner}=require('../research/autonomous_discovery/brain_v2');
+const {tabOwnershipConflict,staleDiscoveryOwner,browserStartupReadiness}=require('../research/autonomous_discovery/brain_v2');
 
 function node({tag='BUTTON',label='',role='',href='',editable=false,x=20,y=20,width=120,height=40}={}){
   return {tagName:tag,textContent:label,href,parentElement:null,disabled:false,getBoundingClientRect(){return {x,y,width,height};},getAttribute(name){if(name==='aria-label')return label;if(name==='role')return role;if(name==='href')return href;if(name==='contenteditable')return editable?'true':null;return null;},closest(){return null;}};
@@ -36,6 +36,24 @@ assert.deepEqual(ownership,{browserInstanceId:'browser-abc',tabId:42,ownerTaskId
 assert.equal(staleDiscoveryOwner({state:'RECOVERY_REQUIRED',capability:'youtube.content_discovery',workspace:{browserInstanceId:'browser-abc',tabIds:[42]}},ownership),true);
 assert.equal(staleDiscoveryOwner({state:'RUNNING',capability:'youtube.content_discovery',workspace:{browserInstanceId:'browser-abc',tabIds:[42]}},ownership),false);
 assert.equal(staleDiscoveryOwner({state:'RECOVERY_REQUIRED',capability:'youtube.search',workspace:{browserInstanceId:'browser-abc',tabIds:[42]}},ownership),false);
+
+const startupBrowserId='browser-startup-race',startupTab={id:7,active:true,siteKey:'youtube.com'};
+const pendingStartupBrowser={browserInstanceId:startupBrowserId,online:true,state:'ENV_CHECK',stateReason:'environment_probe_started',tabs:[startupTab],environment:{eligible:false,status:'PENDING'}};
+const pendingStartupStatus={environment:{protection:{policy:{enabled:true},browsers:{[startupBrowserId]:{blocked:false,reasons:[],initialCheck:{complete:false,status:'PENDING',controllerFailed:false,reasons:['controller_scan_pending']}}}}}};
+assert.deepEqual(browserStartupReadiness(pendingStartupStatus,pendingStartupBrowser).state,'CHECKING');
+assert.equal(browserStartupReadiness(pendingStartupStatus,pendingStartupBrowser).reason,'environment_pending');
+
+const protectionPendingBrowser={...pendingStartupBrowser,state:'ACTIVE',stateReason:'environment_eligible',environment:{eligible:true,status:'ELIGIBLE'}};
+const protectionPending=browserStartupReadiness(pendingStartupStatus,protectionPendingBrowser);
+assert.equal(protectionPending.state,'CHECKING');assert.equal(protectionPending.reason,'controller_scan_pending');
+
+const readyStartupStatus={environment:{protection:{policy:{enabled:true},browsers:{[startupBrowserId]:{blocked:false,reasons:[],initialCheck:{complete:true,status:'PASSED',controllerFailed:false,reasons:[]}}}}}};
+const readyStartup=browserStartupReadiness(readyStartupStatus,protectionPendingBrowser);
+assert.equal(readyStartup.state,'READY');assert.equal(readyStartup.reason,null);
+
+const blockedStartupStatus={environment:{protection:{policy:{enabled:true},browsers:{[startupBrowserId]:{blocked:true,reasons:['EXTERNAL_CONTROLLER_CONFLICT'],initialCheck:{complete:true,status:'BLOCKED',controllerFailed:false,reasons:[]}}}}}};
+const blockedStartup=browserStartupReadiness(blockedStartupStatus,protectionPendingBrowser);
+assert.equal(blockedStartup.state,'BLOCKED');assert.equal(blockedStartup.reason,'EXTERNAL_CONTROLLER_CONFLICT');
 
 const catalog=bodyCapabilityCatalog();for(const required of ['click','doubleClick','moveTo','hover','drag','scrollVertical','scrollHorizontal','typeText','pressKey','keyCombo'])assert.ok(catalog.motor.includes(required));for(const required of ['back','forward','reload','newtab','closetab','newwindow','history','devtools','fullscreen','address','findtext'])assert.ok(catalog.browserUi.includes(required));assert.ok(catalog.tab.includes('tab_switch'));
 console.log('autonomous_agent_v3_contract: PASS');
