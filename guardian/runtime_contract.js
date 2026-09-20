@@ -17,10 +17,10 @@ class FakeClient extends EventEmitter{
 }
 
 class FakeEnvironment{
-  constructor(registry,{eligible=true}={}){this.registry=registry;this.eligible=eligible;}
+  constructor(registry,{eligible=true,status=null}={}){this.registry=registry;this.eligible=eligible;this.status=status;}
   async probeBrowser(id){
-    const row=this.registry.require(id);
-    row.environment={eligible:this.eligible,status:this.eligible?'ELIGIBLE':'BLOCKED',observedAt:new Date(1000).toISOString(),publicIp:'203.0.113.10',environmentSignature:'sig',deepFingerprint:{available:true,signalIds:[]},reasons:this.eligible?[]:['INVALID_CHROME'],evidence:[]};
+    const row=this.registry.require(id),resolvedStatus=this.status||(this.eligible?'ELIGIBLE':'BLOCKED');
+    row.environment={eligible:this.eligible,status:resolvedStatus,observedAt:new Date(1000).toISOString(),publicIp:'203.0.113.10',environmentSignature:'sig',deepFingerprint:{available:true,signalIds:[]},reasons:resolvedStatus==='PENDING'?['HTTP_TAB_REQUIRED_FOR_ENVIRONMENT_PROBE']:(this.eligible?[]:['INVALID_CHROME']),evidence:[]};
     return row.environment;
   }
   flushSync(){return {ok:true};}
@@ -111,5 +111,22 @@ test('common auto-click process names disable Human learning without invalidatin
   assert.ok(decision.learningReasons.includes('EXTERNAL_CONTROLLER_SUSPECT'));
   assert.equal(client.browserVerdicts.at(-1).valid,true);
   assert.equal(client.learning.at(-1).allowed,false);
+  await runtime.stop();
+});
+
+
+test('pending Chrome environment check does not disconnect or mark the browser invalid',async()=>{
+  const client=new FakeClient(),registry=new GuardianBrowserRegistry(),environment=new FakeEnvironment(registry,{eligible:false,status:'PENDING'});
+  const runtime=new GuardianRuntime({
+    client,registry,environmentGuardian:environment,now:()=>1000,
+    controllerProbe:{probe:async()=>({available:true,driverProcesses:[],frameworkProcesses:[],inputAutomationProcesses:[],browserAutomationFlags:[],browserRemoteDebugFlags:[],suspectUdpEndpoints:[]})},
+    setIntervalImpl:()=>null,clearIntervalImpl:()=>{}
+  });
+  await runtime.start();
+  const decision=runtime.decisions.get('browser-a');
+  assert.equal(decision.browserValid,null);
+  assert.equal(decision.learningAllowed,false);
+  assert.equal(client.browserVerdicts.at(-1).valid,null);
+  assert.equal(client.learning.length,0);
   await runtime.stop();
 });
