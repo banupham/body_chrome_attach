@@ -173,6 +173,14 @@ jobs:
           Copy-Item $extension.FullName 'split-artifacts/body/' -Force
       - name: Package Guardian module
         run: python tools/package_guardian_module.py
+      - name: Build and smoke standalone Guardian executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npx --yes pkg@5.8.1 guardian/main.js --targets node18-win-x64 --output split-artifacts/guardian/Guardian.exe
+          if ($LASTEXITCODE -ne 0) { throw 'split_guardian_build_failed' }
+          & .\split-artifacts\guardian\Guardian.exe --selftest
+          if ($LASTEXITCODE -ne 0) { throw 'split_guardian_selftest_failed' }
       - name: Build separate Brain executable
         shell: pwsh
         run: |
@@ -190,11 +198,13 @@ jobs:
           path: split-artifacts/body/
           if-no-files-found: error
           retention-days: 14
-      - name: Upload Guardian module
+      - name: Upload Guardian component
         uses: actions/upload-artifact@v4
         with:
           name: split-guardian-${{ github.sha }}
-          path: split-artifacts/guardian/GuardianModule.zip
+          path: |
+            split-artifacts/guardian/Guardian.exe
+            split-artifacts/guardian/GuardianModule.zip
           if-no-files-found: error
           retention-days: 14
       - name: Upload Brain component
