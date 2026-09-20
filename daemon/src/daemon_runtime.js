@@ -10,7 +10,6 @@ const {ExecutionLane}=require('./execution_lane');
 const {LocalIdentityStore}=require('./local_identity');
 const {BrowserManager}=require('./browser_manager');
 const {TaskManager}=require('./task_manager');
-const {createRuntimeGuardian}=require('./guardian_module');
 const {EvidenceStore}=require('./evidence_store');
 const {EvidenceAssembler}=require('./evidence_assembler');
 const {PointerStateManager}=require('./pointer_state_manager');
@@ -19,15 +18,14 @@ function syncBrowserExecutionState(browsers,extensionId,laneState={}){
   const browser=browsers?.browserForExtension?.(extensionId)||null;
   if(!browser||!browser.online)return null;
   if(laneState.busy===true){
-    if(['ACTIVE','BUSY'].includes(browser.state)){
+    if(['ONLINE','BUSY'].includes(browser.state)){
       const operation=laneState.current?.operation||'queued';
       return browsers.setState(browser.browserInstanceId,'BUSY',`execution_lane:${operation}`);
     }
     return browsers.public(browser);
   }
   if(browser.state!=='BUSY')return browsers.public(browser);
-  if(browser.environment?.eligible===true)return browsers.setState(browser.browserInstanceId,'ACTIVE','execution_lane_idle');
-  return browsers.setState(browser.browserInstanceId,'QUARANTINED','execution_lane_idle_environment_ineligible');
+  return browsers.setState(browser.browserInstanceId,'ONLINE','execution_lane_idle');
 }
 function finitePointerValue(value){return value!==null&&value!==undefined&&!(typeof value==='string'&&value.trim()==='')&&Number.isFinite(Number(value));}
 function shouldSuppressHumanEcho(execution,extensionId,event){
@@ -36,7 +34,7 @@ function shouldSuppressHumanEcho(execution,extensionId,event){
   return lane?.active===true&&lane?.current?.capability==='HUMAN_MOTOR';
 }
 
-function createDaemonRuntime({baseDir=path.join(__dirname,'..'),printAsync=()=>{},identityOptions={},taskOptions={},environmentOptions={}}={}){
+function createDaemonRuntime({baseDir=path.join(__dirname,'..'),printAsync=()=>{},identityOptions={},taskOptions={}}={}){
   const identity=new LocalIdentityStore(baseDir,identityOptions);
   const registry=new ExtensionRegistry();
   const browsers=new BrowserManager(identity);
@@ -53,7 +51,6 @@ function createDaemonRuntime({baseDir=path.join(__dirname,'..'),printAsync=()=>{
   const send=(ws,obj)=>ws?.readyState===WebSocket.OPEN?(ws.send(JSON.stringify(obj)),true):false,pnum=(v,n)=>{const x=Number(v);if(!Number.isFinite(x))throw new Error(`${n}_required`);return x;};
 
   function requestExtension(extensionId,type,payload={},timeoutMs=30000){const ext=registry.require(extensionId),requestId=id(type.toLowerCase());return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pending.delete(requestId);reject(new Error(`extension_timeout:${extensionId}:${type}`));},timeoutMs);pending.set(requestId,{extensionId:ext.extensionId,type,resolve,reject,timer});if(!send(ext.ws,{type,requestId,...payload})){clearTimeout(timer);pending.delete(requestId);reject(new Error(`extension_not_connected:${extensionId}:${type}`));}});}
-  const guardian=createRuntimeGuardian({baseDir,browsers,requestExtension,environmentOptions,identityOptions});
 
   function registerExtensionIdentity({browserInstanceId,extensionInstanceId,runtimeExtensionId}){return identity.registerBrowser({browserInstanceId,extensionInstanceId,runtimeExtensionId});}
   function identityForExtension(extensionId=null){const item=registry.get(extensionId||null);if(item?.browserInstanceId){const chain=identity.identityChain(item.browserInstanceId);if(chain)return chain;}return {...identity.snapshot(),browserInstanceId:item?.browserInstanceId||null,extensionInstanceId:item?.extensionInstanceId||item?.extensionId||extensionId||null,runtimeExtensionId:item?.runtimeExtensionId||null,platformIdentities:{}};}
@@ -101,7 +98,7 @@ function createDaemonRuntime({baseDir=path.join(__dirname,'..'),printAsync=()=>{
   function tabEvent(extId,event){const tabId=Number(event.tabId),siteKey=normalizeSiteKey(event.siteKey);tabSites.set(ctx(extId,tabId),siteKey);registry.activateTab(extId,tabId,{siteKey,title:event.title||'',windowId:event.windowId});browsers.updateTabByExtension(extId,tabId,{siteKey,title:event.title||'',windowId:event.windowId,active:true});tabHabit.observe(extId,{...event,siteKey});if(event.source==='human')learning.observeHumanSample(extId,siteKey,{source:'human',action:'switchTab',tabId,context:{target_role:'browser_tab',target_site:siteKey,windowId:event.windowId}},{learn:learningEnabled});}
   function tabContext(extId,msg){const key=ctx(extId,msg.tabId),previous=tabSites.get(key)||null,siteKey=normalizeSiteKey(msg.context?.siteKey);if(previous&&previous!==siteKey)disposeSegmentersForTab(extId,msg.tabId,{flush:true});tabSites.set(key,siteKey);registry.updateTab(extId,msg.tabId,{...msg.context,siteKey});browsers.updateTabByExtension(extId,msg.tabId,{...msg.context,siteKey});}
   function tabRemoved(extId,tabId){const chain=identityForExtension(extId);evidence.clearTab(chain,tabId);disposeSegmentersForTab(extId,tabId,{flush:true});registry.removeTab(extId,tabId);browsers.removeTabByExtension(extId,tabId);if(chain.browserInstanceId)pointerState.clearTab(chain,tabId);tabSites.delete(ctx(extId,tabId));}
-  function extensionOffline(extId){const chain=identityForExtension(extId),browser=browsers.browserForExtension(extId),browserId=browser?.browserInstanceId||chain.browserInstanceId||null,rejected=rejectPendingForExtension(extId,'extension_disconnected'),segments=disposeSegmentersForExtension(extId,{flush:true});if(browserId)evidence.clearBrowser(browserId);if(browserId)pointerState.clearBrowser(browserId);browsers.extensionOffline(extId);if(browserId)guardian.browserOffline(browserId);for(const key of [...tabSites.keys()])if(key.startsWith(`${String(extId)}/`))tabSites.delete(key);return {rejectedPending:rejected,...segments};}
+  function extensionOffline(extId){const chain=identityForExtension(extId),browser=browsers.browserForExtension(extId),browserId=browser?.browserInstanceId||chain.browserInstanceId||null,rejected=rejectPendingForExtension(extId,'extension_disconnected'),segments=disposeSegmentersForExtension(extId,{flush:true});if(browserId)evidence.clearBrowser(browserId);if(browserId)pointerState.clearBrowser(browserId);browsers.extensionOffline(extId);for(const key of [...tabSites.keys()])if(key.startsWith(`${String(extId)}/`))tabSites.delete(key);return {rejectedPending:rejected,...segments};}
 
   async function executeIntent(intent,{extensionId=null,tabId='active'}={}){
     const extId=selected(extensionId);
@@ -128,9 +125,7 @@ function createDaemonRuntime({baseDir=path.join(__dirname,'..'),printAsync=()=>{
   const executeTaskStrategy=(taskId,strategy,{tabId='primary'}={})=>withTask(taskId,tabId,async c=>({taskId:c.taskId,taskContext:c,...await executeStrategy(strategy,{extensionId:c.extensionInstanceId,tabId:c.tabId})}));
   const executeTaskBrowserCommand=(taskId,action,{tabId='primary',value=null}={})=>withTask(taskId,tabId,async c=>({taskId:c.taskId,taskContext:c,...await executeBrowserCommand(action,{extensionId:c.extensionInstanceId,tabId:c.tabId,value})}));
   const executeTaskTabSwitch=(taskId,tabId)=>withTask(taskId,tabId,async c=>({taskId:c.taskId,taskContext:c,...await switchTab(c.extensionInstanceId,c.tabId)}));
-  const probeEnvironment=browserInstanceId=>guardian.probeBrowser(browserInstanceId),probeAllEnvironments=()=>guardian.probeAll();
-
-  function flushSync(){let emitted=0;for(const s of segmenters.values())emitted+=Number(s.flush()?.emitted||0);const learningResult=learning.flushSync(),tabHabitResult=tabHabit.flushSync(),identityResult=identity.flushSync(),taskResult=tasks.flushSync(),environmentResult=guardian.flushSync();return {segmenterEmitted:emitted,learning:learningResult,tabHabitOk:tabHabitResult.ok,identityOk:identityResult.ok,taskStateOk:taskResult.ok,environmentStateOk:environmentResult.ok,evidence:evidenceStore.stats(),pointerState:pointerState.stats()};}
-  return {identity,registry,browsers,tasks,guardian,learning,tabHabit,evidenceStore,evidence,execution,pending,pointerState,pointers:pointerState.states,tabSites,id,ctx,pnum,send,registerExtensionIdentity,identityForExtension,extensionOnline,requestExtension,rejectPendingForExtension,resolveResponse,selected,refreshTabs,resolveTab,pointerStatus,recorderEvent,semanticObservation,tabEvent,tabContext,tabRemoved,extensionOffline,disposeSegmentersForTab,disposeSegmentersForExtension,executeIntent,executeStrategy,switchTab,executeBrowserCommand,executeTaskIntent,executeTaskStrategy,executeTaskBrowserCommand,executeTaskTabSwitch,probeEnvironment,probeAllEnvironments,flushSync,get recordingEnabled(){return recordingEnabled;},set recordingEnabled(value){recordingEnabled=value===true;},get learningEnabled(){return learningEnabled;},set learningEnabled(value){learningEnabled=value===true;}};
+  function flushSync(){let emitted=0;for(const s of segmenters.values())emitted+=Number(s.flush()?.emitted||0);const learningResult=learning.flushSync(),tabHabitResult=tabHabit.flushSync(),identityResult=identity.flushSync(),taskResult=tasks.flushSync();return {segmenterEmitted:emitted,learning:learningResult,tabHabitOk:tabHabitResult.ok,identityOk:identityResult.ok,taskStateOk:taskResult.ok,evidence:evidenceStore.stats(),pointerState:pointerState.stats()};}
+  return {identity,registry,browsers,tasks,learning,tabHabit,evidenceStore,evidence,execution,pending,pointerState,pointers:pointerState.states,tabSites,id,ctx,pnum,send,registerExtensionIdentity,identityForExtension,extensionOnline,requestExtension,rejectPendingForExtension,resolveResponse,selected,refreshTabs,resolveTab,pointerStatus,recorderEvent,semanticObservation,tabEvent,tabContext,tabRemoved,extensionOffline,disposeSegmentersForTab,disposeSegmentersForExtension,executeIntent,executeStrategy,switchTab,executeBrowserCommand,executeTaskIntent,executeTaskStrategy,executeTaskBrowserCommand,executeTaskTabSwitch,flushSync,get recordingEnabled(){return recordingEnabled;},set recordingEnabled(value){recordingEnabled=value===true;},get learningEnabled(){return learningEnabled;},set learningEnabled(value){learningEnabled=value===true;}};
 }
 module.exports={createDaemonRuntime,syncBrowserExecutionState,shouldSuppressHumanEcho};
