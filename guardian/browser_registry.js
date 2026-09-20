@@ -19,7 +19,8 @@ class GuardianBrowserRegistry{
     current.extensionInstanceId=input.extensionInstanceId??current.extensionInstanceId??null;
     current.runtimeExtensionId=input.runtimeExtensionId??current.runtimeExtensionId??null;
     current.online=input.online!==false;
-    current.state=current.online?'ONLINE':'OFFLINE';
+    const physicalState=String(input.state||'').toUpperCase();
+    current.state=current.online&&['ONLINE','BUSY','HUMAN_CONTROL','ERROR'].includes(physicalState)?physicalState:(current.online?'ONLINE':'OFFLINE');
     current.stateReason=input.stateReason||current.stateReason||null;
     current.activeTabId=Number.isInteger(Number(input.activeTabId))?Number(input.activeTabId):(current.activeTabId??null);
     current.lastSeenAt=input.lastSeenAt||Date.now();
