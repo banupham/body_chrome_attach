@@ -91,6 +91,7 @@ def build_cmd() -> Path:
     executable = OUT / "BodyCmd.exe"
     if not executable.exists():
         raise BuildError("body_cmd_executable_missing")
+    run([str(executable), "--help"])
     return executable
 
 
