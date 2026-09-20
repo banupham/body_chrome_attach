@@ -314,7 +314,7 @@ function Observe-BrowserUi([string]$ExpectedTitle, $RequestedWindowId) {
     $w = $selected.element
     $controls = @(Get-BrowserControls $w.element)
     $tabs = @($controls | Where-Object { $_.controlType -eq 'TabItem' })
-    $addressBar = $controls | Where-Object { $_.controlType -eq 'Edit' -and ($_.name -match '(?i)address|search|omnibox|địa chỉ|tìm kiếm') } | Select-Object -First 1
+    $addressBar = $controls | Where-Object { $_.controlType -eq 'Edit' -and ($_.name -match '(?i)address|search|omnibox') } | Select-Object -First 1
     $native = Get-NativeFacts $w
     $focused = $native.focusedElement
     if ($null -eq $focused) { $focused = $controls | Where-Object { $_.state.focused -eq $true } | Select-Object -First 1 }
