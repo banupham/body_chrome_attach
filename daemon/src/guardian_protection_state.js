@@ -53,12 +53,12 @@ class GuardianProtectionState{
   setBrowserVerdict({browserInstanceId,valid,reasons=[]}={}){
     if(!this.socket)throw new Error('guardian_authority_not_attached');
     const row=this._row(browserInstanceId);
-    row.browserValid=valid===true;
+    row.browserValid=valid===null||valid===undefined?null:valid===true;
     row.browserReasons=Array.isArray(reasons)?reasons.map(String):[];
     row.updatedAt=Date.now();
     if(row.browserValid!==true){
       row.learningAllowed=false;
-      row.learningReasons=['BROWSER_INVALID',...row.browserReasons];
+      row.learningReasons=[row.browserValid===false?'BROWSER_INVALID':'BROWSER_CHECK_PENDING',...row.browserReasons];
     }
     return {...row};
   }
