@@ -8,7 +8,7 @@ try {
   throw error;
 }
 
-const {ProtectionSupervisor}=require('./src/protection_supervisor');
+const {attachProtectionGuardian}=require('./src/guardian_module');
 
 let transportFailureHandled=false;
 server.wss.on('error',error=>{
@@ -21,8 +21,7 @@ server.wss.on('error',error=>{
   setImmediate(()=>process.exit(1));
 });
 
-const protection=new ProtectionSupervisor(server.runtime).start();
-server.runtime.protection=protection;
+const protection=attachProtectionGuardian(server);
 
 function processAlive(pid){
   const value=Number(pid);if(!Number.isInteger(value)||value<=0)return false;
