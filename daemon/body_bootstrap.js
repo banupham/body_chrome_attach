@@ -41,5 +41,5 @@ if(Number.isInteger(desktopParentPid)&&desktopParentPid>0&&desktopParentPid!==pr
 }
 process.once('exit',()=>{if(parentWatch)clearInterval(parentWatch);});
 
-console.log('BODY Core mode: Guardian is a separate external authority; Brain CDP is fail-closed without an external grant.');
+console.log('BODY Core mode: Guardian is separate; it validates Chrome and Human-learning provenance. Brain task execution is unchanged.');
 module.exports={...server,processAlive};
