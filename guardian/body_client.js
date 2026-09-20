@@ -109,7 +109,7 @@ class GuardianBodyClient extends EventEmitter{
     return (await this.request('GUARDIAN_EXTENSION_ENVIRONMENT_PROBE',{browserInstanceId,tabId,publicIpEndpoint,timeoutMs},Math.max(this.timeoutMs,Number(timeoutMs)||0)+5000)).result;
   }
   async setBrowserVerdict(browserInstanceId,{valid,reasons=[]}={}){
-    return (await this.request('GUARDIAN_BROWSER_VERDICT',{browserInstanceId,valid:valid===true,reasons})).result;
+    return (await this.request('GUARDIAN_BROWSER_VERDICT',{browserInstanceId,valid:valid===null?null:valid===true,reasons})).result;
   }
   async setLearning(browserInstanceId,{allowed,reasons=[]}={}){
     return (await this.request('GUARDIAN_LEARNING_SET',{browserInstanceId,allowed:allowed===true,reasons})).result;
