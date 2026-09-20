@@ -57,6 +57,15 @@ function randomScrollPoint(semantic,surface){
 }
 function tabSummary(tab){return {id:Number(tab?.id),active:tab?.active===true,windowId:Number.isInteger(Number(tab?.windowId))?Number(tab.windowId):null,siteKey:String(tab?.siteKey||''),title:String(tab?.title||'').slice(0,180),navigationToken:tab?.navigationToken||null,navigationEpoch:Number(tab?.navigationEpoch||0),status:tab?.status||null,urlScheme:tab?.urlScheme||null};}
 function tabIds(tabs){return new Set((tabs||[]).map(t=>Number(t.id)).filter(Number.isInteger));}
+function tabOwnershipConflict(error){
+  const message=String(error?.message||error||''),m=message.match(/^tab_already_owned:([^:]+):(\d+):(.+)$/);
+  return m?{browserInstanceId:m[1],tabId:Number(m[2]),ownerTaskId:m[3],message}:null;
+}
+function staleDiscoveryOwner(task,conflict){
+  if(!task||!conflict)return false;
+  const ws=task.workspace||{},tabs=(ws.tabIds||[]).map(Number),capability=String(task.capability||task.goal?.capability||'');
+  return task.state==='RECOVERY_REQUIRED'&&capability==='youtube.content_discovery'&&String(ws.browserInstanceId||'')===String(conflict.browserInstanceId)&&tabs.includes(Number(conflict.tabId));
+}
 
 class AutonomousYouTubeBrainV2 extends AutonomousYouTubeBrain{
   constructor(config,deps={}){
@@ -121,7 +130,17 @@ class AutonomousYouTubeBrainV2 extends AutonomousYouTubeBrain{
     if(!ids.length)throw new Error('dynamic_workspace_no_live_tabs');let primary=ids.includes(Number(preferredTabId))?Number(preferredTabId):ids[0];
     if(this.task){await this.body.finishTask(this.task.taskId,'COMPLETED',{status:'WORKSPACE_ROTATED',reason,nextTabIds:ids}).catch(()=>{});}
     this.workspaceGeneration++;
-    const task=await this.body.createTask({taskId:`task-${this.runId}-w${this.workspaceGeneration}`,browserInstanceId:this.browser.browserInstanceId,primaryTabId:primary,tabIds:ids,workspaceMode:'DYNAMIC',capability:'youtube.content_discovery',policyClass:'SAFE_AUTO',internalOnly:true,goal:{capability:'youtube.content_discovery',targetVideoId:this.config.target,mode:'autonomous_trial_error',workspaceMode:'dynamic'}});
+    const spec={taskId:`task-${this.runId}-w${this.workspaceGeneration}`,browserInstanceId:this.browser.browserInstanceId,primaryTabId:primary,tabIds:ids,workspaceMode:'DYNAMIC',capability:'youtube.content_discovery',policyClass:'SAFE_AUTO',internalOnly:true,goal:{capability:'youtube.content_discovery',targetVideoId:this.config.target,mode:'autonomous_trial_error',workspaceMode:'dynamic'}};
+    let task;
+    try{task=await this.body.createTask(spec);}
+    catch(error){
+      const conflict=tabOwnershipConflict(error);if(!conflict)throw error;
+      const owner=await this.body.getTask(conflict.ownerTaskId).catch(()=>null);
+      if(!staleDiscoveryOwner(owner,conflict))throw error;
+      this.ledger('stale_workspace_owner_recovery',{ownerTaskId:conflict.ownerTaskId,ownerState:owner.state,browserInstanceId:conflict.browserInstanceId,tabId:conflict.tabId,action:'cancel_recovery_required_owner'});
+      await this.body.finishTask(conflict.ownerTaskId,'CANCELLED',`superseded_by:${spec.taskId}`);
+      task=await this.body.createTask(spec);
+    }
     if(task.state!=='READY'&&task.state!=='RUNNING')throw new Error(`autodiscovery_task_not_ready:${task.state}`);this.task=task.state==='RUNNING'?task:await this.body.startTask(task.taskId);this.tabId=primary;this.tabRecovery.workspaceRotations++;
     this.ledger('task_workspace_started',{taskId:this.task.taskId,reason,workspaceMode:'DYNAMIC',primaryTabId:primary,tabIds:ids});return this.task;
   }
@@ -312,4 +331,4 @@ class AutonomousYouTubeBrainV2 extends AutonomousYouTubeBrain{
   }
 }
 
-module.exports={AutonomousYouTubeBrainV2,fingerprintText,sameFingerprint,inputSelectionState,hasFullInputSelection,searchControlEvidence,routeSignature,randomScrollPoint,findCandidate,tabSummary,tabIds};
+module.exports={AutonomousYouTubeBrainV2,fingerprintText,sameFingerprint,inputSelectionState,hasFullInputSelection,searchControlEvidence,routeSignature,randomScrollPoint,findCandidate,tabSummary,tabIds,tabOwnershipConflict,staleDiscoveryOwner};
