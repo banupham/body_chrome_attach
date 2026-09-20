@@ -100,8 +100,9 @@ class GuardianRuntime{
     if(!browserValid)learningReasons.push('BROWSER_INVALID');
     if(controller.available!==true&&this.policy.controllerUnavailableBlocks)learningReasons.push(String(controller.reason||'CONTROLLER_PROBE_UNAVAILABLE').toUpperCase());
     if(controller.blocked===true)learningReasons.push('EXTERNAL_CONTROLLER_CONFLICT');
+    else if(controller.review===true)learningReasons.push('EXTERNAL_CONTROLLER_SUSPECT');
     if(behavior.blocked===true)learningReasons.push('BOT_BEHAVIOR_HIGH_CONFIDENCE');
-    const learningAllowed=browserValid&&controller.blocked!==true&&behavior.blocked!==true&&(!this.policy.controllerUnavailableBlocks||controller.available===true);
+    const learningAllowed=browserValid&&controller.blocked!==true&&controller.review!==true&&behavior.blocked!==true&&(!this.policy.controllerUnavailableBlocks||controller.available===true);
 
     return {
       browserInstanceId:id,
