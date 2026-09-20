@@ -31,6 +31,7 @@ function rawCandidate({
     targetProximity:proximity,
     mediaFormat:{kind:'LONG_FORM'},
     topic,
+    classification:{primary:topic},
     isRadio:false,
     representationCount:1,
     representations:[{
