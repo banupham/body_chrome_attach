@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "split-artifacts" / "guardian"
 FILES = [
     "guardian/README.txt",
+    "guardian/authority_contract.js",
     "daemon/src/guardian_module.js",
     "daemon/src/environment_guardian.js",
     "daemon/src/protection_supervisor.js",
@@ -33,7 +34,7 @@ def main() -> int:
         "kind": "module",
         "entry": "daemon/src/guardian_module.js",
         "files": FILES,
-        "bodyCoupling": "contract-only",
+        "bodyCoupling": "external-authority-contract-only",
     }
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for relative in FILES:
