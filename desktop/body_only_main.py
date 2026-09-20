@@ -24,8 +24,8 @@ def _stop(_signum=None, _frame=None) -> None:
 
 
 def parser() -> argparse.ArgumentParser:
-    value = argparse.ArgumentParser(description="BODY Core test host with Guardian detached")
-    value.add_argument("--check", action="store_true", help="start BODY core, verify detached Guardian boundary, report and exit")
+    value = argparse.ArgumentParser(description="BODY Core test host with external Guardian authority")
+    value.add_argument("--check", action="store_true", help="start BODY core, verify BODY-only boundary, report and exit")
     value.add_argument("--json", action="store_true", help="emit compact JSON")
     return value
 
@@ -37,7 +37,7 @@ def emit(payload: dict, compact: bool) -> None:
 def run(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     config = load_runtime_config()
-    supervisor = BodyRuntimeSupervisor(config, bootstrap_name="body_bootstrap.js", guardian_mode="detached")
+    supervisor = BodyRuntimeSupervisor(config, bootstrap_name="body_bootstrap.js")
     client: BodyStatusClient | None = None
     try:
         supervisor.start()
@@ -45,14 +45,12 @@ def run(argv: list[str] | None = None) -> int:
         client = BodyStatusClient(config, token, controller_id="body-core-test-status")
         hello = client.connect()
         status = client.status()
-        guardian = dict(status.get("environment") or {})
-        if str(guardian.get("mode") or "").upper() != "DETACHED":
-            raise RuntimeError(f"body_core_guardian_not_detached:{guardian.get('mode')}")
         payload = {
             "product": "BodyCore",
             "state": "RUNNING",
-            "guardian": "DETACHED",
-            "taskGate": "FAIL_CLOSED",
+            "guardian": "EXTERNAL",
+            "brainCdpGate": "FAIL_CLOSED_WITHOUT_GUARDIAN_GRANT",
+            "humanLocalControl": "DIRECT",
             "bodyContractVersion": hello.get("bodyContractVersion"),
             "controlProtocolVersion": hello.get("protocolVersion"),
             "browserCount": len(list(status.get("browsers") or [])),
