@@ -108,11 +108,13 @@ class GuardianBodyClient extends EventEmitter{
   async probeEnvironment(browserInstanceId,{tabId=null,publicIpEndpoint=null,timeoutMs=null}={}){
     return (await this.request('GUARDIAN_EXTENSION_ENVIRONMENT_PROBE',{browserInstanceId,tabId,publicIpEndpoint,timeoutMs},Math.max(this.timeoutMs,Number(timeoutMs)||0)+5000)).result;
   }
-  async setGate(browserInstanceId,{allowed,leaseId=null,ttlMs=30000}={}){
-    return (await this.request('GUARDIAN_GATE_SET',{browserInstanceId,allowed:allowed===true,leaseId,ttlMs})).result;
+  async setBrowserVerdict(browserInstanceId,{valid,reasons=[]}={}){
+    return (await this.request('GUARDIAN_BROWSER_VERDICT',{browserInstanceId,valid:valid===true,reasons})).result;
   }
-  async revokeGate(browserInstanceId){return (await this.request('GUARDIAN_GATE_REVOKE',{browserInstanceId})).result;}
-  async gateStatus(){return (await this.request('GUARDIAN_GATE_STATUS')).result;}
+  async setLearning(browserInstanceId,{allowed,reasons=[]}={}){
+    return (await this.request('GUARDIAN_LEARNING_SET',{browserInstanceId,allowed:allowed===true,reasons})).result;
+  }
+  async protectionStatus(){return (await this.request('GUARDIAN_PROTECTION_STATUS')).result;}
 
   close(){
     if(!this.ws)return;
