@@ -8,11 +8,22 @@ Add-Type -AssemblyName UIAutomationTypes
 
 Add-Type -TypeDefinition @"
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 public static class NativeWindowProbe {
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    public static IntPtr[] GetTopLevelWindows() {
+        var windows = new List<IntPtr>();
+        EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
+            windows.Add(hWnd);
+            return true;
+        }, IntPtr.Zero);
+        return windows.ToArray();
+    }
     [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsWindowVisible(IntPtr hWnd);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
@@ -122,20 +133,20 @@ function New-ControlSnapshot($Element, [int]$Index) {
 }
 
 function Get-ChromeWindows {
-    $root = [System.Windows.Automation.AutomationElement]::RootElement
-    $children = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
     $out = @()
-    for ($i=0; $i -lt $children.Count; $i++) {
-        $e = $children.Item($i)
+    foreach ($handle in [NativeWindowProbe]::GetTopLevelWindows()) {
         try {
+            if (-not [NativeWindowProbe]::IsWindowVisible($handle)) { continue }
+            $e = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
+            if ($null -eq $e) { continue }
             $className = [string]$e.Current.ClassName
             if ($className -notlike 'Chrome_WidgetWin_*') { continue }
             if ($e.Current.IsOffscreen) { continue }
-            $rect = Get-Rect $e
-            if ($null -eq $rect) { continue }
             $pid = [int]$e.Current.ProcessId
             $process = [System.Diagnostics.Process]::GetProcessById($pid)
             if ($process.ProcessName -ne 'chrome') { continue }
+            $rect = Get-Rect $e
+            if ($null -eq $rect) { continue }
             $out += [pscustomobject]@{ element=$e; processId=$pid; name=(Clean-Text $e.Current.Name 300); className=$className; rect=$rect }
         } catch {}
     }
