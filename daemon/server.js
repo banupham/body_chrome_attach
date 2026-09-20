@@ -26,7 +26,10 @@ function loggableInputEvent(event){return ['mousedown','mouseup','wheel','keydow
 function sendReadiness(ws,browserInstanceId){
   let status={state:'CHECKING',reason:'protection_starting',browserState:'ENV_CHECK',environment:'PENDING',botCheck:'PENDING'};
   try{
-    if(runtime.protection?.readiness)status=runtime.protection.readiness(browserInstanceId);
+    if(runtime.guardian?.mode==='DETACHED'){
+      const browser=runtime.browsers.require(browserInstanceId);
+      status={state:browser.online?'CHECKING':'BLOCKED',reason:browser.online?'guardian_detached':'browser_offline',browserState:browser.state,environment:browser.environment?.status||'PENDING',botCheck:'DETACHED'};
+    }else if(runtime.protection?.readiness)status=runtime.protection.readiness(browserInstanceId);
     else{const browser=runtime.browsers.require(browserInstanceId);status={state:browser.online?'CHECKING':'BLOCKED',reason:browser.online?'protection_starting':'browser_offline',browserState:browser.state,environment:browser.environment?.status||'PENDING',botCheck:'PENDING'};}
   }catch(error){status={state:'BLOCKED',reason:String(error?.message||error),browserState:'UNKNOWN',environment:'UNKNOWN',botCheck:'UNKNOWN'};}
   runtime.send(ws,{type:'READINESS_STATUS',status,ts:Date.now()});return status;
