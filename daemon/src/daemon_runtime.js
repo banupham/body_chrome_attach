@@ -76,7 +76,7 @@ function createDaemonRuntime({baseDir=path.join(__dirname,'..'),printAsync=()=>{
   function segmenter(extId,tabId,siteKey){const key=segKey(extId,tabId,siteKey);if(segmenters.has(key))return segmenters.get(key);const s=new HumanActionSegmenter(sample=>{const learned=learning.observeHumanSample(extId,siteKey,{...sample,tabId:Number(tabId)},{learn:learningEnabled});printAsync(`[HỌC] browser=${String(learned.browserInstanceId).slice(0,12)} tab=${tabId} site=${normalizeSiteKey(siteKey)} action=${learned.action}`);});segmenters.set(key,s);return s;}
   function disposeSegmentersForTab(extId,tabId,{flush=true}={}){const prefix=`${ctx(extId,tabId)}/`;let disposed=0,emitted=0;for(const [key,s] of [...segmenters.entries()]){if(!key.startsWith(prefix))continue;const result=s.dispose(Number(tabId),{flush});disposed++;emitted+=Number(result?.emitted||0);segmenters.delete(key);}return {disposed,emitted};}
   function disposeSegmentersForExtension(extId,{flush=true}={}){const prefix=`${String(extId)}/`;let disposed=0,emitted=0;for(const [key,s] of [...segmenters.entries()]){if(!key.startsWith(prefix))continue;const result=s.dispose(null,{flush});disposed++;emitted+=Number(result?.emitted||0);segmenters.delete(key);}return {disposed,emitted};}
-  function recorderEvent(extId,msg){
+  function recorderEvent(extId,msg,{allowHumanLearning=true}={}){
     const tabId=Number(msg.tabId),event=msg.event;if(!event)return null;
     if(shouldSuppressHumanEcho(execution,extId,event))return {suppressed:true,reason:'agent_motor_human_echo'};
     const siteKey=normalizeSiteKey(msg.siteKey||tabSites.get(ctx(extId,tabId))||'__unknown__');
@@ -84,10 +84,12 @@ function createDaemonRuntime({baseDir=path.join(__dirname,'..'),printAsync=()=>{
     const identityChain=identityForExtension(extId);
     const evidenceCandidate=evidence.observeRecorder(identityChain,siteKey,tabId,event);
     const trainingEvent={...event};delete trainingEvent.semanticBefore;
-    learning.observeEvent(extId,siteKey,tabId,trainingEvent);
     pointerState.observeRecorder(identityChain,tabId,trainingEvent);
-    if(trainingEvent.source==='human')segmenter(extId,tabId,siteKey).handle(tabId,trainingEvent);
-    return evidenceCandidate;
+    const human=trainingEvent.source==='human';
+    const learningAccepted=!human||allowHumanLearning===true;
+    if(learningAccepted)learning.observeEvent(extId,siteKey,tabId,trainingEvent);
+    if(human&&allowHumanLearning===true)segmenter(extId,tabId,siteKey).handle(tabId,trainingEvent);
+    return {...(evidenceCandidate||{}),learningAccepted,humanLearningBlocked:human&&allowHumanLearning!==true};
   }
   function semanticObservation(extId,msg){
     const tabId=Number(msg.tabId);if(!Number.isInteger(tabId)||!msg.observation)return null;
