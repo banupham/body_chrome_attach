@@ -136,6 +136,7 @@ def visible_suite(args: argparse.Namespace) -> list[str]:
         "hardreload",
         "browserstop",
         "browsernewtab",
+        "__DYNAMIC_TAB_SWITCH__",
         "browsernexttab",
         "browserprevtab",
         "browseraddressbar",
@@ -164,6 +165,22 @@ def run_commands(commands: list[str], *, continue_on_error: bool) -> int:
         client.connect()
         for command in commands:
             try:
+                if command == "__DYNAMIC_TAB_SWITCH__":
+                    tabs = client.command("tabs")
+                    print_result("tabs", tabs)
+                    if not isinstance(tabs, list) or len(tabs) < 2:
+                        raise RuntimeError("tab_switch_test_requires_two_tabs")
+                    active = next((row for row in tabs if row.get("active") is True), tabs[-1])
+                    target = next((row for row in tabs if int(row.get("id", -1)) != int(active.get("id", -1))), None)
+                    if target is None:
+                        raise RuntimeError("tab_switch_target_unavailable")
+                    switch_command = f"switch {int(target['id'])}"
+                    switch_result = client.command(switch_command)
+                    print_result(switch_command, switch_result)
+                    back_command = f"switch {int(active['id'])}"
+                    back_result = client.command(back_command)
+                    print_result(back_command, back_result)
+                    continue
                 result = client.command(command)
                 print_result(command, result)
             except Exception as exc:
