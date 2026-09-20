@@ -85,11 +85,15 @@ Goal-level interpretation belongs to Brain.
 
 ## Guardian boundary
 
-Guardian is external. BODY does not evaluate Guardian policy.
+Guardian is external. BODY does not evaluate Guardian policy and Guardian does not gate Brain tasks or BODY_STEP execution.
 
-Immediately before a Brain BODY_STEP can reach physical CDP, BODY requires a current opaque Guardian grant for that browser. Guardian grants are short-lived and revoked on Guardian disconnect.
+Guardian protects two things only:
+- Browser validity: invalid Chrome/browser instances are disconnected at the browser/session boundary.
+- Human-learning provenance: when third-party automation or suspicious input is detected, HUMAN recorder events are not fed into BODY learning.
 
-Human local control is higher authority and remains directly testable without Brain/Guardian task policy.
+BODY still observes raw events. Brain task execution remains unchanged. Guardian disconnect makes HUMAN learning fail closed until Guardian returns.
+
+Human local control remains the highest authority.
 
 ## CDP freeze
 
