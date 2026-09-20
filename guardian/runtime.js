@@ -126,11 +126,11 @@ class GuardianRuntime{
   }
 
   async publishDecision(browserInstanceId){
-    const decision=this.decision(browserInstanceId);
-    await this.client.setBrowserVerdict(browserInstanceId,{valid:decision.browserValid,reasons:decision.browserReasons});
-    if(decision.browserValid===true){
-      await this.client.setLearning(browserInstanceId,{allowed:decision.learningAllowed,reasons:decision.learningReasons});
-    }
+    const decision=this.decision(browserInstanceId),previous=this.decisions.get(browserInstanceId)||null;
+    const browserChanged=!previous||previous.browserValid!==decision.browserValid||JSON.stringify(previous.browserReasons||[])!==JSON.stringify(decision.browserReasons||[]);
+    const learningChanged=!previous||previous.learningAllowed!==decision.learningAllowed||JSON.stringify(previous.learningReasons||[])!==JSON.stringify(decision.learningReasons||[]);
+    if(browserChanged)await this.client.setBrowserVerdict(browserInstanceId,{valid:decision.browserValid,reasons:decision.browserReasons});
+    if(decision.browserValid===true&&learningChanged)await this.client.setLearning(browserInstanceId,{allowed:decision.learningAllowed,reasons:decision.learningReasons});
     this.decisions.set(browserInstanceId,{...decision});
     return decision;
   }
