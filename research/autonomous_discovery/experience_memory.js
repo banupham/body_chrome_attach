@@ -12,9 +12,9 @@ function key(...parts){return parts.map(x=>String(x??'unknown')).join('|');}
 class ExperienceMemory{
   constructor(file){
     this.file=file;
-    this.state=safeLoad(file,{schemaVersion:1,effectSchema:'candidate_effect_v2',updatedAt:null,totalRuns:0,totalSteps:0,strategies:{},queries:{},transitions:{},topics:{},interactionEffects:{},actionEffects:{},lessons:[]});
-    if(Number(this.state.schemaVersion)!==1)this.state={schemaVersion:1,effectSchema:'candidate_effect_v2',updatedAt:null,totalRuns:0,totalSteps:0,strategies:{},queries:{},transitions:{},topics:{},interactionEffects:{},actionEffects:{},lessons:[]};
-    this.state.interactionEffects=this.state.interactionEffects||{};this.state.actionEffects=this.state.actionEffects||{};this.state.effectSchema='candidate_effect_v2';
+    this.state=safeLoad(file,{schemaVersion:1,effectSchema:'candidate_effect_v2',updatedAt:null,totalRuns:0,totalSteps:0,strategies:{},queries:{},transitions:{},topics:{},interactionEffects:{},actionEffects:{},routeHypotheses:{},lessons:[]});
+    if(Number(this.state.schemaVersion)!==1)this.state={schemaVersion:1,effectSchema:'candidate_effect_v2',updatedAt:null,totalRuns:0,totalSteps:0,strategies:{},queries:{},transitions:{},topics:{},interactionEffects:{},actionEffects:{},routeHypotheses:{},lessons:[]};
+    this.state.interactionEffects=this.state.interactionEffects||{};this.state.actionEffects=this.state.actionEffects||{};this.state.routeHypotheses=this.state.routeHypotheses||{};this.state.effectSchema='candidate_effect_v2';
   }
   strategy(id,context='global'){
     const k=key(context,id);return this.state.strategies[k]||(this.state.strategies[k]={id,context,attempts:0,successes:0,rewardSum:0,meanReward:0,newTopicCount:0,newTransitionCount:0,targetSeenCount:0,lastUsedAt:null});
@@ -46,6 +46,16 @@ class ExperienceMemory{
     const row=this.state.interactionEffects[key(context,id)];if(!row||!row.observations)return 0;const successRate=row.successfulExecutions/row.observations,targetRate=row.targetSeenCount/row.observations;
     return Number(Math.max(-18,Math.min(36,row.meanRecommendationShift*18+row.meanProximityGain*90+targetRate*36+(successRate-0.5)*4)).toFixed(3));
   }
+  routeHypothesis(id,context='global'){
+    const k=key(context,id);return this.state.routeHypotheses[k]||(this.state.routeHypotheses[k]={id,context,attempts:0,targetProgressCount:0,targetSeenCount:0,goalSuccessCount:0,noProgressStreak:0,lastObservedAt:null});
+  }
+  recordRouteHypothesis(id,{context='global',targetProgress=false,targetSeen=false,goalSuccess=false}={}){
+    const row=this.routeHypothesis(id,context);row.attempts++;if(targetProgress)row.targetProgressCount++;if(targetSeen)row.targetSeenCount++;if(goalSuccess)row.goalSuccessCount++;if(targetProgress||targetSeen||goalSuccess)row.noProgressStreak=0;else row.noProgressStreak++;row.lastObservedAt=nowIso();return clone(row);
+  }
+  routeHypothesisScore(id,context='global'){
+    const row=this.state.routeHypotheses[key(context,id)];if(!row||!row.attempts)return 0;const attempts=Math.max(1,row.attempts),progressRate=row.targetProgressCount/attempts,targetSeenRate=row.targetSeenCount/attempts,goalRate=row.goalSuccessCount/attempts,noProgressPenalty=Math.min(72,Number(row.noProgressStreak||0)*12),unproductivePenalty=(row.targetProgressCount+row.targetSeenCount+row.goalSuccessCount===0&&attempts>=3)?Math.min(28,(attempts-2)*7):0;
+    return Number(Math.max(-100,Math.min(100,progressRate*36+targetSeenRate*58+goalRate*100-noProgressPenalty-unproductivePenalty)).toFixed(3));
+  }
   actionEffect(id,context='global'){
     const k=key(this.state.effectSchema||'candidate_effect_v2',context,id);return this.state.actionEffects[k]||(this.state.actionEffects[k]={id,context,effectSchema:this.state.effectSchema||'candidate_effect_v2',observations:0,executionSuccesses:0,expectedEffectSuccesses:0,regressions:0,targetProgressCount:0,goalSuccessCount:0,effectValueSum:0,meanEffectValue:0,lastObservedAt:null});
   }
@@ -64,7 +74,7 @@ class ExperienceMemory{
     const strategies=Object.values(this.state.strategies).sort((a,b)=>b.meanReward-a.meanReward||b.attempts-a.attempts).slice(0,30);
     const transitions=Object.values(this.state.transitions).sort((a,b)=>b.count-a.count).slice(0,60);
     const queries=Object.values(this.state.queries).sort((a,b)=>b.meanReward-a.meanReward||b.targetSeenCount-a.targetSeenCount).slice(0,30);
-    const interactionEffects=Object.values(this.state.interactionEffects||{}).sort((a,b)=>(b.targetSeenCount-a.targetSeenCount)||(b.meanProximityGain-a.meanProximityGain)||(b.meanRecommendationShift-a.meanRecommendationShift)).slice(0,60),actionEffects=Object.values(this.state.actionEffects||{}).sort((a,b)=>(b.goalSuccessCount-a.goalSuccessCount)||(b.targetProgressCount-a.targetProgressCount)||(b.meanEffectValue-a.meanEffectValue)).slice(0,80);return {effectSchema:this.state.effectSchema,updatedAt:this.state.updatedAt,totalRuns:this.state.totalRuns,totalSteps:this.state.totalSteps,strategies,queries,transitions,topics:Object.values(this.state.topics).sort((a,b)=>b.observations-a.observations),interactionEffects,actionEffects,lessons:this.state.lessons.slice(-30)};
+    const interactionEffects=Object.values(this.state.interactionEffects||{}).sort((a,b)=>(b.targetSeenCount-a.targetSeenCount)||(b.meanProximityGain-a.meanProximityGain)||(b.meanRecommendationShift-a.meanRecommendationShift)).slice(0,60),actionEffects=Object.values(this.state.actionEffects||{}).sort((a,b)=>(b.goalSuccessCount-a.goalSuccessCount)||(b.targetProgressCount-a.targetProgressCount)||(b.meanEffectValue-a.meanEffectValue)).slice(0,80),routeHypotheses=Object.values(this.state.routeHypotheses||{}).sort((a,b)=>(b.goalSuccessCount-a.goalSuccessCount)||(b.targetSeenCount-a.targetSeenCount)||(b.targetProgressCount-a.targetProgressCount)||(a.noProgressStreak-b.noProgressStreak)).slice(0,80);return {effectSchema:this.state.effectSchema,updatedAt:this.state.updatedAt,totalRuns:this.state.totalRuns,totalSteps:this.state.totalSteps,strategies,queries,transitions,topics:Object.values(this.state.topics).sort((a,b)=>b.observations-a.observations),interactionEffects,actionEffects,routeHypotheses,lessons:this.state.lessons.slice(-30)};
   }
 }
 

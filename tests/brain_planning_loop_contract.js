@@ -6,7 +6,7 @@ const os=require('node:os');
 const path=require('node:path');
 
 const {buildWorld,contextKey}=require('../research/autonomous_discovery/world_model');
-const {AutonomousAgentPlanner,actionMemoryId}=require('../research/autonomous_discovery/agent_planner');
+const {AutonomousAgentPlanner,actionMemoryId,routeGoalContext}=require('../research/autonomous_discovery/agent_planner');
 const {ExperienceMemory}=require('../research/autonomous_discovery/experience_memory');
 
 const originalRandom=Math.random;
@@ -234,6 +234,45 @@ try{
     assert.ok(families.has('topic_filter'));
     assert.ok([...families].some(x=>String(x).startsWith('body:')));
     assert.ok([...families].some(x=>String(x).startsWith('scroll:')));
+  }
+
+
+  // 6. Repeated successful local activity with zero target evidence must close
+  // the current route hypothesis and deliberately select another frontier.
+  {
+    const planner=new AutonomousAgentPlanner({memory:memoryStub(),explorationBase:0});
+    const task=planner.inferTask({videoId:'target001',mediaFormat:{kind:'LONG_FORM'}},queryPlan());
+    const neighbor=rawCandidate({videoId:'neighbor-route',targetMatch:false,proximity:.88,surface:'related',y:210,owned:true,topic:'music'});
+    const history=Array.from({length:5},(_,i)=>({step:i+1,type:'click_candidate',capability:'motor.click',purpose:'follow_same_format_environment_edge',routeFamily:'related_same_topic',videoId:'old-'+i,success:true,changed:true,targetProgress:false,reward:1}));
+    const world=makeWorld({pageType:'watch',history,candidates:[neighbor],currentVideoId:'source',currentTopic:'music'});
+    const plan=planner.generate(world,{task,queryPlan:queryPlan(),stagnation:5});
+    const related=plan.actions.find(a=>a.routeFamily==='related_same_topic'),search=plan.actions.find(a=>a.routeFamily==='search_query');
+    assert.equal(plan.subgoal.id,'switch_route_hypothesis');
+    assert.ok(plan.strategyState.avoidFamilies.includes('related_same_topic'));
+    assert.ok(related&&search);
+    assert.ok(related.strategySwitchAdjustment<0);
+    assert.ok(search.strategySwitchAdjustment>0);
+    assert.notEqual(planner.choose(plan,{stagnation:5}).routeFamily,'related_same_topic');
+  }
+
+  // 7. Route hypothesis memory persists across runs and is separate from local
+  // motor/action-effect learning. A route that repeatedly produces no target
+  // evidence receives a goal-level penalty even if its individual actions work.
+  {
+    const root=fs.mkdtempSync(path.join(os.tmpdir(),'brain-route-memory-')),memory=new ExperienceMemory(path.join(root,'memory.json'));
+    try{
+      const planner=new AutonomousAgentPlanner({memory,explorationBase:0}),task=planner.inferTask({videoId:'target001',mediaFormat:{kind:'LONG_FORM'}},queryPlan()),routeContext=routeGoalContext(task);
+      for(let i=0;i<5;i++)memory.recordRouteHypothesis('related_same_topic',{context:routeContext,targetProgress:false,targetSeen:false,goalSuccess:false});
+      memory.recordRouteHypothesis('search_query',{context:routeContext,targetProgress:true,targetSeen:true,goalSuccess:false});
+      memory.save();
+      const neighbor=rawCandidate({videoId:'neighbor-memory',targetMatch:false,proximity:.82,surface:'related',y:210,owned:true,topic:'music'});
+      const world=makeWorld({pageType:'watch',history:[],candidates:[neighbor],currentVideoId:'source',currentTopic:'music'});
+      const plan=planner.generate(world,{task,queryPlan:queryPlan(),stagnation:0}),related=plan.actions.find(a=>a.routeFamily==='related_same_topic'),search=plan.actions.find(a=>a.routeFamily==='search_query');
+      assert.ok(related&&search);
+      assert.ok(search.routeHypothesisBonus>related.routeHypothesisBonus);
+      assert.ok(related.routeHypothesisBonus<0);
+      assert.ok(search.routeHypothesisBonus>0);
+    }finally{fs.rmSync(root,{recursive:true,force:true});}
   }
 
   console.log('brain_planning_loop_contract: PASS');
