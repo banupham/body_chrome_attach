@@ -30,5 +30,11 @@ const coldTask=planner.inferTask(target,{...queryPlan,fingerprint:{primaryTopic:
 let coldPlan=planner.generate(searchWorld,{task:coldTask,queryPlan,dynamicQueries:[],usedQueries:new Set(),stagnation:0});const previewAction=coldPlan.actions.find(row=>row.type==='preview_candidate'&&row.target?.videoId==='neighbor001'),clickAction=coldPlan.actions.find(row=>row.type==='click_candidate'&&row.target?.videoId==='neighbor001');assert.ok(previewAction);assert.ok(clickAction);assert.equal(previewAction.purpose,'test_preview_exposure_effect');assert.equal(coldPlan.subgoal.id,'follow_high_evidence_neighbor');assert.ok(Math.abs(previewAction.utility-clickAction.utility)<2);
 coldTask.accountContext.runtime.homeCheckDue=true;coldPlan=planner.generate(searchWorld,{task:coldTask,queryPlan,dynamicQueries:[],usedQueries:new Set(),stagnation:0});const homeCheck=coldPlan.actions.find(row=>row.type==='home');assert.ok(homeCheck);assert.equal(homeCheck.purpose,'sample_home_environment');assert.equal(coldPlan.subgoal.id,'follow_high_evidence_neighbor');
 
+const ownership=tabOwnershipConflict(new Error('tab_already_owned:browser-abc:42:task-yt-discovery-old-w1'));
+assert.deepEqual(ownership,{browserInstanceId:'browser-abc',tabId:42,ownerTaskId:'task-yt-discovery-old-w1',message:'tab_already_owned:browser-abc:42:task-yt-discovery-old-w1'});
+assert.equal(staleDiscoveryOwner({state:'RECOVERY_REQUIRED',capability:'youtube.content_discovery',workspace:{browserInstanceId:'browser-abc',tabIds:[42]}},ownership),true);
+assert.equal(staleDiscoveryOwner({state:'RUNNING',capability:'youtube.content_discovery',workspace:{browserInstanceId:'browser-abc',tabIds:[42]}},ownership),false);
+assert.equal(staleDiscoveryOwner({state:'RECOVERY_REQUIRED',capability:'youtube.search',workspace:{browserInstanceId:'browser-abc',tabIds:[42]}},ownership),false);
+
 const catalog=bodyCapabilityCatalog();for(const required of ['click','doubleClick','moveTo','hover','drag','scrollVertical','scrollHorizontal','typeText','pressKey','keyCombo'])assert.ok(catalog.motor.includes(required));for(const required of ['back','forward','reload','newtab','closetab','newwindow','history','devtools','fullscreen','address','findtext'])assert.ok(catalog.browserUi.includes(required));assert.ok(catalog.tab.includes('tab_switch'));
 console.log('autonomous_agent_v3_contract: PASS');
