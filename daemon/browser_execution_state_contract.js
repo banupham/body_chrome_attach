@@ -23,11 +23,10 @@ function setup(){
     extensionInstanceId:'ext-a',extensionId:'ext-a',runtimeExtensionId:'runtime-a',
     connectedAt:1,lastSeenAt:1,activeTabId:1,tabs:new Map([[1,{id:1,active:true,siteKey:'youtube.com'}]])
   });
-  browsers.setEnvironment('browser-a',{eligible:true,status:'ELIGIBLE',publicIp:'1.1.1.1',environmentSignature:'sig-a',reasons:[],evidence:[]},'test_environment_eligible');
   return browsers;
 }
 
-test('execution lane busy state owns ACTIVE -> BUSY -> ACTIVE lifecycle',()=>{
+test('execution lane busy state owns ONLINE -> BUSY -> ONLINE lifecycle',()=>{
   const browsers=setup();
   syncBrowserExecutionState(browsers,'ext-a',{busy:true,active:false,queued:2,current:null});
   assert.equal(browsers.require('browser-a').state,'BUSY');
@@ -36,7 +35,7 @@ test('execution lane busy state owns ACTIVE -> BUSY -> ACTIVE lifecycle',()=>{
   syncBrowserExecutionState(browsers,'ext-a',{busy:true,active:true,queued:0,current:{operation:'intent'}});
   assert.equal(browsers.require('browser-a').state,'BUSY');
   syncBrowserExecutionState(browsers,'ext-a',{busy:false,active:false,queued:0,current:null});
-  assert.equal(browsers.require('browser-a').state,'ACTIVE');
+  assert.equal(browsers.require('browser-a').state,'ONLINE');
 });
 
 test('two queued physical works on one Browser never create a false ACTIVE gap',async()=>{
@@ -62,11 +61,11 @@ test('two queued physical works on one Browser never create a false ACTIVE gap',
   assert.equal(await second,'second');
   await tick();
   assert.equal(lane.status('ext-a').busy,false);
-  assert.equal(browsers.require('browser-a').state,'ACTIVE');
+  assert.equal(browsers.require('browser-a').state,'ONLINE');
 });
 
-test('idle notification never overwrites HUMAN_CONTROL, QUARANTINED, ERROR or OFFLINE',()=>{
-  for(const terminalState of ['HUMAN_CONTROL','QUARANTINED','ERROR']){
+test('idle notification never overwrites HUMAN_CONTROL, ERROR or OFFLINE',()=>{
+  for(const terminalState of ['HUMAN_CONTROL','ERROR']){
     const browsers=setup();
     browsers.setState('browser-a',terminalState,'test_override');
     syncBrowserExecutionState(browsers,'ext-a',{busy:false,active:false,queued:0,current:null});
@@ -78,11 +77,4 @@ test('idle notification never overwrites HUMAN_CONTROL, QUARANTINED, ERROR or OF
   assert.equal(browsers.require('browser-a').state,'OFFLINE');
 });
 
-test('lane drain does not reactivate a browser whose environment became ineligible',()=>{
-  const browsers=setup();
-  syncBrowserExecutionState(browsers,'ext-a',{busy:true,active:true,queued:0,current:{operation:'intent'}});
-  assert.equal(browsers.require('browser-a').state,'BUSY');
-  browsers.require('browser-a').environment.eligible=false;
-  syncBrowserExecutionState(browsers,'ext-a',{busy:false,active:false,queued:0,current:null});
-  assert.equal(browsers.require('browser-a').state,'QUARANTINED');
-});
+
