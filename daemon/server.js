@@ -98,10 +98,10 @@ async function handleGuardianMessage(ws,msg){
   let result,type;
   if(msg.type==='GUARDIAN_BROWSER_VERDICT'){
     const browserInstanceId=requireBrowserId(msg);
-    result=guardianProtection.setBrowserVerdict({browserInstanceId,valid:msg.valid===true,reasons:msg.reasons});
+    result=guardianProtection.setBrowserVerdict({browserInstanceId,valid:msg.valid===null?null:msg.valid===true,reasons:msg.reasons});
     type='GUARDIAN_BROWSER_VERDICT_RESULT';
     const browser=runtime.browsers.require(browserInstanceId);
-    if(result.browserValid!==true&&browser.extensionInstanceId)disconnectExtensionForRevocation(browser.extensionInstanceId,'Guardian rejected browser');
+    if(result.browserValid===false&&browser.extensionInstanceId)disconnectExtensionForRevocation(browser.extensionInstanceId,'Guardian rejected browser');
     else{
       const ext=runtime.registry.get(browser.extensionInstanceId);
       if(ext?.ws)sendReadiness(ext.ws,browserInstanceId);
