@@ -15,7 +15,7 @@ function makeBrain(initialValue,selection){
   const state=()=>({semantic:{available:true,platform:'youtube',controls:{searchInput:current},route:{pageType:'home'},surfaces:[],viewport:{width:1200,height:800}}});
   brain.ensureYouTube=async()=>state();brain.handleAds=async()=>({});brain.browserTabs=async()=>[];brain.reconcileTabEffects=async()=>{};brain.ledger=(type,data)=>logs.push({type,data});brain.observe=async()=>state();
   brain.waitForSemantic=async predicate=>predicate(state().semantic)?state():null;
-  brain.motor=async intent=>{actions.push(intent);if(intent.type==='keyCombo'&&intent.key==='Control+a'){const len=Number(current.valueFingerprint.length||0);current={...current,selection:{...current.selection,available:true,collapsed:false,fullSelection:len>0,start:0,end:len,valueLength:len,selectedLength:len}};}else if(intent.type==='typeText'){current=control(intent.text,{active:true,start:String(intent.text).length,end:String(intent.text).length,full:false});}return {execution:{completed:true}};};
+  brain.motor=async intent=>{actions.push(intent);if(intent.type==='keyCombo'&&intent.key==='Control+a'){const len=Number(current.valueFingerprint.length||0);current={...current,selection:{...current.selection,available:true,collapsed:false,fullSelection:len>0,start:0,end:len,valueLength:len,selectedLength:len}};}else if(intent.type==='pressKey'&&intent.key==='Backspace'&&current.selection?.fullSelection){current=control('',{active:true,start:0,end:0,full:false});}else if(intent.type==='typeText'){current=control(intent.text,{active:true,start:String(intent.text).length,end:String(intent.text).length,full:false});}return {execution:{completed:true}};};
   return {brain,actions,logs,getCurrent:()=>current};
 }
 
