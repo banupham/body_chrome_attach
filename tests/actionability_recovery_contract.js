@@ -7,7 +7,7 @@ const {nodeView}=require('../src/dom_perception');
 const {extractSurface}=require('../src/youtube_semantic_observer');
 const {buildWorld,candidateInteractionState,candidateViewportState,candidateEffectDelta,actionabilityDelta}=require('../research/autonomous_discovery/world_model');
 const {AutonomousAgentPlanner,candidatePositionActions}=require('../research/autonomous_discovery/agent_planner');
-const {AutonomousYouTubeBrainV3}=require('../research/autonomous_discovery/brain_v3');
+const {AutonomousYouTubeBrainV3,progressSignals,candidateEffectValue}=require('../research/autonomous_discovery/brain_v3');
 const {ExperienceMemory}=require('../research/autonomous_discovery/experience_memory');
 const os=require('node:os');
 
@@ -135,13 +135,37 @@ function worldWith(c,scrollY=0){
   fs.rmSync(dir,{recursive:true,force:true});
 }
 
-// Recovery reward remains a Brain concern.
+// Candidate actionability progress is local recovery evidence, not target progress.
 {
-  const brain=Object.create(AutonomousYouTubeBrainV3.prototype);
-  const unchanged=brain.rewardAgent({action:{},outcome:{success:true,error:null},delta:{changed:true,reasons:['scroll','signature']},afterInfo:{},recovery:{improved:false,regressed:false,scoreDelta:0,becameActionable:false}});
-  const improved=brain.rewardAgent({action:{},outcome:{success:true,error:null},delta:{changed:true,reasons:['scroll','actionability']},afterInfo:{},recovery:{improved:true,regressed:false,scoreDelta:8,becameActionable:false}});
-  assert.ok(unchanged<0);
-  assert.ok(improved>0);
+  const unrelated=progressSignals({goalSuccess:false,success:true,proximityGain:0,targetCandidateBefore:false,targetCandidateAfter:false,recovery:{improved:true},recoveryTargetVideoId:'neighbor001',targetVideoId:'target001'});
+  assert.equal(unrelated.candidateActionabilityProgress,true);
+  assert.equal(unrelated.recoveryIsTarget,false);
+  assert.equal(unrelated.targetRecoveryProgress,false);
+  assert.equal(unrelated.targetProgress,false);
+
+  const targetRecovery=progressSignals({goalSuccess:false,success:true,proximityGain:0,targetCandidateBefore:true,targetCandidateAfter:true,recovery:{improved:true},recoveryTargetVideoId:'target001',targetVideoId:'target001'});
+  assert.equal(targetRecovery.candidateActionabilityProgress,true);
+  assert.equal(targetRecovery.recoveryIsTarget,true);
+  assert.equal(targetRecovery.targetRecoveryProgress,true);
+  assert.equal(targetRecovery.targetProgress,true);
+
+  const evidenceGain=progressSignals({goalSuccess:false,success:true,proximityGain:0.2,targetCandidateBefore:false,targetCandidateAfter:false,recovery:null,recoveryTargetVideoId:null,targetVideoId:'target001'});
+  assert.equal(evidenceGain.targetProximityImproved,true);
+  assert.equal(evidenceGain.targetProgress,true);
+}
+
+// Recovery reward keeps local candidate improvement modest; target recovery may
+// receive target-directed reward. Candidate effect value remains available for
+// learning geometry/actionability independently of task progress.
+{
+  const brain=Object.create(AutonomousYouTubeBrainV3.prototype);brain.targetOpened=false;
+  const recovery={improved:true,regressed:false,scoreDelta:110,distanceImprovement:154,becameInViewport:true,becameActionable:true};
+  const afterInfo={newVideos:0,newTopics:0,newTransitions:0,proximityGain:0,targetCandidate:null};
+  const unrelatedReward=brain.rewardAgent({action:{},outcome:{success:true,error:null},delta:{changed:true,reasons:['scroll','actionability']},afterInfo,recovery,recoveryIsTarget:false,targetProgress:false});
+  const targetReward=brain.rewardAgent({action:{},outcome:{success:true,error:null},delta:{changed:true,reasons:['scroll','actionability']},afterInfo,recovery,recoveryIsTarget:true,targetProgress:true});
+  assert.equal(unrelatedReward,2);
+  assert.ok(targetReward>unrelatedReward);
+  assert.ok(candidateEffectValue(recovery)>unrelatedReward);
 }
 
 // Architecture guard: BODY may observe, never judge or choose an action target.
