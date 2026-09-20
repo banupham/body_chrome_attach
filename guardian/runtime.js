@@ -1,6 +1,5 @@
 'use strict';
 
-const crypto=require('node:crypto');
 const os=require('node:os');
 const path=require('node:path');
 const {GuardianBodyClient}=require('./body_client');
@@ -55,8 +54,6 @@ class GuardianRuntime{
       requestExtension:(extensionId,type,payload)=>this._requestExtension(extensionId,type,payload)
     });
     this.policy={
-      gateTtlMs:envInt(this.env.GUARDIAN_GATE_TTL_MS,30000,5000,300000),
-      heartbeatMs:envInt(this.env.GUARDIAN_GATE_HEARTBEAT_MS,10000,1000,60000),
       controllerScanMs:envInt(this.env.GUARDIAN_CONTROLLER_SCAN_MS,15000,5000,300000),
       fullScanMs:envInt(this.env.GUARDIAN_FULL_SCAN_MS,300000,30000,3600000),
       controllerUnavailableBlocks:String(this.env.GUARDIAN_CONTROLLER_UNAVAILABLE_BLOCKS??'true').toLowerCase()!=='false'
@@ -95,16 +92,23 @@ class GuardianRuntime{
     const environment=browser.environment||{eligible:false,status:'PENDING',reasons:['ENVIRONMENT_NOT_EVALUATED'],evidence:[]};
     const controller=this.controllerByBrowser.get(id)||{available:false,reason:'controller_scan_pending',score:0,blocked:false,review:false,signalIds:[],details:{}};
     const behavior=this.behavior.status(id);
-    const reasons=[];
-    if(environment.eligible!==true)reasons.push(...(Array.isArray(environment.reasons)&&environment.reasons.length?environment.reasons:['ENVIRONMENT_NOT_ELIGIBLE']));
-    if(controller.available!==true&&this.policy.controllerUnavailableBlocks)reasons.push(String(controller.reason||'CONTROLLER_PROBE_UNAVAILABLE').toUpperCase());
-    if(controller.blocked===true)reasons.push('EXTERNAL_CONTROLLER_CONFLICT');
-    if(behavior.blocked===true)reasons.push('BOT_BEHAVIOR_HIGH_CONFIDENCE');
-    const allowed=browser.online===true&&environment.eligible===true&&controller.blocked!==true&&behavior.blocked!==true&&(!this.policy.controllerUnavailableBlocks||controller.available===true);
+    const browserReasons=[];
+    if(environment.eligible!==true)browserReasons.push(...(Array.isArray(environment.reasons)&&environment.reasons.length?environment.reasons:['ENVIRONMENT_NOT_ELIGIBLE']));
+    const browserValid=browser.online===true&&environment.eligible===true;
+
+    const learningReasons=[];
+    if(!browserValid)learningReasons.push('BROWSER_INVALID');
+    if(controller.available!==true&&this.policy.controllerUnavailableBlocks)learningReasons.push(String(controller.reason||'CONTROLLER_PROBE_UNAVAILABLE').toUpperCase());
+    if(controller.blocked===true)learningReasons.push('EXTERNAL_CONTROLLER_CONFLICT');
+    if(behavior.blocked===true)learningReasons.push('BOT_BEHAVIOR_HIGH_CONFIDENCE');
+    const learningAllowed=browserValid&&controller.blocked!==true&&behavior.blocked!==true&&(!this.policy.controllerUnavailableBlocks||controller.available===true);
+
     return {
       browserInstanceId:id,
-      allowed,
-      reasons:[...new Set(reasons)],
+      browserValid,
+      browserReasons:[...new Set(browserReasons)],
+      learningAllowed,
+      learningReasons:[...new Set(learningReasons)],
       environment:{
         eligible:environment.eligible===true,
         status:String(environment.status||'UNKNOWN'),
@@ -121,18 +125,18 @@ class GuardianRuntime{
 
   async publishDecision(browserInstanceId){
     const decision=this.decision(browserInstanceId);
-    const leaseId='guardian-'+crypto.randomUUID();
-    await this.client.setGate(browserInstanceId,{allowed:decision.allowed,leaseId,ttlMs:this.policy.gateTtlMs});
-    const stored={...decision,leaseId,expiresAt:this.now()+this.policy.gateTtlMs};
-    this.decisions.set(browserInstanceId,stored);
-    return stored;
+    await this.client.setBrowserVerdict(browserInstanceId,{valid:decision.browserValid,reasons:decision.browserReasons});
+    if(decision.browserValid===true){
+      await this.client.setLearning(browserInstanceId,{allowed:decision.learningAllowed,reasons:decision.learningReasons});
+    }
+    this.decisions.set(browserInstanceId,{...decision});
+    return decision;
   }
 
   async evaluateBrowser(browserInstanceId,{probeEnvironment=true,scanController=false}={}){
     const id=String(browserInstanceId||'').trim();
     const browser=this.registry.require(id);
     if(!browser.online){
-      try{await this.client.revokeGate(id);}catch{}
       this.decisions.delete(id);
       return null;
     }
@@ -153,8 +157,8 @@ class GuardianRuntime{
     for(const browser of this.registry.list().filter(row=>row.online)){
       try{results.push(await this.evaluateBrowser(browser.browserInstanceId,{probeEnvironment,scanController:false}));}
       catch(error){
-        try{await this.client.setGate(browser.browserInstanceId,{allowed:false,leaseId:'guardian-error-'+crypto.randomUUID(),ttlMs:this.policy.gateTtlMs});}catch{}
-        results.push({browserInstanceId:browser.browserInstanceId,allowed:false,reasons:['GUARDIAN_EVALUATION_ERROR:'+String(error?.message||error)]});
+        try{await this.client.setBrowserVerdict(browser.browserInstanceId,{valid:false,reasons:['GUARDIAN_EVALUATION_ERROR:'+String(error?.message||error)]});}catch{}
+        results.push({browserInstanceId:browser.browserInstanceId,browserValid:false,learningAllowed:false,browserReasons:['GUARDIAN_EVALUATION_ERROR:'+String(error?.message||error)]});
       }
     }
     return results;
@@ -171,7 +175,7 @@ class GuardianRuntime{
     }
     if(type==='browserOffline'){
       if(browserInstanceId&&this.registry.browsers.has(browserInstanceId))this.registry.markOffline(browserInstanceId);
-      if(browserInstanceId){this.behavior.clear(browserInstanceId);this.controllerByBrowser.delete(browserInstanceId);this.decisions.delete(browserInstanceId);try{await this.client.revokeGate(browserInstanceId);}catch{}}
+      if(browserInstanceId){this.behavior.clear(browserInstanceId);this.controllerByBrowser.delete(browserInstanceId);this.decisions.delete(browserInstanceId);}
       return;
     }
     if(type==='input'&&browserInstanceId){
@@ -185,12 +189,6 @@ class GuardianRuntime{
     }
   }
 
-  async heartbeat(){
-    for(const browser of this.registry.list().filter(row=>row.online)){
-      if(!this.decisions.has(browser.browserInstanceId))continue;
-      try{await this.publishDecision(browser.browserInstanceId);}catch{}
-    }
-  }
 
   async start(){
     if(this.started)return this.status();
@@ -200,9 +198,8 @@ class GuardianRuntime{
     await this.evaluateAll({probeEnvironment:true,scanController:true});
     const controllerTimer=this.setIntervalImpl(()=>{this.scanControllers().then(()=>this.evaluateAll({probeEnvironment:false,scanController:false})).catch(()=>{});},this.policy.controllerScanMs);
     const fullTimer=this.setIntervalImpl(()=>{this.evaluateAll({probeEnvironment:true,scanController:true}).catch(()=>{});},this.policy.fullScanMs);
-    const heartbeatTimer=this.setIntervalImpl(()=>{this.heartbeat().catch(()=>{});},this.policy.heartbeatMs);
-    controllerTimer?.unref?.();fullTimer?.unref?.();heartbeatTimer?.unref?.();
-    this.timers.push(controllerTimer,fullTimer,heartbeatTimer);
+    controllerTimer?.unref?.();fullTimer?.unref?.();
+    this.timers.push(controllerTimer,fullTimer);
     this.started=true;
     return this.status();
   }
@@ -212,7 +209,6 @@ class GuardianRuntime{
     this.timers=[];
     this.client.off?.('event',this._onEvent);
     this.client.off?.('disconnected',this._onDisconnect);
-    for(const browser of this.registry.list().filter(row=>row.online)){try{await this.client.revokeGate(browser.browserInstanceId);}catch{}}
     try{this.environment.flushSync();}catch{}
     this.client.close();
     this.started=false;
