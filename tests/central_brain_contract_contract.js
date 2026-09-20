@@ -14,8 +14,8 @@ assert.equal(protocol.status,'DESIGN_ONLY');
 assert.deepEqual(protocol.objective.requiredFields,['targetId']);
 assert.deepEqual(protocol.messages.TASK_OFFER.businessObjectiveFields,['targetId']);
 
-for(const field of ['query','keywords','strategy','plan','action','steps','coordinates','retry','dwell','candidate','BODY_STEP']){
-  assert.ok(protocol.authorityBoundary.forbiddenCentralInfluence.some(x=>String(x).toLowerCase().includes(field.toLowerCase()))||field==='BODY_STEP');
+for(const phrase of ['search query','keywords','strategy','plan','candidate choice','click coordinates','scroll direction','retry policy','dwell duration','BODY_STEP','browser UI action']){
+  assert.ok(protocol.authorityBoundary.forbiddenCentralInfluence.some(x=>String(x).toLowerCase()===phrase.toLowerCase()));
 }
 
 assert.ok(protocol.preOfferRequirements.centralMustComplete.some(x=>/registered channel/i.test(x)));
