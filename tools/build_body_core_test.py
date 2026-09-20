@@ -17,6 +17,7 @@ SPEC_DIR = WORK / "spec"
 
 GUARDIAN_IMPLEMENTATION_FILES = {
     "guardian_bootstrap.js",
+    "src/guardian_module.js",
     "src/environment_guardian.js",
     "src/protection_supervisor.js",
     "src/behavior_guardian.js",
@@ -58,7 +59,7 @@ def copy_body_daemon() -> Path:
         target / "body_bootstrap.js",
         target / "server.js",
         target / "src" / "daemon_runtime.js",
-        target / "src" / "guardian_module.js",
+        target / "src" / "guardian_authority_gate.js",
     ]
     for path in required:
         if not path.exists():
