@@ -12,7 +12,7 @@
     "entrypoint": "desktop/main.py (bodybrain.cmd on Windows development builds)",
     "bootstrap": "BODY and Guardian are separate local components; Guardian connects to BODY as an external authority",
     "brainBoundary": "desktop/body_client.py exposes contract/task APIs only",
-    "guardianGate": "Guardian is external. Brain physical execution is fail-closed at BODY's CDP boundary unless Guardian has issued a current grant."
+    "guardianGate": "Guardian validates browser/session integrity and Human-learning provenance; it does not gate Brain BODY_STEP execution."
   },
   "roles": [
     "extension",
@@ -42,8 +42,8 @@
   },
   "controllerPolicy": {
     "human": "highest authority; local operator control is outside Brain planning and Guardian policy decisions",
-    "guardian": "second authority; may allow or revoke Brain CDP execution for each Browser Instance",
-    "brain": "planner/controller; physical execution requires an explicitly RUNNING taskId plus a current Guardian grant",
+    "guardian": "second authority; validates Chrome/browser sessions and protects Human-learning provenance from third-party automation",
+    "brain": "planner/controller; physical execution requires an explicitly RUNNING taskId and follows BODY Contract v1",
     "body": "no policy authority; observes and executes",
     "debugClient": "local Human/operator test surface"
   },
@@ -74,7 +74,7 @@
     "physicalActions": [
       "BODY_STEP"
     ],
-    "physicalActionRequirement": "BODY_STEP requires contractVersion=1.0, a durable stepId, an explicitly RUNNING taskId, exactly one Body step, and a current external Guardian grant immediately before physical CDP dispatch",
+    "physicalActionRequirement": "BODY_STEP requires contractVersion=1.0, a durable stepId, an explicitly RUNNING taskId, and exactly one Body step",
     "legacyPhysicalActionsRejected": [
       "INTENT_EXECUTE",
       "STRATEGY_EXECUTE",
@@ -124,7 +124,7 @@
       "one taskId+stepId identity requests one Body step and permits at most one physical attempt",
       "BODY returns observable facts and technical execution state, never task or Guardian judgment",
       "Brain alone decides semantic success/failure and next step",
-      "Guardian alone decides whether Brain CDP may pass",
+      "Guardian does not decide Brain tasks or BODY_STEP execution",
       "Human local authority is above Guardian",
       "BODY learning may shape physical HOW, never WHAT goal to pursue",
       "Human and Agent provenance remain separate",
@@ -239,21 +239,22 @@
       "external/third-party Chrome controller detection",
       "mouse/keyboard behavior conflict observation",
       "deep browser protection/fingerprint signals",
-      "allow or revoke Brain CDP execution"
+      "reject invalid Chrome/browser instances",
+      "allow or block HUMAN learning provenance"
     ],
     "bodyQueries": [
       "GUARDIAN_BODY_STATUS",
       "GUARDIAN_BODY_OBSERVE",
       "GUARDIAN_EXTENSION_ENVIRONMENT_PROBE",
-      "GUARDIAN_GATE_STATUS"
+      "GUARDIAN_PROTECTION_STATUS"
     ],
     "bodyActions": [
-      "GUARDIAN_GATE_SET",
-      "GUARDIAN_GATE_REVOKE"
+      "GUARDIAN_BROWSER_VERDICT",
+      "GUARDIAN_LEARNING_SET"
     ],
     "events": [
       "GUARDIAN_EVENT"
     ],
-    "cdpGate": "short-lived per-Browser grant; revoked on Guardian disconnect; BODY does not evaluate policy"
+    "protection": "browserValid=false disconnects that Browser Instance; learningAllowed=false blocks HUMAN learning only; Brain tasks and BODY_STEP are not gated by Guardian"
   }
 }
