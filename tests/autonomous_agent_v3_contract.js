@@ -7,6 +7,7 @@ const {AutonomousAgentPlanner}=require('../research/autonomous_discovery/agent_p
 const {adaptiveQueryPlan}=require('../research/autonomous_discovery/adaptive_query_planner');
 const {bodyCapabilityCatalog}=require('../research/autonomous_discovery/body_capabilities');
 const {buildAccountProfile,contextForTarget,ACCOUNT_STATE,RELATION}=require('../research/autonomous_discovery/account_profile');
+const {tabOwnershipConflict,staleDiscoveryOwner}=require('../research/autonomous_discovery/brain_v2');
 
 function node({tag='BUTTON',label='',role='',href='',editable=false,x=20,y=20,width=120,height=40}={}){
   return {tagName:tag,textContent:label,href,parentElement:null,disabled:false,getBoundingClientRect(){return {x,y,width,height};},getAttribute(name){if(name==='aria-label')return label;if(name==='role')return role;if(name==='href')return href;if(name==='contenteditable')return editable?'true':null;return null;},closest(){return null;}};
