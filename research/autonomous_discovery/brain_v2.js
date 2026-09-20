@@ -232,16 +232,24 @@ class AutonomousYouTubeBrainV2 extends AutonomousYouTubeBrain{
       if(!input?.active)return null;
     }else this.ledger('search_edit_observed',{phase:'focus_already_present',before:searchControlEvidence(input),after:searchControlEvidence(input),changed:false});
     if(sameFingerprint(input?.valueFingerprint,expected)){this.ledger('search_text_verify',{phase:'already_exact',ok:true,expectedFingerprint:expected,observedFingerprint:input.valueFingerprint,selection:inputSelectionState(input)});return state;}
-    if(Number(input?.valueFingerprint?.length||0)>0&&!hasFullInputSelection(input)){
-      const before=searchControlEvidence(input);
-      await this.motor({type:'keyCombo',key:'Control+a'});
-      const selected=await this.waitForSemantic(s=>{const c=s.controls?.searchInput;return Boolean(c?.active&&(sameFingerprint(c?.valueFingerprint,expected)||hasFullInputSelection(c)));},{timeoutMs:1800,intervalMs:140,reason:'verify_search_selection'});
-      if(selected?.semantic)state=selected;else state=await this.observe('search_selection_after');input=state.semantic?.controls?.searchInput;
-      const selectedOk=hasFullInputSelection(input)||sameFingerprint(input?.valueFingerprint,expected);this.ledger('search_edit_observed',{phase:'select_existing_text',before,after:searchControlEvidence(input),changed:JSON.stringify(before.selection)!==JSON.stringify(inputSelectionState(input)),selectionConfirmed:selectedOk});
-      if(sameFingerprint(input?.valueFingerprint,expected))return state;if(!hasFullInputSelection(input))return null;
+    if(Number(input?.valueFingerprint?.length||0)>0){
+      if(!hasFullInputSelection(input)){
+        const before=searchControlEvidence(input);
+        await this.motor({type:'keyCombo',key:'Control+a'});
+        const selected=await this.waitForSemantic(s=>{const c=s.controls?.searchInput;return Boolean(c?.active&&(sameFingerprint(c?.valueFingerprint,expected)||hasFullInputSelection(c)));},{timeoutMs:1800,intervalMs:140,reason:'verify_search_selection'});
+        if(selected?.semantic)state=selected;else state=await this.observe('search_selection_after');input=state.semantic?.controls?.searchInput;
+        const selectedOk=hasFullInputSelection(input)||sameFingerprint(input?.valueFingerprint,expected);this.ledger('search_edit_observed',{phase:'select_existing_text',before,after:searchControlEvidence(input),changed:JSON.stringify(before.selection)!==JSON.stringify(inputSelectionState(input)),selectionConfirmed:selectedOk});
+        if(sameFingerprint(input?.valueFingerprint,expected))return state;if(!hasFullInputSelection(input))return null;
+      }
+      const beforeClear=searchControlEvidence(input);
+      await this.motor({type:'pressKey',key:'Backspace'});
+      const cleared=await this.waitForSemantic(s=>{const c=s.controls?.searchInput;return Boolean(c?.active&&Number(c?.valueFingerprint?.length||0)===0);},{timeoutMs:1800,intervalMs:140,reason:'verify_search_clear'});
+      if(cleared?.semantic)state=cleared;else state=await this.observe('search_clear_after');input=state.semantic?.controls?.searchInput;
+      const clearedOk=Boolean(input?.active&&Number(input?.valueFingerprint?.length||0)===0);this.ledger('search_edit_observed',{phase:'clear_selected_text',before:beforeClear,after:searchControlEvidence(input),changed:Number(beforeClear.valueFingerprint?.length||0)!==Number(input?.valueFingerprint?.length||0),cleared:clearedOk});
+      if(!clearedOk)return null;
     }
     const beforeType=searchControlEvidence(input);
-    await this.motor({type:'typeText',x:p.x,y:p.y,width:input.actionRect.width,height:input.actionRect.height,role:'textbox',text:query,preserveFocus:true});
+    await this.motor({type:'typeText',x:p.x,y:p.y,width:input.actionRect.width,height:input.actionRect.height,role:'textbox',text:query});
     const typed=await this.waitForSemantic(s=>sameFingerprint(s.controls?.searchInput?.valueFingerprint,expected),{timeoutMs:Math.min(1800,Number(this.verifyTimeoutMs)||1800),intervalMs:140,reason:'verify_search_text'});
     if(typed?.semantic)state=typed;else state=await this.observe('search_text_after');input=state.semantic?.controls?.searchInput;
     const ok=Boolean(input&&sameFingerprint(input.valueFingerprint,expected));this.ledger('search_text_verify',{phase:'type_observed',ok,expectedFingerprint:expected,before:beforeType,after:searchControlEvidence(input),selection:inputSelectionState(input)});return ok?state:null;
