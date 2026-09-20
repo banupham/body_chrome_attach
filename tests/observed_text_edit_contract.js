@@ -27,7 +27,7 @@ function makeBrain(initialValue,selection){
     assert.ok(out);
     assert.equal(actions.some(a=>a.type==='keyCombo'&&a.key==='Control+a'),false);
     assert.equal(actions.some(a=>a.type==='pressKey'&&a.key==='Backspace'),false);
-    const typed=actions.find(a=>a.type==='typeText');assert.ok(typed);assert.equal(typed.preserveFocus,true);
+    const typed=actions.find(a=>a.type==='typeText');assert.ok(typed);assert.equal('preserveFocus' in typed,false);
   }
 
   // Existing text already fully selected: preserve the selection and type over it.
@@ -36,7 +36,8 @@ function makeBrain(initialValue,selection){
     const out=await brain.verifiedSearchField('new query');
     assert.ok(out);
     assert.equal(actions.some(a=>a.type==='keyCombo'),false);
-    assert.equal(actions.find(a=>a.type==='typeText')?.preserveFocus,true);
+    assert.ok(actions.some(a=>a.type==='pressKey'&&a.key==='Backspace'));
+    assert.ok(actions.some(a=>a.type==='typeText'));
   }
 
   // Existing text not selected: select only because observed state requires replacement.
@@ -46,8 +47,9 @@ function makeBrain(initialValue,selection){
     assert.ok(out);
     assert.equal(actions[0].type,'keyCombo');
     assert.equal(actions[0].key,'Control+a');
-    assert.equal(actions[1].type,'typeText');
-    assert.equal(actions[1].preserveFocus,true);
+    assert.equal(actions[1].type,'pressKey');
+    assert.equal(actions[1].key,'Backspace');
+    assert.equal(actions[2].type,'typeText');
   }
 
   // A failed field verification ends the planner step; search no longer nests blind retry loops.
@@ -57,10 +59,11 @@ function makeBrain(initialValue,selection){
     assert.equal(calls,1);
   }
 
-  // preserveFocus typing must not inject a pointer click that would collapse a confirmed selection.
+  // Stable motor baseline is intentionally unchanged: typeText includes its
+  // original focus click. Brain must clear text before invoking it.
   {
-    const model={sampleTyping(){return null;}},planner=new MotorPlanner(model),plan=planner.plan({type:'typeText',text:'abc',x:100,y:100,width:200,height:30,role:'textbox',preserveFocus:true},{pointerStart:{x:5,y:5}});
-    assert.equal(plan.plan.steps.some(step=>step.method==='Input.dispatchMouseEvent'),false);
+    const model={sampleMouse(){return null;},sampleTyping(){return null;}},planner=new MotorPlanner(model),plan=planner.plan({type:'typeText',text:'abc',x:100,y:100,width:200,height:30,role:'textbox'},{pointerStart:{x:5,y:5}});
+    assert.equal(plan.plan.steps.some(step=>step.method==='Input.dispatchMouseEvent'),true);
     assert.ok(plan.plan.steps.some(step=>step.method==='Input.dispatchKeyEvent'));
   }
 
