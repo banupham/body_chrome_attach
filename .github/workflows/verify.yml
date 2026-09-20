@@ -25,7 +25,8 @@ jobs:
           daemon/native/windows_input.py
           desktop/__init__.py desktop/config.py desktop/paths.py desktop/host_logging.py desktop/health.py
           desktop/worker_supervisor.py desktop/lifecycle.py desktop/autostart.py desktop/body_status_client.py desktop/supervisor.py desktop/tray_ui.py desktop/main.py
-          tools/build_bodybrain_release.py
+          tools/build_bodybrain_release.py tools/build_body_core_test.py tools/package_guardian_module.py
+          desktop/body_only_main.py
           tests/desktop_host_contract.py tests/desktop_host_foundation_contract.py tests/bodybrain_no_brain_contract.py
           tests/desktop_runtime_smoke.py tests/bodybrain_exe_smoke.py tests/bodybrain_release_manifest_contract.py
       - name: Smoke Desktop runtime without Chrome
@@ -140,3 +141,66 @@ jobs:
           } else {
             gh release create $tag @assets --target $env:GITHUB_SHA --title 'BodyBrain v0.8.0 Hotfix 1' --notes $notes
           }
+
+
+  split-components-windows:
+    needs: [verify, windows-native-input]
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Node dependencies
+        run: npm install
+      - name: Verify protected BODY Extension
+        run: npm run extension:protected:test
+      - name: Install BODY test builder
+        run: python -m pip install -r requirements-release.txt
+      - name: Build and smoke BODY-only executable
+        run: python tools/build_body_core_test.py
+      - name: Add protected Extension to BODY artifact
+        shell: pwsh
+        run: |
+          $extension = Get-ChildItem 'artifacts/BodyChromeAttach-v*.zip' | Select-Object -First 1
+          if (-not $extension) { throw 'body_extension_missing' }
+          Copy-Item $extension.FullName 'split-artifacts/body/' -Force
+      - name: Package Guardian module
+        run: python tools/package_guardian_module.py
+      - name: Build separate Brain executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node tools/stamp_discovery_build.js
+          New-Item -ItemType Directory -Force -Path 'split-artifacts/brain' | Out-Null
+          npx --yes pkg@5.8.1 research/autonomous_discovery/entry.js --targets node18-win-x64 --output split-artifacts/brain/YouTubeExplorerBrain.exe
+          if ($LASTEXITCODE -ne 0) { throw 'split_brain_build_failed' }
+          & .\split-artifacts\brain\YouTubeExplorerBrain.exe --selftest true
+          if ($LASTEXITCODE -ne 0) { throw 'split_brain_selftest_failed' }
+      - name: Upload BODY-only component
+        uses: actions/upload-artifact@v4
+        with:
+          name: split-body-${{ github.sha }}
+          path: split-artifacts/body/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload Guardian module
+        uses: actions/upload-artifact@v4
+        with:
+          name: split-guardian-${{ github.sha }}
+          path: split-artifacts/guardian/GuardianModule.zip
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload Brain component
+        uses: actions/upload-artifact@v4
+        with:
+          name: split-brain-${{ github.sha }}
+          path: split-artifacts/brain/YouTubeExplorerBrain.exe
+          if-no-files-found: error
+          retention-days: 14
