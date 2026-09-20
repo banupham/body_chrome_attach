@@ -36,13 +36,14 @@ function sendReadiness(ws,browserInstanceId){
   }catch(error){status={state:'BLOCKED',reason:String(error?.message||error),browserState:'UNKNOWN',guardian:'EXTERNAL'};}
   runtime.send(ws,{type:'READINESS_STATUS',status,ts:Date.now()});return status;
 }
+function bodyExtensionRows(){return runtime.registry.list().map(row=>({index:row.index,shortId:row.shortId,extensionId:row.extensionId,extensionInstanceId:row.extensionInstanceId||row.extensionId||null,browserInstanceId:row.browserInstanceId||null,runtimeExtensionId:row.runtimeExtensionId||null,online:row.online===true,activeTabId:row.activeTabId??null,tabCount:row.tabCount??(Array.isArray(row.tabs)?row.tabs.length:null)}));}
 function bodyStatusResult(){
   return {
     bodyContract:{version:BODY_CONTRACT_VERSION,gateway:bodyGateway.status()},
     controller:controller.status(),
     browsers:runtime.browsers.list(),
     tasks:runtime.tasks.list(),
-    extensions:runtime.registry.list(),
+    extensions:bodyExtensionRows(),
     recordingEnabled:runtime.recordingEnabled,
     learningEnabled:runtime.learningEnabled,
     execution:runtime.execution.status(),
@@ -78,7 +79,7 @@ async function handleBrainMessage(ws,msg){
   }
   let result,type;
   if(msg.type==='BODY_STATUS'){result=bodyStatusResult();type='BODY_STATUS_RESULT';}
-  else if(msg.type==='EXTENSIONS_LIST'){result=runtime.registry.list();type='EXTENSIONS_LIST_RESULT';}
+  else if(msg.type==='EXTENSIONS_LIST'){result=bodyExtensionRows();type='EXTENSIONS_LIST_RESULT';}
   else if(msg.type==='BROWSERS_LIST'){result=runtime.browsers.list();type='BROWSERS_LIST_RESULT';}
   else if(msg.type==='TASKS_LIST'){result=runtime.tasks.list();type='TASKS_LIST_RESULT';}
   else if(msg.type==='TASK_GET'){result=runtime.tasks.public(runtime.tasks.get(msg.taskId));type='TASK_RESULT';}
@@ -172,4 +173,4 @@ function shutdown(){flushStores();clearEndpoint();process.exit(0);}
 process.once('SIGINT',shutdown);process.once('SIGTERM',shutdown);process.once('exit',()=>{flushStores();clearEndpoint();});
 const localIdentity=runtime.identity.snapshot();console.log(`Company runtime identity: company=${localIdentity.companyId} device=${localIdentity.deviceId}`);console.log('Body runtime transport: requesting an available localhost port from Windows...');console.log(`BODY Contract: v${BODY_CONTRACT_VERSION} — Brain physical boundary is BODY_STEP only.`);console.log(`Brain auth token: ${auth.status().brainTokenPath}`);console.log(`Guardian auth token: ${auth.status().guardianTokenPath}`);console.log(`Debug client token: ${auth.status().debugClientTokenPath}`);console.log('Extension authentication is automatic and bound to Extension/Browser/Runtime/Origin. Local console: pair status | pair list | pair forget <extensionId>');console.log('Guardian is external authority. Brain CDP is fail-closed without an active Guardian grant. Human local control remains higher authority.');
 rl=readline.createInterface({input:process.stdin,output:process.stdout,prompt:prompt()});rl.prompt();rl.on('line',async line=>{try{if(!localAccumulator.waiting){const pairing=pairingConsoleCommand(auth,line,{disconnectExtension:disconnectExtensionForRevocation});if(pairing.handled){if(pairing.result!==null)console.log(typeof pairing.result==='string'?pairing.result:JSON.stringify(pairing.result,null,2));updatePrompt();rl.prompt();return;}}const accumulated=localAccumulator.feed(line);if(!accumulated.ready){rl.setPrompt('... ');rl.prompt();return;}const out=await debugAdapter.run(accumulated.command,{assertControl:()=>controller.assertDebugControlAllowed()});if(out!==null)console.log(typeof out==='string'?out:JSON.stringify(out,null,2));}catch(error){localAccumulator.reset();console.log('[LỖI]',String(error?.message||error));}updatePrompt();rl.prompt();});
-module.exports={runtime,bodyGateway,guardianGate,router,debugAdapter,wss,auth,controller,runtimeLock,handleBrainMessage,handleGuardianMessage,handleStatusClientMessage,bodyStatusResult,CONTROL_PROTOCOL_VERSION,BODY_CONTRACT_VERSION,EXTENSION_PROTOCOL_VERSIONS,protocolAllowed,browserIdFromHello,requireBrowserId,loggableInputEvent,guardianInputEvent,sendReadiness,disconnectExtensionForRevocation,flushStores,clearEndpoint};
+module.exports={runtime,bodyGateway,guardianGate,router,debugAdapter,wss,auth,controller,runtimeLock,handleBrainMessage,handleGuardianMessage,handleStatusClientMessage,bodyExtensionRows,bodyStatusResult,CONTROL_PROTOCOL_VERSION,BODY_CONTRACT_VERSION,EXTENSION_PROTOCOL_VERSIONS,protocolAllowed,browserIdFromHello,requireBrowserId,loggableInputEvent,guardianInputEvent,sendReadiness,disconnectExtensionForRevocation,flushStores,clearEndpoint};
