@@ -28,6 +28,9 @@ const {GuardianProtectionState}=require('../daemon/src/guardian_protection_state
   assert.doesNotMatch(bodyGateway,/guardianGate|assertAllowed/);
   assert.doesNotMatch(bodyGateway,/environment:\{/);
   assert.doesNotMatch(bodyGateway,/browserState:String\(browser\.state/);
+  assert.match(server,/recorderEvent\(extId,msg,\{allowHumanLearning:guardianProtection\.learningAllowed/);
+  assert.match(server,/tabEvent\(extId,msg\.event\|\|\{\},\{allowHumanLearning:guardianProtection\.learningAllowed/);
+  assert.match(server,/disposeSegmentersForExtension\(browser\.extensionInstanceId,\{flush:false\}\)/);
 
   for(const guardianFile of [
     'guardian_bootstrap.js',
