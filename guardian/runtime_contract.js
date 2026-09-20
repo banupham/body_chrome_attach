@@ -108,7 +108,7 @@ test('common auto-click process names disable Human learning without invalidatin
   const decision=runtime.decisions.get('browser-a');
   assert.equal(decision.browserValid,true);
   assert.equal(decision.learningAllowed,false);
-  assert.ok(decision.learningReasons.includes('EXTERNAL_CONTROLLER_CONFLICT')||decision.controller.review===true);
+  assert.ok(decision.learningReasons.includes('EXTERNAL_CONTROLLER_SUSPECT'));
   assert.equal(client.browserVerdicts.at(-1).valid,true);
   assert.equal(client.learning.at(-1).allowed,false);
   await runtime.stop();
