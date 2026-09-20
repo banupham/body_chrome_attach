@@ -108,7 +108,9 @@ async function handleGuardianMessage(ws,msg){
     }
   }
   else if(msg.type==='GUARDIAN_LEARNING_SET'){
-    result=guardianProtection.setLearning({browserInstanceId:requireBrowserId(msg),allowed:msg.allowed===true,reasons:msg.reasons});
+    const browserInstanceId=requireBrowserId(msg);
+    result=guardianProtection.setLearning({browserInstanceId,allowed:msg.allowed===true,reasons:msg.reasons});
+    if(result.learningAllowed!==true){const browser=runtime.browsers.require(browserInstanceId);if(browser.extensionInstanceId)runtime.disposeSegmentersForExtension(browser.extensionInstanceId,{flush:false});}
     type='GUARDIAN_LEARNING_RESULT';
   }
   else if(msg.type==='GUARDIAN_PROTECTION_STATUS'){result=guardianProtection.status();type='GUARDIAN_PROTECTION_STATUS_RESULT';}
@@ -162,7 +164,7 @@ wss.on('connection',(ws,request)=>{
       if(msg.type==='READINESS_POLL'||msg.type==='KEEPALIVE'){sendReadiness(ws,item.browserInstanceId);return;}
       if(msg.type==='RECORDER_EVENT'){bodyGateway.observeRecorder(extId,msg);const event=msg.event||{};runtime.recorderEvent(extId,msg,{allowHumanLearning:guardianProtection.learningAllowed(item.browserInstanceId)});if(loggableInputEvent(event))printAsync(`[INPUT] browser=${item.browserInstanceId} tab=${Number(msg.tabId)} site=${String(msg.siteKey||'__unknown__')} event=${String(event.eventType||'unknown')}`);if(guardianInputEvent(event))guardianSend('GUARDIAN_EVENT',{event:{eventType:'input',browserInstanceId:item.browserInstanceId,tabId:Number(msg.tabId),siteKey:String(msg.siteKey||'__unknown__'),input:{eventType:event.eventType||null,ts:event.ts||Date.now(),source:event.source||null,isTrusted:event.isTrusted===true,x:event.x??null,y:event.y??null,button:event.button??null,buttons:event.buttons??null,deltaX:event.deltaX??null,deltaY:event.deltaY??null,key:event.key??null,code:event.code??null,modifiers:event.modifiers??null,repeat:event.repeat===true}}});sendReadiness(ws,item.browserInstanceId);return;}
       if(msg.type==='SEMANTIC_OBSERVATION'){bodyGateway.observeSemantic(extId,msg);runtime.semanticObservation(extId,msg);return;}
-      if(msg.type==='TAB_EVENT'){bodyGateway.observeTabEvent(extId,msg.event||{});runtime.tabEvent(extId,msg.event||{});const event={...msg.event,identity:routingIdentity(extId),browserInstanceId:item.browserInstanceId};brainSend('BODY_EVENT',{event});guardianSend('GUARDIAN_EVENT',{event});sendReadiness(ws,item.browserInstanceId);return;}
+      if(msg.type==='TAB_EVENT'){bodyGateway.observeTabEvent(extId,msg.event||{});runtime.tabEvent(extId,msg.event||{},{allowHumanLearning:guardianProtection.learningAllowed(item.browserInstanceId)});const event={...msg.event,identity:routingIdentity(extId),browserInstanceId:item.browserInstanceId};brainSend('BODY_EVENT',{event});guardianSend('GUARDIAN_EVENT',{event});sendReadiness(ws,item.browserInstanceId);return;}
       if(msg.type==='TAB_CONTEXT'){bodyGateway.observeTabContext(extId,msg);runtime.tabContext(extId,msg);const event={eventType:'tabContext',identity:routingIdentity(extId),browserInstanceId:item.browserInstanceId,tabId:msg.tabId,context:msg.context,ts:Date.now()};brainSend('BODY_EVENT',{event});guardianSend('GUARDIAN_EVENT',{event});sendReadiness(ws,item.browserInstanceId);return;}
       if(msg.type==='TAB_REMOVED'){bodyGateway.clearTab(item.browserInstanceId,msg.tabId);runtime.tabRemoved(extId,msg.tabId);const event={eventType:'tabRemoved',identity:routingIdentity(extId),browserInstanceId:item.browserInstanceId,tabId:msg.tabId,ts:Date.now()};brainSend('BODY_EVENT',{event});guardianSend('GUARDIAN_EVENT',{event});sendReadiness(ws,item.browserInstanceId);return;}
       return;
