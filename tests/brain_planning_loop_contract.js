@@ -219,8 +219,10 @@ try{
     const planner=new AutonomousAgentPlanner({memory:memoryStub(),explorationBase:0});
     const task=planner.inferTask({videoId:'target001',mediaFormat:{kind:'LONG_FORM'}},queryPlan());
     const affordances=[
-      {index:1,label:'Alpha',role:'button',tag:'button',editable:false,disabled:false,active:false,link:null,actionRect:{x:100,y:130,width:120,height:36,centerX:160,centerY:148}},
-      {index:2,label:'Beta',role:'button',tag:'button',editable:false,disabled:false,active:false,link:null,actionRect:{x:240,y:130,width:120,height:36,centerX:300,centerY:148}}
+      {index:1,label:'Alpha',role:'button',tag:'button',editable:false,disabled:false,active:false,link:null,actionRect:{x:80,y:130,width:120,height:36,centerX:140,centerY:148}},
+      {index:2,label:'Beta',role:'button',tag:'button',editable:false,disabled:false,active:false,link:null,actionRect:{x:260,y:130,width:120,height:36,centerX:320,centerY:148}},
+      {index:3,label:'Gamma',role:'button',tag:'button',editable:false,disabled:false,active:false,link:null,actionRect:{x:440,y:130,width:120,height:36,centerX:500,centerY:148}},
+      {index:4,label:'Delta',role:'button',tag:'button',editable:false,disabled:false,active:false,link:null,actionRect:{x:620,y:130,width:120,height:36,centerX:680,centerY:148}}
     ];
     const world=makeWorld({pageType:'home',candidates:[],affordances});
     const plan=planner.generate(world,{task,queryPlan:queryPlan(),stagnation:0});
