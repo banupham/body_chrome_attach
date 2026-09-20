@@ -1,11 +1,11 @@
 'use strict';
 
-const {AutonomousYouTubeBrainV2,randomScrollPoint}=require('./brain_v2');
+const {AutonomousYouTubeBrainV2,randomScrollPoint,fingerprintText,sameFingerprint,nativeTypingFocusEvidence}=require('./brain_v2');
 const {flattenCandidates}=require('./brain');
 const {classifyVideo,fold,uniq}=require('./topic_classifier');
 const {adaptiveQueryPlan,expandFromEnvironment}=require('./adaptive_query_planner');
 const {AutonomousAgentPlanner,actionMemoryId}=require('./agent_planner');
-const {buildWorld,worldDelta,candidateEffectDelta,recommendationDelta,contextKey}=require('./world_model');
+const {buildWorld,worldDelta,candidateEffectDelta,recommendationDelta,contextKey,assessRepresentation,nativeOcclusionAtPoint}=require('./world_model');
 const {bodyCapabilityCatalog,isSupportedStep}=require('./body_capabilities');
 const {FORMAT,formatKind}=require('./media_format');
 const {ExperienceMemory}=require('./experience_memory');
@@ -27,6 +27,20 @@ function candidateEffectValue(recovery){
   if(!recovery)return null;
   return Number((Number(recovery.scoreDelta||0)+Number(recovery.distanceImprovement||0)/40+(recovery.becameInViewport?12:0)+(recovery.becameActionable?36:0)-(recovery.regressed?20:0)).toFixed(3));
 }
+function affordanceMatchesDescriptor(row={},descriptor={}){
+  if(descriptor.index!=null&&Number(row.index)===Number(descriptor.index))return true;
+  const labelOk=!descriptor.label||String(row.label||'')===String(descriptor.label||''),roleOk=!descriptor.role||String(row.role||'')===String(descriptor.role||''),tagOk=!descriptor.tag||String(row.tag||'')===String(descriptor.tag||'');
+  return labelOk&&roleOk&&tagOk;
+}
+function findSemanticAffordance(semantic={},descriptor=null,{activeEditableFallback=false}={}){
+  const rows=Array.isArray(semantic?.affordances)?semantic.affordances:[];
+  if(descriptor){const exact=rows.find(row=>affordanceMatchesDescriptor(row,descriptor));if(exact)return exact;}
+  if(activeEditableFallback)return rows.find(row=>row?.active===true&&row?.editable===true)||null;
+  return null;
+}
+function rawAffordanceInteraction(row={}){return assessRepresentation({visible:row.visible,visibleRect:row.visibleRect,hitTested:row.hitTested,hitSamples:row.hitSamples,evidence:row.evidence,actionRect:row.actionRect},0);}
+function semanticTextVerification(row={},expectedText=''){const expected=fingerprintText(expectedText),actual=row?.state?.valueFingerprint||null;return {ok:Boolean(row?.active===true&&sameFingerprint(actual,expected)),active:row?.active===true,expected,actual,selection:row?.state?.selection||null};}
+function rawBodySemanticEffect(action={},delta={}){const reasons=new Set(delta?.reasons||[]);if(action.capability==='motor.typeText')return action?.verification?.textVerified===true;for(const reason of ['video','page_type','media_format','scroll','tab_count','active_tab','affordance_count','selection','actionability'])if(reasons.has(reason))return true;return false;}
 
 class AutonomousYouTubeBrainV3 extends AutonomousYouTubeBrainV2{
   constructor(config,deps={}){
@@ -94,10 +108,51 @@ class AutonomousYouTubeBrainV3 extends AutonomousYouTubeBrainV2{
     this.ledger('candidate_position_execution',{videoId:action.target?.videoId||null,delta,variant:action.positionVariant||null,beforeY,afterY:Number(after?.semantic?.viewport?.scrollY??beforeY),executionSuccess});
     return {success:executionSuccess,result,positionDelta:delta,positionVariant:action.positionVariant||null};
   }
+  async executeVerifiedTextStep(action){
+    const desired=String(action?.step?.intent?.text??'');if(!desired)return {success:false,reason:'text_value_required',verification:{textVerified:false}};
+    let state=await this.observe('raw_text_prepare'),semantic=state?.semantic||{},target=findSemanticAffordance(semantic,action.affordance,{activeEditableFallback:!action.affordance});
+    if(!target?.editable||!target?.actionRect)return {success:false,reason:'editable_target_not_observed',verification:{textVerified:false}};
+    let interaction=rawAffordanceInteraction(target),occlusion=nativeOcclusionAtPoint(interaction.actionPoint,semantic?.viewport||{},state?.browserUi||{});
+    if(interaction.actionable!==true||!interaction.actionPoint)return {success:false,reason:'editable_target_not_safely_actionable',verification:{textVerified:false,interaction}};
+    if(occlusion.occluded)return {success:false,reason:'editable_target_native_occluded',verification:{textVerified:false,occlusion}};
+    if(target.active!==true){
+      const r=interaction.visibleRect||interaction.actionRect||target.actionRect,beforeTabs=await this.browserTabs(),sourceTabId=this.tabId;
+      await this.motor({type:'click',x:Number(interaction.actionPoint.x),y:Number(interaction.actionPoint.y),width:Math.max(8,Number(r.width||12)),height:Math.max(8,Number(r.height||12)),role:'textbox'});
+      await this.reconcileTabEffects(beforeTabs,{reason:'raw_text_focus',sourceTabId});
+      const focused=await this.waitForSemantic(s=>{const row=findSemanticAffordance(s,action.affordance,{activeEditableFallback:!action.affordance});return row?.editable===true&&row?.active===true;},{timeoutMs:1800,intervalMs:140,reason:'verify_raw_text_focus'});
+      state=focused?.semantic?focused:await this.observe('raw_text_focus_after');semantic=state?.semantic||{};target=findSemanticAffordance(semantic,action.affordance,{activeEditableFallback:!action.affordance});
+      if(target?.active!==true)return {success:false,reason:'editable_focus_not_verified',verification:{textVerified:false}};
+    }
+    const nativeFocus=nativeTypingFocusEvidence(state);if(nativeFocus.known&&nativeFocus.ok===false)return {success:false,reason:nativeFocus.reason,verification:{textVerified:false,nativeFocus}};
+    const current=target?.state?.valueFingerprint||null,expected=fingerprintText(desired);
+    if(!sameFingerprint(current,expected)&&Number(current?.length||0)>0){
+      await this.motor({type:'keyCombo',key:'Control+a'});
+      const selected=await this.waitForSemantic(s=>{const row=findSemanticAffordance(s,action.affordance,{activeEditableFallback:!action.affordance});return row?.active===true&&row?.state?.selection?.fullSelection===true;},{timeoutMs:1600,intervalMs:120,reason:'verify_raw_text_selection'});
+      if(selected?.semantic){state=selected;semantic=state.semantic;target=findSemanticAffordance(semantic,action.affordance,{activeEditableFallback:!action.affordance});}
+      if(target?.state?.selection?.fullSelection!==true)return {success:false,reason:'editable_selection_not_verified',verification:{textVerified:false}};
+    }
+    if(!sameFingerprint(target?.state?.valueFingerprint,expected)){
+      interaction=rawAffordanceInteraction(target);occlusion=nativeOcclusionAtPoint(interaction.actionPoint,semantic?.viewport||{},state?.browserUi||{});
+      if(interaction.actionable!==true||!interaction.actionPoint||occlusion.occluded)return {success:false,reason:occlusion.occluded?'editable_target_native_occluded':'editable_target_not_safely_actionable',verification:{textVerified:false,interaction,occlusion}};
+      const r=interaction.visibleRect||interaction.actionRect||target.actionRect;
+      const result=await this.body.step(this.task.taskId,{kind:'motor',intent:{type:'typeText',x:Number(interaction.actionPoint.x),y:Number(interaction.actionPoint.y),width:Math.max(8,Number(r.width||300)),height:Math.max(8,Number(r.height||40)),role:'textbox',text:desired,preserveFocus:true}},{tabId:Number(this.tabId)});
+      const typed=await this.waitForSemantic(s=>{const row=findSemanticAffordance(s,action.affordance,{activeEditableFallback:!action.affordance});return semanticTextVerification(row,desired).ok;},{timeoutMs:Math.min(2200,Number(this.verifyTimeoutMs)||2200),intervalMs:140,reason:'verify_raw_text_value'});
+      const finalState=typed?.semantic?typed:await this.observe('raw_text_after'),finalRow=findSemanticAffordance(finalState?.semantic||{},action.affordance,{activeEditableFallback:!action.affordance}),verification=semanticTextVerification(finalRow,desired);
+      return {success:verification.ok,reason:verification.ok?null:'editable_value_not_verified',result,verification:{textVerified:verification.ok,...verification,nativeFocus}};
+    }
+    const verification=semanticTextVerification(target,desired);return {success:verification.ok,reason:verification.ok?null:'editable_value_not_verified',result:null,verification:{textVerified:verification.ok,...verification,nativeFocus}};
+  }
   async executeRawBodyStep(action){
+    if(action?.capability==='motor.typeText')return this.executeVerifiedTextStep(action);
     const step=JSON.parse(JSON.stringify(action.step||{}));if(!isSupportedStep(step))return {success:false,reason:'unsupported_step'};
     if(step.kind==='browser_ui'&&step.action==='address')step.value='https://www.youtube.com/';
     if(step.kind==='browser_ui'&&step.action==='findtext')step.value=this.queryPlan?.plan?.[0]?.components?.[0]||this.queryPlan?.plan?.[0]?.query||'video';
+    if(step.kind==='motor'&&['click','doubleClick','hover','moveTo','drag'].includes(String(step.intent?.type||''))&&action.affordance){
+      const state=await this.observe('raw_pointer_prepare'),target=findSemanticAffordance(state?.semantic||{},action.affordance),interaction=rawAffordanceInteraction(target||{}),occlusion=nativeOcclusionAtPoint(interaction.actionPoint,state?.semantic?.viewport||{},state?.browserUi||{});
+      if(!target||interaction.actionable!==true||!interaction.actionPoint)return {success:false,reason:'affordance_not_safely_actionable'};
+      if(occlusion.occluded)return {success:false,reason:'affordance_native_occluded',verification:{occlusion}};
+      const r=interaction.visibleRect||interaction.actionRect||target.actionRect;step.intent.x=Number(interaction.actionPoint.x);step.intent.y=Number(interaction.actionPoint.y);step.intent.width=Math.max(8,Number(r?.width||step.intent.width||12));step.intent.height=Math.max(8,Number(r?.height||step.intent.height||12));
+    }
     const beforeTabs=await this.browserTabs(),sourceTabId=this.tabId;let result;
     if(step.kind==='browser_ui')result=await this.body.browserUi(this.task.taskId,step.action,step.value??null,{tabId:Number(this.tabId)});
     else if(step.kind==='tab_switch'){const success=await this.switchToTab(step.targetTabId,{reason:'agent_raw_step'});return {success,result:null};}
@@ -132,7 +187,7 @@ class AutonomousYouTubeBrainV3 extends AutonomousYouTubeBrainV2{
         const out=await this.executeRawBodyStep(action);success=out.success;result=out.result;
       }else throw new Error(`agent_action_unknown:${action.type}`);
     }catch(e){error=String(e?.message||e);success=false;}
-    return {success,result,query,queryRepeated,selected,dwellSec,error,durationMs:Date.now()-started};
+    return {success,result,query,queryRepeated,selected,dwellSec,error,verification:result?.verification||null,durationMs:Date.now()-started};
   }
   rewardAgent({action,outcome,delta,afterInfo,recovery=null,recoveryIsTarget=false,targetProgress=false}){
     if(recovery){
@@ -147,7 +202,7 @@ class AutonomousYouTubeBrainV3 extends AutonomousYouTubeBrainV2{
     const world=await this.worldFrom(state,snapshotInfo);if(world.currentIsTarget&&!this.config.continueAfterFound){this.markTargetOpened({surface:'current_video',method:'current_video',fromTopic:world.current.topic,strategy:'arrival'});return {stop:true,world};}
     const plan=this.agentPlanner.generate(world,{task:this.taskModel,queryPlan:this.queryPlan,dynamicQueries:this.dynamicQueries,usedQueries:this.usedQueries,stagnation:this.stagnation});const action=this.agentPlanner.choose(plan,{stagnation:this.stagnation});if(!action)throw new Error('agent_planner_no_action');this.plannerDecisionCount++;
     this.ledger('agent_plan',{decision:this.plannerDecisionCount,subgoal:plan.subgoal,context:plan.context,targetFormat:plan.targetFormat,currentFormat:world.current.mediaFormat,formatMismatch:world.formatMismatch,accountRelationship:plan.accountRelationship,accountPlanMode:plan.accountPlanMode,selected:{type:action.type,capability:action.capability,purpose:action.purpose,query:action.query||null,targetVideoId:action.target?.videoId||null,targetActionability:action.target?.actionability||null,recoveryTargetVideoId:action.recoveryTargetVideoId||null,targetMediaFormat:action.target?.mediaFormat||null,formatRelation:action.formatRelation||null,positionDelta:action.delta??null,positionVariant:action.positionVariant||null,tabId:action.tabId??null,utility:action.utility,selection:action.selection,epsilon:action.epsilon,routeFamily:action.routeFamily||null,routeFrontierAdjustment:Number(action.routeFrontierAdjustment||0),causalEffectBonus:Number(action.causalEffectBonus||0),effectLearningBonus:Number(action.effectLearningBonus||0)},alternatives:plan.actions.slice(0,8).map(a=>({type:a.type,capability:a.capability,purpose:a.purpose,query:a.query||null,targetVideoId:a.target?.videoId||null,targetActionability:a.target?.actionability||null,recoveryTargetVideoId:a.recoveryTargetVideoId||null,targetMediaFormat:a.target?.mediaFormat||null,formatRelation:a.formatRelation||null,positionDelta:a.delta??null,positionVariant:a.positionVariant||null,utility:a.utility,routeFamily:a.routeFamily||null,routeFrontierAdjustment:Number(a.routeFrontierAdjustment||0),causalEffectBonus:Number(a.causalEffectBonus||0),effectLearningBonus:Number(a.effectLearningBonus||0)}))});
-    const outcome=await this.executeAgentAction(action,snapshotInfo,world);let afterState=await this.observe('agent_after_action');if(!afterState.semantic)afterState=await this.semanticRecovery();if(!afterState?.semantic)throw new Error('agent_semantic_recovery_failed');const afterInfo=await this.enrichedSnapshot(afterState,`agent_after_${action.type}`);const afterWorld=await this.worldFrom(afterState,afterInfo),delta=worldDelta(world,afterWorld),recommendations=recommendationDelta(world,afterWorld),recovery=action.recoveryTargetVideoId?candidateEffectDelta(world,afterWorld,action.recoveryTargetVideoId):null,goalSuccess=afterWorld.currentIsTarget===true;let success=outcome.success&&(delta.changed||(action.type==='preview_candidate'&&outcome.previewConfirmed===true)||action.type==='dwell'||action.capability?.startsWith('motor.moveTo')||action.capability?.startsWith('motor.hover'));if(recovery)success=goalSuccess||(outcome.success&&recovery.improved);
+    const outcome=await this.executeAgentAction(action,snapshotInfo,world);let afterState=await this.observe('agent_after_action');if(!afterState.semantic)afterState=await this.semanticRecovery();if(!afterState?.semantic)throw new Error('agent_semantic_recovery_failed');const afterInfo=await this.enrichedSnapshot(afterState,`agent_after_${action.type}`);const afterWorld=await this.worldFrom(afterState,afterInfo),delta=worldDelta(world,afterWorld),recommendations=recommendationDelta(world,afterWorld),recovery=action.recoveryTargetVideoId?candidateEffectDelta(world,afterWorld,action.recoveryTargetVideoId):null,goalSuccess=afterWorld.currentIsTarget===true;let success=outcome.success&&(delta.changed||(action.type==='preview_candidate'&&outcome.previewConfirmed===true)||action.type==='dwell'||action.capability?.startsWith('motor.moveTo')||action.capability?.startsWith('motor.hover'));if(action.type==='body_step'&&['motor.click','motor.doubleClick','motor.typeText','motor.keyCombo','motor.pressKey'].includes(String(action.capability||'')))success=outcome.success&&rawBodySemanticEffect({...action,verification:outcome.verification},delta);if(recovery)success=goalSuccess||(outcome.success&&recovery.improved);
     const progress=progressSignals({goalSuccess,success,proximityGain:afterInfo.proximityGain,targetCandidateBefore:Boolean(snapshotInfo.targetCandidate),targetCandidateAfter:Boolean(afterInfo.targetCandidate),recovery,recoveryTargetVideoId:action.recoveryTargetVideoId,targetVideoId:this.config.target}),{candidateActionabilityProgress,recoveryIsTarget,targetRecoveryProgress,targetCandidateGained,targetProximityImproved,targetProgress}=progress,candidateEffect=candidateEffectValue(recovery),reward=this.rewardAgent({action,outcome:{...outcome,success},delta,afterInfo,recovery,recoveryIsTarget,targetProgress}),memoryId=actionMemoryId(action),context=contextKey(world),effectId=action.effectId||action.routeFamily||memoryId,expectedEffectObserved=Boolean(goalSuccess||(recovery?recovery.improved:success&&delta.changed)),effectValue=goalSuccess?80:(candidateEffect??reward);
     this.memory.recordStrategy(memoryId,{context,reward,success,newTopics:afterInfo.newTopics,newTransitions:afterInfo.newTransitions,targetSeen:Boolean(afterInfo.targetCandidate)||this.targetOpened});this.memory.recordInteractionEffect?.(effectId,{context,success,recommendationShift:recommendations.recommendationShift,proximityGain:afterInfo.proximityGain,targetSeen:Boolean(afterInfo.targetCandidate)||afterWorld.currentIsTarget,exposureSeconds:Number(outcome.previewPlaybackDeltaSec??((outcome.hoverMs||0)/1000))||0});const learnedEffect=this.memory.recordActionEffect?.(memoryId,{context,executionSuccess:outcome.success===true,expectedEffectObserved,regressed:recovery?.regressed===true,targetProgress,goalSuccess,effectValue});if(outcome.query)this.memory.recordQuery(outcome.query,{reward,targetSeen:Boolean(afterInfo.targetCandidate)||this.targetOpened,resultCount:afterInfo.snapshot.candidates.length});if(!success)this.memory.addLesson(recovery?'A recovery action did not produce its expected candidate effect; lower this exact action variant in the same evidence context.':'An autonomous action failed to produce its expected environment change; planner should lower this action in the same context.',{memoryId,context,error:outcome.error,delta:delta.reasons,recovery,expectedEffectObserved});this.memory.save();this.stagnation=targetProgress?0:this.stagnation+1;
     const historyRow={step:this.stepNo,at:Date.now(),targetProgress,targetCandidateGained,targetProximityImproved,targetRecoveryProgress,candidateActionabilityProgress,recoveryIsTarget,goalSuccess,expectedEffectObserved,effectValue,candidateEffectValue:candidateEffect,memoryId,effectId,durationMs:outcome.durationMs??outcome.hoverMs??null,previewPlaybackDeltaSec:Number(outcome.previewPlaybackDeltaSec||0),queryRepeated:outcome.queryRepeated===true,actionKey:action.actionKey,type:action.type,capability:action.capability,purpose:action.purpose,subgoal:plan.subgoal.id,accountRelationship:plan.accountRelationship,accountPlanMode:plan.accountPlanMode,targetFormat:plan.targetFormat,currentFormatBefore:world.current.mediaFormat,currentFormatAfter:afterWorld.current.mediaFormat,formatMismatchBefore:world.formatMismatch,formatMismatchAfter:afterWorld.formatMismatch,videoId:outcome.selected?.videoId||action.recoveryTargetVideoId||afterWorld.current.videoId||null,topic:outcome.selected?.classification?.primary||afterWorld.current.topic,query:outcome.query,positionDelta:action.delta??null,positionVariant:action.positionVariant||null,tabId:this.tabId,success,reward,changed:delta.changed,changeReasons:delta.reasons,recoveryTargetVideoId:action.recoveryTargetVideoId||null,candidateEffectDelta:recovery,recommendationDelta:recommendations,error:outcome.error||outcome.reason||null,selection:action.selection,utility:action.utility,effectLearningBonus:Number(action.effectLearningBonus||0),learnedEffectAfter:learnedEffect||null,routeFamily:action.routeFamily||null,routeFrontierAdjustment:Number(action.routeFrontierAdjustment||0),causalEffectBonus:Number(action.causalEffectBonus||0)};this.agentHistory.push(historyRow);if(this.agentHistory.length>500)this.agentHistory.splice(0,this.agentHistory.length-500);this.batchPath.push(historyRow);this.ledger('agent_outcome',historyRow);
@@ -166,4 +221,4 @@ class AutonomousYouTubeBrainV3 extends AutonomousYouTubeBrainV2{
   }
 }
 
-module.exports={AutonomousYouTubeBrainV3,progressSignals,candidateEffectValue};
+module.exports={AutonomousYouTubeBrainV3,progressSignals,candidateEffectValue,affordanceMatchesDescriptor,findSemanticAffordance,rawAffordanceInteraction,semanticTextVerification,rawBodySemanticEffect};

@@ -27,6 +27,14 @@ function inputSelectionState(control={}){
 }
 function hasFullInputSelection(control={}){const state=inputSelectionState(control);return state.selectionAvailable&&state.fullSelection&&state.valueLength>0;}
 function searchControlEvidence(control={}){return {active:control?.active===true,valueFingerprint:control?.valueFingerprint||null,selection:inputSelectionState(control)};}
+function nativeTypingFocusEvidence(state={}){
+  const ui=state?.browserUi||{},native=ui.native||{},browserPid=Number(ui?.window?.processId),focusPid=Number(native?.focusedElement?.processId??ui?.focusedControl?.processId),foregroundPid=Number(native?.foregroundWindow?.processId);
+  const targetWindowForeground=native.targetWindowForeground===true;
+  if(ui.observed!==true)return {known:false,ok:true,reason:'native_ui_unobserved'};
+  if(Number.isFinite(browserPid)&&Number.isFinite(focusPid)&&focusPid>0&&browserPid>0&&focusPid!==browserPid)return {known:true,ok:false,reason:'native_focus_outside_browser',browserPid,focusPid,foregroundPid,targetWindowForeground};
+  if(native.targetWindowHandle!=null&&native.foregroundWindow?.handle!=null&&targetWindowForeground===false&&Number(native.foregroundWindow.handle)!==Number(native.targetWindowHandle))return {known:true,ok:false,reason:'browser_not_foreground',browserPid,focusPid,foregroundPid,targetWindowForeground};
+  return {known:Boolean(Number.isFinite(focusPid)&&focusPid>0||native.targetWindowHandle!=null),ok:true,reason:'native_focus_compatible',browserPid:Number.isFinite(browserPid)?browserPid:null,focusPid:Number.isFinite(focusPid)?focusPid:null,foregroundPid:Number.isFinite(foregroundPid)?foregroundPid:null,targetWindowForeground};
+}
 function routeSignature(semantic){
   const route=semantic?.route||{};
   return `${route.pageType||'other'}|${route.videoId||''}|${route.listId||''}|${Number(semantic?.viewport?.scrollY||0)}`;
@@ -262,8 +270,11 @@ class AutonomousYouTubeBrainV2 extends AutonomousYouTubeBrain{
       const clearedOk=Boolean(input?.active&&Number(input?.valueFingerprint?.length||0)===0);this.ledger('search_edit_observed',{phase:'clear_selected_text',before:beforeClear,after:searchControlEvidence(input),changed:Number(beforeClear.valueFingerprint?.length||0)!==Number(input?.valueFingerprint?.length||0),cleared:clearedOk});
       if(!clearedOk)return null;
     }
-    const beforeType=searchControlEvidence(input);
-    await this.motor({type:'typeText',x:p.x,y:p.y,width:input.actionRect.width,height:input.actionRect.height,role:'textbox',text:query});
+    const beforeType=searchControlEvidence(input),nativeFocus=nativeTypingFocusEvidence(state);
+    if(input?.active!==true){this.ledger('search_focus_verify',{phase:'before_type',ok:false,reason:'dom_search_input_not_active',nativeFocus});return null;}
+    if(nativeFocus.known&&nativeFocus.ok===false){this.ledger('search_focus_verify',{phase:'before_type',ok:false,reason:nativeFocus.reason,nativeFocus});return null;}
+    this.ledger('search_focus_verify',{phase:'before_type',ok:true,reason:'focus_confirmed',nativeFocus});
+    await this.motor({type:'typeText',x:p.x,y:p.y,width:input.actionRect.width,height:input.actionRect.height,role:'textbox',text:query,preserveFocus:true});
     const typed=await this.waitForSemantic(s=>sameFingerprint(s.controls?.searchInput?.valueFingerprint,expected),{timeoutMs:Math.min(1800,Number(this.verifyTimeoutMs)||1800),intervalMs:140,reason:'verify_search_text'});
     if(typed?.semantic)state=typed;else state=await this.observe('search_text_after');input=state.semantic?.controls?.searchInput;
     const ok=Boolean(input&&sameFingerprint(input.valueFingerprint,expected));this.ledger('search_text_verify',{phase:'type_observed',ok,expectedFingerprint:expected,before:beforeType,after:searchControlEvidence(input),selection:inputSelectionState(input)});return ok?state:null;
@@ -353,4 +364,4 @@ class AutonomousYouTubeBrainV2 extends AutonomousYouTubeBrain{
   }
 }
 
-module.exports={AutonomousYouTubeBrainV2,fingerprintText,sameFingerprint,inputSelectionState,hasFullInputSelection,searchControlEvidence,routeSignature,randomScrollPoint,findCandidate,tabSummary,tabIds,tabOwnershipConflict,staleDiscoveryOwner,browserStartupReadiness};
+module.exports={AutonomousYouTubeBrainV2,fingerprintText,sameFingerprint,inputSelectionState,hasFullInputSelection,searchControlEvidence,nativeTypingFocusEvidence,routeSignature,randomScrollPoint,findCandidate,tabSummary,tabIds,tabOwnershipConflict,staleDiscoveryOwner,browserStartupReadiness};
