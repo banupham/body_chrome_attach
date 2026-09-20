@@ -10,7 +10,7 @@ const {ExecutionLane}=require('./execution_lane');
 const {LocalIdentityStore}=require('./local_identity');
 const {BrowserManager}=require('./browser_manager');
 const {TaskManager}=require('./task_manager');
-const {EnvironmentGuardian}=require('./environment_guardian');
+const {createRuntimeGuardian}=require('./guardian_module');
 const {EvidenceStore}=require('./evidence_store');
 const {EvidenceAssembler}=require('./evidence_assembler');
 const {PointerStateManager}=require('./pointer_state_manager');
@@ -53,7 +53,7 @@ function createDaemonRuntime({baseDir=path.join(__dirname,'..'),printAsync=()=>{
   const send=(ws,obj)=>ws?.readyState===WebSocket.OPEN?(ws.send(JSON.stringify(obj)),true):false,pnum=(v,n)=>{const x=Number(v);if(!Number.isFinite(x))throw new Error(`${n}_required`);return x;};
 
   function requestExtension(extensionId,type,payload={},timeoutMs=30000){const ext=registry.require(extensionId),requestId=id(type.toLowerCase());return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pending.delete(requestId);reject(new Error(`extension_timeout:${extensionId}:${type}`));},timeoutMs);pending.set(requestId,{extensionId:ext.extensionId,type,resolve,reject,timer});if(!send(ext.ws,{type,requestId,...payload})){clearTimeout(timer);pending.delete(requestId);reject(new Error(`extension_not_connected:${extensionId}:${type}`));}});}
-  const guardian=new EnvironmentGuardian(baseDir,browsers,{...environmentOptions,requestExtension,env:environmentOptions.env||identityOptions.env||process.env});
+  const guardian=createRuntimeGuardian({baseDir,browsers,requestExtension,environmentOptions,identityOptions});
 
   function registerExtensionIdentity({browserInstanceId,extensionInstanceId,runtimeExtensionId}){return identity.registerBrowser({browserInstanceId,extensionInstanceId,runtimeExtensionId});}
   function identityForExtension(extensionId=null){const item=registry.get(extensionId||null);if(item?.browserInstanceId){const chain=identity.identityChain(item.browserInstanceId);if(chain)return chain;}return {...identity.snapshot(),browserInstanceId:item?.browserInstanceId||null,extensionInstanceId:item?.extensionInstanceId||item?.extensionId||extensionId||null,runtimeExtensionId:item?.runtimeExtensionId||null,platformIdentities:{}};}
