@@ -24,7 +24,7 @@ def _stop(_signum=None, _frame=None) -> None:
 
 
 def parser() -> argparse.ArgumentParser:
-    value = argparse.ArgumentParser(description="BODY Core test host with external Guardian authority")
+    value = argparse.ArgumentParser(description="BODY Core test host with external Guardian protection")
     value.add_argument("--check", action="store_true", help="start BODY core, verify BODY-only boundary, report and exit")
     value.add_argument("--json", action="store_true", help="emit compact JSON")
     return value
@@ -49,7 +49,7 @@ def run(argv: list[str] | None = None) -> int:
             "product": "BodyCore",
             "state": "RUNNING",
             "guardian": "EXTERNAL",
-            "brainCdpGate": "FAIL_CLOSED_WITHOUT_GUARDIAN_GRANT",
+            "guardianProtection": "BROWSER_VALIDITY_AND_HUMAN_LEARNING",
             "humanLocalControl": "DIRECT",
             "bodyContractVersion": hello.get("bodyContractVersion"),
             "controlProtocolVersion": hello.get("protocolVersion"),
