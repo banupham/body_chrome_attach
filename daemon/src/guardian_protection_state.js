@@ -23,6 +23,8 @@ class GuardianProtectionState{
     this.guardian=null;
     // Fail closed only for HUMAN LEARNING. Existing Brain tasks are untouched.
     for(const row of this.browsers.values()){
+      row.browserValid=null;
+      row.browserReasons=['GUARDIAN_DETACHED'];
       row.learningAllowed=false;
       row.learningReasons=['GUARDIAN_DETACHED'];
       row.updatedAt=Date.now();
