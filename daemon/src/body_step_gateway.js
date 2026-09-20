@@ -49,10 +49,10 @@ function validateBodyStepCommand(message){
 }
 
 class BodyStepGateway{
-  constructor(runtime,{now=()=>Date.now(),baseDir=null,ledger=null,browserUiObserver=null,guardianGate=null}={}){
+  constructor(runtime,{now=()=>Date.now(),baseDir=null,ledger=null,browserUiObserver=null}={}){
     if(!runtime)throw new Error('body_step_gateway_runtime_required');
     if(!ledger&&!baseDir)throw new Error('body_step_gateway_ledger_required');
-    this.runtime=runtime;this.now=now;this.ledger=ledger||new BodyStepLedger(baseDir,{now});this.guardianGate=guardianGate;this.inflight=new Map();this.lastLedgerError=null;
+    this.runtime=runtime;this.now=now;this.ledger=ledger||new BodyStepLedger(baseDir,{now});this.inflight=new Map();this.lastLedgerError=null;
     this.semantic=new Map();this.page=new Map();this.tabContext=new Map();this.controls=new Map();this.browserUiObserver=browserUiObserver||createBrowserUiObserver();
   }
   key(browserInstanceId,tabId){return `${String(browserInstanceId||'')}/${Number(tabId)}`;}
@@ -95,8 +95,6 @@ class BodyStepGateway{
     try{
       context=this.runtime.tasks.executionContext(command.taskId,tabRef,{autoStart:false});accepted=true;
       before=await this.observe({browserInstanceId:context.browserInstanceId,tabId:context.tabId});
-      if(!this.guardianGate||typeof this.guardianGate.assertAllowed!=='function')throw errorWithCode('guardian_authority_gate_unavailable');
-      this.guardianGate.assertAllowed(context.browserInstanceId);
       attemptCount=1;
       if(command.step.kind==='motor')raw=await this.runtime.executeIntent(command.step.intent,{extensionId:context.extensionInstanceId,tabId:context.tabId});
       else if(command.step.kind==='browser_ui')raw=await this.runtime.executeBrowserCommand(command.step.action,{extensionId:context.extensionInstanceId,tabId:context.tabId,value:command.step.value??null});
