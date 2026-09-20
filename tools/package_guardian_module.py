@@ -10,15 +10,30 @@ OUT = ROOT / "split-artifacts" / "guardian"
 FILES = [
     "guardian/README.txt",
     "guardian/authority_contract.js",
-    "daemon/src/guardian_module.js",
+    "guardian/body_client.js",
+    "guardian/browser_registry.js",
+    "guardian/runtime.js",
+    "guardian/main.js",
+    "guardian/package.json",
     "daemon/src/environment_guardian.js",
-    "daemon/src/protection_supervisor.js",
     "daemon/src/behavior_guardian.js",
     "daemon/src/external_controller_probe.js",
     "daemon/src/device_network_probe.js",
     "daemon/src/safe_json_persistence.js",
     "daemon/src/runtime_data_dir.js",
 ]
+DIRECTORIES = [
+    "node_modules/ws",
+]
+
+
+def add_tree(zf: zipfile.ZipFile, relative: str) -> None:
+    source = ROOT / relative
+    if not source.exists():
+        raise RuntimeError(f"guardian_module_directory_missing:{relative}")
+    for item in source.rglob("*"):
+        if item.is_file():
+            zf.write(item, item.relative_to(ROOT).as_posix())
 
 
 def main() -> int:
@@ -29,16 +44,23 @@ def main() -> int:
         if not (ROOT / relative).exists():
             raise RuntimeError(f"guardian_module_file_missing:{relative}")
     manifest = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "component": "Guardian",
-        "kind": "module",
-        "entry": "daemon/src/guardian_module.js",
+        "kind": "standalone-module",
+        "entry": "guardian/main.js",
+        "run": "node guardian/main.js",
         "files": FILES,
+        "directories": DIRECTORIES,
+        "authorityOrder": "HUMAN > GUARDIAN > BRAIN > BODY",
         "bodyCoupling": "external-authority-contract-only",
+        "cdpOwnership": "BODY",
+        "decisionOwnership": "Guardian",
     }
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for relative in FILES:
             zf.write(ROOT / relative, relative)
+        for relative in DIRECTORIES:
+            add_tree(zf, relative)
         zf.writestr("guardian/module-manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     print(archive)
     return 0
