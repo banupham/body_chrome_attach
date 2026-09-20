@@ -1,7 +1,5 @@
 'use strict';
 
-process.env.BODY_GUARDIAN_MODE='detached';
-
 let server;
 try{
   server=require('./server');
@@ -43,5 +41,5 @@ if(Number.isInteger(desktopParentPid)&&desktopParentPid>0&&desktopParentPid!==pr
 }
 process.once('exit',()=>{if(parentWatch)clearInterval(parentWatch);});
 
-console.log('BODY Core mode: Guardian DETACHED; task assignment remains fail-closed until Guardian is attached.');
+console.log('BODY Core mode: Guardian is a separate external authority; Brain CDP is fail-closed without an external grant.');
 module.exports={...server,processAlive};
