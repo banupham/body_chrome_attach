@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "central-brain/v1/task-result.schema.json",
+  "title": "Brain -> Central TASK_RESULT",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "taskId",
+    "targetId",
+    "state",
+    "outcome",
+    "metrics",
+    "finishedAt"
+  ],
+  "properties": {
+    "type": {
+      "const": "TASK_RESULT"
+    },
+    "taskId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "targetId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "state": {
+      "enum": [
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED"
+      ]
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetObserved",
+        "targetOpened"
+      ],
+      "properties": {
+        "targetObserved": {
+          "type": "boolean"
+        },
+        "targetOpened": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 512
+        },
+        "reportRef": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 512
+        },
+        "evidenceDigest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 256
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "startedAt",
+        "durationMs",
+        "steps",
+        "bodyActions"
+      ],
+      "properties": {
+        "startedAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "steps": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bodyActions": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "finishedAt": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}
