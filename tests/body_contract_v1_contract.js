@@ -49,7 +49,7 @@ assert.deepEqual(socket.brain.physicalActions,['BODY_STEP']);
 assert.ok(socket.brain.queries.includes('BODY_OBSERVE'));
 assert.equal(socket.brain.queries.includes('ENVIRONMENT_STATUS'),false);
 assert.equal(socket.brain.managerActions.includes('ENVIRONMENT_PROBE'),false);
-assert.equal(socket.guardian.authorityOrder,'HUMAN > GUARDIAN > BRAIN > BODY');
+assert.equal(socket.guardian.authorityOrder,'HUMAN > GUARDIAN > BRAIN > BODY');assert.match(socket.guardian.protection,/Human learning/i);assert.match(socket.guardian.protection,/not gated by Guardian/i);
 assert.ok(socket.extension.requests.includes('BODY_OBSERVE_SNAPSHOT'));
 assert.match(socket.brain.physicalActionRequirement,/explicitly RUNNING taskId/);
 assert.match(socket.bodyContract.deliverySemantics,/at-most-once/);
@@ -58,7 +58,7 @@ for(const legacy of ['INTENT_EXECUTE','STRATEGY_EXECUTE','TAB_SWITCH','BROWSER_C
 
 assert.match(server,/BODY_STEP/);
 assert.match(server,/BODY_OBSERVE/);
-assert.match(server,/new BodyStepGateway\(runtime,\{baseDir:__dirname,guardianGate\}\)/);
+assert.match(server,/new BodyStepGateway\(runtime,\{baseDir:__dirname\}\)/);
 assert.match(server,/bodyGateway\.flushSync/);
 assert.equal(/msg\.type==='STRATEGY_EXECUTE'/.test(server),false,'production Brain router must not expose multi-action strategy execution');
 assert.equal(/msg\.type==='INTENT_EXECUTE'/.test(server),false,'production Brain router must not expose raw intent execution');
