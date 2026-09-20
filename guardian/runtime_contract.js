@@ -130,3 +130,24 @@ test('pending Chrome environment check does not disconnect or mark the browser i
   assert.equal(client.learning.length,0);
   await runtime.stop();
 });
+
+
+test('benign mousemove stream is observed without Guardian control-message spam',async()=>{
+  let now=1000;
+  const client=new FakeClient(),registry=new GuardianBrowserRegistry(),environment=new FakeEnvironment(registry);
+  const runtime=new GuardianRuntime({
+    client,registry,environmentGuardian:environment,now:()=>now,
+    controllerProbe:{probe:async()=>({available:true,driverProcesses:[],frameworkProcesses:[],inputAutomationProcesses:[],browserAutomationFlags:[],browserRemoteDebugFlags:[],suspectUdpEndpoints:[]})},
+    setIntervalImpl:()=>null,clearIntervalImpl:()=>{}
+  });
+  await runtime.start();
+  const browserMessages=client.browserVerdicts.length,learningMessages=client.learning.length;
+  for(let i=0;i<25;i++){
+    now+=16;
+    await runtime.handleEvent({eventType:'input',browserInstanceId:'browser-a',input:{eventType:'mousemove',ts:now,isTrusted:true,source:'human',x:i,y:i}});
+  }
+  assert.equal(client.browserVerdicts.length,browserMessages);
+  assert.equal(client.learning.length,learningMessages);
+  assert.equal(runtime.behavior.status('browser-a').eventCount>=25,true);
+  await runtime.stop();
+});
