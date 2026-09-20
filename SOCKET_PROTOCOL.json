@@ -1,42 +1,89 @@
 {
   "controlProtocolVersion": 7,
   "bodyContractVersion": "1.0",
-  "extensionProtocolCompatibility": [5, 6],
+  "extensionProtocolCompatibility": [
+    5,
+    6
+  ],
   "url": "ws://127.0.0.1:43147",
   "transportRole": "internal Company Runtime transport; not the product's primary command port",
   "desktopHost": {
     "runtimeConfig": "config/bodybrain-runtime.json",
     "entrypoint": "desktop/main.py (bodybrain.cmd on Windows development builds)",
-    "bootstrap": "BodyBrain starts the Guardian+BODY worker on the same deterministic localhost bootstrap port embedded in the production Chrome BODY Extension",
+    "bootstrap": "BODY and Guardian are separate local components; Guardian connects to BODY as an external authority",
     "brainBoundary": "desktop/body_client.py exposes contract/task APIs only",
-    "guardianGate": "desktop reports READY only after environment eligibility and Protection Supervisor initial checks pass; Task assignment remains fail-closed inside Company Runtime"
+    "guardianGate": "Guardian is external. Brain physical execution is fail-closed at BODY's CDP boundary unless Guardian has issued a current grant."
   },
-  "roles": ["extension", "brain", "debug_client"],
+  "roles": [
+    "extension",
+    "guardian",
+    "brain",
+    "debug_client",
+    "status_client"
+  ],
   "identity": {
-    "local": ["companyId", "deviceId"],
-    "browser": ["browserInstanceId", "extensionInstanceId", "runtimeExtensionId"],
+    "local": [
+      "companyId",
+      "deviceId"
+    ],
+    "browser": [
+      "browserInstanceId",
+      "extensionInstanceId",
+      "runtimeExtensionId"
+    ],
     "applicationModel": "one Company Runtime application per Device by default",
     "legacyV5BrowserFallback": "browser-<extensionInstanceId> when an older v5 adapter has no browserInstanceId"
   },
   "authentication": {
     "brain": "256-bit local token from daemon/profiles/.auth/brain.token",
     "debugClient": "256-bit local token from daemon/profiles/.auth/client.token or BODY_DEBUG_TOKEN",
-    "extension": "TOFU pairing bound to extensionInstanceId + runtimeExtensionId + browserInstanceId when supplied"
+    "extension": "TOFU pairing bound to extensionInstanceId + runtimeExtensionId + browserInstanceId when supplied",
+    "guardian": "256-bit local token from daemon/profiles/.auth/guardian.token"
   },
   "controllerPolicy": {
-    "brain": "exclusive controller; physical execution requires an explicitly RUNNING taskId",
-    "debugClient": "diagnostic/test only; mutating commands rejected while Brain is attached",
-    "daemonConsole": "diagnostic/test only",
-    "bodyRuntime": "continues recording and learning with or without Brain"
+    "human": "highest authority; local operator control is outside Brain planning and Guardian policy decisions",
+    "guardian": "second authority; may allow or revoke Brain CDP execution for each Browser Instance",
+    "brain": "planner/controller; physical execution requires an explicitly RUNNING taskId plus a current Guardian grant",
+    "body": "no policy authority; observes and executes",
+    "debugClient": "local Human/operator test surface"
   },
   "brain": {
-    "hello": {"type": "HELLO", "role": "brain", "protocolVersion": 7, "controllerId": "brain-instance", "token": "required"},
-    "queries": ["BODY_STATUS", "BODY_OBSERVE", "EXTENSIONS_LIST", "BROWSERS_LIST", "TABS_LIST", "TASKS_LIST", "TASK_GET", "ENVIRONMENT_STATUS"],
-    "managerActions": ["TASK_CREATE", "TASK_APPROVE", "TASK_START", "TASK_COMPLETE", "TASK_FAIL", "TASK_CANCEL", "ENVIRONMENT_PROBE", "ENVIRONMENT_PROBE_ALL"],
-    "physicalActions": ["BODY_STEP"],
-    "physicalActionRequirement": "BODY_STEP requires contractVersion=1.0, a durable stepId, an explicitly RUNNING taskId, and exactly one Body step; TaskManager resolves Browser/Tab ownership and Browser eligibility before the at-most-one physical attempt",
-    "legacyPhysicalActionsRejected": ["INTENT_EXECUTE", "STRATEGY_EXECUTE", "TAB_SWITCH", "BROWSER_COMMAND"],
-    "events": ["BODY_EVENT"],
+    "hello": {
+      "type": "HELLO",
+      "role": "brain",
+      "protocolVersion": 7,
+      "controllerId": "brain-instance",
+      "token": "required"
+    },
+    "queries": [
+      "BODY_STATUS",
+      "BODY_OBSERVE",
+      "EXTENSIONS_LIST",
+      "BROWSERS_LIST",
+      "TABS_LIST",
+      "TASKS_LIST",
+      "TASK_GET"
+    ],
+    "managerActions": [
+      "TASK_CREATE",
+      "TASK_START",
+      "TASK_COMPLETE",
+      "TASK_FAIL",
+      "TASK_CANCEL"
+    ],
+    "physicalActions": [
+      "BODY_STEP"
+    ],
+    "physicalActionRequirement": "BODY_STEP requires contractVersion=1.0, a durable stepId, an explicitly RUNNING taskId, exactly one Body step, and a current external Guardian grant immediately before physical CDP dispatch",
+    "legacyPhysicalActionsRejected": [
+      "INTENT_EXECUTE",
+      "STRATEGY_EXECUTE",
+      "TAB_SWITCH",
+      "BROWSER_COMMAND"
+    ],
+    "events": [
+      "BODY_EVENT"
+    ],
     "freeformCommandStrings": false
   },
   "bodyContract": {
@@ -47,55 +94,166 @@
     "stepResult": "BODY_STEP_RESULT",
     "stepIdentity": "taskId + stepId; requestId is transport-only and does not change Body step identity",
     "deliverySemantics": "durable at-most-once physical execution; duplicate completed steps replay the stored result; unresolved durable reservations return body_step_outcome_unknown and are never physically re-executed",
-    "eyes": "BODY_OBSERVE requests a live Extension snapshot when available; cached facts remain explicitly age-tagged if live refresh fails",
-    "browserUiActions": ["back", "forward", "reload", "hardreload", "stop", "newtab", "closetab", "reopentab", "nexttab", "prevtab", "newwindow", "addressbar", "find", "downloads", "history", "devtools", "fullscreen", "bookmark", "zoomin", "zoomout", "zoomreset", "address", "findtext"],
+    "eyes": "BODY_OBSERVE returns raw structured browser/page/UI evidence and freshness only; it contains no Guardian eligibility, device/IP policy, task judgment, retry advice, or next-action recommendation",
+    "browserUiActions": [
+      "back",
+      "forward",
+      "reload",
+      "hardreload",
+      "stop",
+      "newtab",
+      "closetab",
+      "reopentab",
+      "nexttab",
+      "prevtab",
+      "newwindow",
+      "addressbar",
+      "find",
+      "downloads",
+      "history",
+      "devtools",
+      "fullscreen",
+      "bookmark",
+      "zoomin",
+      "zoomout",
+      "zoomreset",
+      "address",
+      "findtext"
+    ],
     "invariants": [
       "one taskId+stepId identity requests one Body step and permits at most one physical attempt",
-      "BODY returns facts and technical execution state, never task judgment",
+      "BODY returns observable facts and technical execution state, never task or Guardian judgment",
       "Brain alone decides semantic success/failure and next step",
-      "BODY learning changes HOW, never WHAT goal to pursue",
+      "Guardian alone decides whether Brain CDP may pass",
+      "Human local authority is above Guardian",
+      "BODY learning may shape physical HOW, never WHAT goal to pursue",
       "Human and Agent provenance remain separate",
       "Brain never accesses CDP/native-input/MotorLearning internals directly"
     ],
-    "forbiddenJudgmentFields": ["success", "taskSuccess", "verified", "verification", "goalAchieved", "correct", "wrong", "shouldRetry", "nextAction", "recommendedAction"]
-  },
-  "environmentGuardian": {
-    "scope": "Browser Instance, never individual Tabs",
-    "defaultPolicy": {
-      "directOnly": true,
-      "requireUniquePublicIpAcrossOnlineBrowsers": true,
-      "requireUniqueEnvironmentSignatureAcrossOnlineBrowsers": true,
-      "strictSameBrowserEnvironmentConsistency": false
-    },
-    "browserFlow": "OFFLINE -> ENV_CHECK -> ACTIVE or QUARANTINED",
-    "signals": ["browser environment signature hash", "public egress IP", "Chrome proxy mode", "device proxy environment", "Windows system proxy", "VPN/tunnel interface heuristic", "extension/CDP availability"],
-    "readOnly": true,
-    "forbidden": ["fingerprint spoofing", "proxy/VPN concealment", "IP rotation for evasion", "proxy mutation", "DNS/route mutation", "detector evasion"],
-    "extensionRequest": "ENVIRONMENT_PROBE",
-    "publicIpEndpoint": "BODY_PUBLIC_IP_ENDPOINT; HTTPS required; default https://api.ipify.org?format=json"
-  },
-  "taskPolicy": {
-    "classes": ["SAFE_AUTO", "HUMAN_APPROVED", "RESTRICTED"],
-    "safeAuto": ["discovery", "open/navigation", "review/classification", "collect metadata", "internal analysis"],
-    "restricted": ["spam", "fake engagement", "metric manipulation", "detector evasion", "fingerprint manipulation", "proxy/VPN concealment"]
+    "forbiddenJudgmentFields": [
+      "success",
+      "taskSuccess",
+      "verified",
+      "verification",
+      "goalAchieved",
+      "correct",
+      "wrong",
+      "shouldRetry",
+      "nextAction",
+      "recommendedAction"
+    ]
   },
   "taskWorkspace": {
-    "identity": ["taskId", "browserInstanceId", "primaryTabId", "tabIds"],
-    "invariant": "one tab belongs to at most one active TaskWorkspace; one Browser may host many Tasks on different tabs"
+    "identity": [
+      "taskId",
+      "browserInstanceId",
+      "primaryTabId",
+      "tabIds"
+    ],
+    "invariant": "one tab belongs to at most one active TaskWorkspace; BODY tracks ownership mechanically and does not classify task policy"
   },
   "debugClient": {
-    "hello": {"type": "HELLO", "role": "debug_client", "protocolVersion": 7, "token": "required"},
-    "command": {"type": "COMMAND", "requestId": "id", "command": "status"},
-    "purpose": "manual smoke testing and diagnostics only"
+    "hello": {
+      "type": "HELLO",
+      "role": "debug_client",
+      "protocolVersion": 7,
+      "token": "required"
+    },
+    "command": {
+      "type": "COMMAND",
+      "requestId": "id",
+      "command": "status"
+    },
+    "purpose": "Human/local operator smoke testing and diagnostics; higher authority than Brain/Guardian policy"
   },
-  "pageMotor": {"capability": "HUMAN_MOTOR", "planner": "src/canonical_motor_planner.js", "allowedCdpMethods": ["Input.dispatchMouseEvent", "Input.dispatchKeyEvent"], "brainVisibility": "internal only; Brain uses BODY_STEP"},
-  "browserUi": {"capability": "BROWSER_UI", "executionBackend": "persistent Windows SendInput worker plus bounded browser API fast path", "brainVisibility": "internal only; Brain uses BODY_STEP"},
+  "pageMotor": {
+    "capability": "HUMAN_MOTOR",
+    "planner": "src/canonical_motor_planner.js",
+    "allowedCdpMethods": [
+      "Input.dispatchMouseEvent",
+      "Input.dispatchKeyEvent"
+    ],
+    "brainVisibility": "internal only; Brain uses BODY_STEP"
+  },
+  "browserUi": {
+    "capability": "BROWSER_UI",
+    "executionBackend": "persistent Windows SendInput worker plus bounded browser API fast path",
+    "brainVisibility": "internal only; Brain uses BODY_STEP"
+  },
   "extension": {
-    "hello": {"type": "HELLO", "role": "extension", "protocolVersion": "5 or 6", "browserInstanceId": "persistent logical Chrome identity", "extensionId": "persistent extensionInstanceId", "token": "paired token or null on first pairing"},
-    "authEvents": ["AUTH_PAIRED", "AUTH_ERROR"],
-    "requests": ["PING", "LIST_TABS", "ACTIVE_TAB", "POINTER_STATUS", "BODY_OBSERVE_SNAPSHOT", "ENVIRONMENT_PROBE", "BODY_EXECUTE", "BODY_DETACH", "TAB_SWITCH", "FOCUS_WINDOW", "BROWSER_UI_END", "RECORD_SET", "CURSOR_SET"],
-    "events": ["RECORDER_EVENT", "SEMANTIC_OBSERVATION", "TAB_EVENT", "TAB_CONTEXT", "TAB_REMOVED", "KEEPALIVE"]
+    "hello": {
+      "type": "HELLO",
+      "role": "extension",
+      "protocolVersion": "5 or 6",
+      "browserInstanceId": "persistent logical Chrome identity",
+      "extensionId": "persistent extensionInstanceId",
+      "token": "paired token or null on first pairing"
+    },
+    "authEvents": [
+      "AUTH_PAIRED",
+      "AUTH_ERROR"
+    ],
+    "requests": [
+      "PING",
+      "LIST_TABS",
+      "ACTIVE_TAB",
+      "POINTER_STATUS",
+      "BODY_OBSERVE_SNAPSHOT",
+      "ENVIRONMENT_PROBE",
+      "BODY_EXECUTE",
+      "BODY_DETACH",
+      "TAB_SWITCH",
+      "FOCUS_WINDOW",
+      "BROWSER_UI_END",
+      "RECORD_SET",
+      "CURSOR_SET"
+    ],
+    "events": [
+      "RECORDER_EVENT",
+      "SEMANTIC_OBSERVATION",
+      "TAB_EVENT",
+      "TAB_CONTEXT",
+      "TAB_REMOVED",
+      "KEEPALIVE"
+    ]
   },
   "trainingGroundTruth": "human-only",
-  "executionCapabilities": ["HUMAN_MOTOR", "BROWSER_UI"]
+  "executionCapabilities": [
+    "HUMAN_MOTOR",
+    "BROWSER_UI"
+  ],
+  "guardian": {
+    "role": "guardian",
+    "authorityOrder": "HUMAN > GUARDIAN > BRAIN > BODY",
+    "hello": {
+      "type": "HELLO",
+      "role": "guardian",
+      "protocolVersion": 7,
+      "guardianId": "guardian-instance",
+      "token": "required"
+    },
+    "responsibilities": [
+      "device and network observation",
+      "Chrome/browser environment observation",
+      "public IP, proxy and VPN observation",
+      "external/third-party Chrome controller detection",
+      "mouse/keyboard behavior conflict observation",
+      "deep browser protection/fingerprint signals",
+      "allow or revoke Brain CDP execution"
+    ],
+    "bodyQueries": [
+      "GUARDIAN_BODY_STATUS",
+      "GUARDIAN_BODY_OBSERVE",
+      "GUARDIAN_EXTENSION_ENVIRONMENT_PROBE",
+      "GUARDIAN_GATE_STATUS"
+    ],
+    "bodyActions": [
+      "GUARDIAN_GATE_SET",
+      "GUARDIAN_GATE_REVOKE"
+    ],
+    "events": [
+      "GUARDIAN_EVENT"
+    ],
+    "cdpGate": "short-lived per-Browser grant; revoked on Guardian disconnect; BODY does not evaluate policy"
+  }
 }
