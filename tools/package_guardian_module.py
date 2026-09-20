@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "split-artifacts" / "guardian"
 FILES = [
-    "guardian/README.md",
+    "guardian/README.txt",
     "daemon/src/guardian_module.js",
     "daemon/src/environment_guardian.js",
     "daemon/src/protection_supervisor.js",
