@@ -44,7 +44,7 @@ async function main(){
   process.once('SIGTERM',stop);
 
   while(!stopping){
-    current=new GuardianRuntime();
+    current=new GuardianRuntime({log:row=>console.log(JSON.stringify(row))});
     try{
       const status=await current.start();
       console.log(JSON.stringify({component:'Guardian',state:'RUNNING',authorityOrder:status.authorityOrder,browserCount:status.browsers.length,decisionCount:Object.keys(status.decisions).length}));
