@@ -100,8 +100,6 @@ class BrowserManager{
 
   public(row){
     return {
-      companyId:row.companyId,
-      deviceId:row.deviceId,
       browserInstanceId:row.browserInstanceId,
       extensionInstanceId:row.extensionInstanceId,
       runtimeExtensionId:row.runtimeExtensionId,
