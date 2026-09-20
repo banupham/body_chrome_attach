@@ -43,6 +43,7 @@ class BodyBrainClient{
   async status(){return (await this.request('BODY_STATUS')).result||{};}
   async observe({taskId=null,browserInstanceId=null,tabId=null}={}){return (await this.request('BODY_OBSERVE',{taskId,browserInstanceId,tabId})).observation||{};}
   async createTask(spec){return (await this.request('TASK_CREATE',{task:spec})).result||{};}
+  async getTask(taskId){return (await this.request('TASK_GET',{taskId})).result||{};}
   async startTask(taskId){return (await this.request('TASK_START',{taskId})).result||{};}
   async finishTask(taskId,state,payload){const type=state==='COMPLETED'?'TASK_COMPLETE':state==='FAILED'?'TASK_FAIL':'TASK_CANCEL';const args=type==='TASK_COMPLETE'?{taskId,result:payload}:type==='TASK_FAIL'?{taskId,error:String(payload||'failed')}:{taskId,reason:String(payload||'cancelled')};return (await this.request(type,args)).result||{};}
   async step(taskId,step,{tabId='primary'}={}){const stepId=id('STEP');return this.request('BODY_STEP',{contractVersion:BODY_CONTRACT_VERSION,taskId,stepId,tabId,step});}
