@@ -254,6 +254,38 @@ function Get-IntersectionRect($A, $B) {
     return [pscustomobject]@{ x=$left; y=$top; width=($right-$left); height=($bottom-$top) }
 }
 
+function Select-AddressBarControl($Controls) {
+    $edits = @($Controls | Where-Object { $_.controlType -eq 'Edit' -and $null -ne $_.rect })
+    if ($edits.Count -eq 0) { return $null }
+
+    # Prefer Chromium's UIA class identity when it is uniquely present.
+    # This is language-independent and does not inspect the localized control name.
+    $classMatches = @($edits | Where-Object { $_.className -eq 'OmniboxViewViews' })
+    if ($classMatches.Count -eq 1) { return $classMatches[0] }
+
+    # Structural fallback: the omnibox is an Edit geometrically contained by
+    # the browser toolbar. Avoid localized labels and locale-specific text.
+    $toolbars = @($Controls | Where-Object { $_.controlType -eq 'ToolBar' -and $null -ne $_.rect })
+    $structural = @()
+    foreach ($edit in $edits) {
+        foreach ($toolbar in $toolbars) {
+            $overlap = Get-IntersectionRect $edit.rect $toolbar.rect
+            if ($null -eq $overlap) { continue }
+            $editArea = [double]$edit.rect.width * [double]$edit.rect.height
+            $overlapArea = [double]$overlap.width * [double]$overlap.height
+            if ($editArea -gt 0 -and ($overlapArea / $editArea) -ge 0.90) {
+                $structural += $edit
+                break
+            }
+        }
+    }
+    if ($structural.Count -eq 1) { return $structural[0] }
+    if ($structural.Count -gt 1) {
+        return $structural | Sort-Object @{ Expression={ [double]$_.rect.width }; Descending=$true }, @{ Expression={ [double]$_.rect.y }; Ascending=$true } | Select-Object -First 1
+    }
+    return $null
+}
+
 function Get-NativeRect([IntPtr]$Handle) {
     if ($Handle -eq [IntPtr]::Zero -or [NativeWindowProbe]::IsIconic($Handle)) { return $null }
     $r = New-Object NativeWindowProbe+RECT
@@ -412,7 +444,7 @@ function Observe-BrowserUi([string]$ExpectedTitle, $RequestedWindowId) {
     $w = $selected.element
     $controls = @(Get-BrowserControls $w.element $w.rect)
     $tabs = @($controls | Where-Object { $_.controlType -eq 'TabItem' })
-    $addressBar = $controls | Where-Object { $_.controlType -eq 'Edit' -and ($_.name -match '(?i)address|search|omnibox') } | Select-Object -First 1
+    $addressBar = Select-AddressBarControl $controls
     $native = Get-NativeFacts $w
     $focused = $native.focusedElement
     if ($null -eq $focused) { $focused = $controls | Where-Object { $_.state.focused -eq $true } | Select-Object -First 1 }
