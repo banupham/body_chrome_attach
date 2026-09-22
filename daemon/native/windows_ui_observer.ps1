@@ -3,8 +3,10 @@ param([string]$Mode = 'worker')
 Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
-Add-Type -AssemblyName UIAutomationClient
-Add-Type -AssemblyName UIAutomationTypes
+if ($Mode -ne 'safety-worker') {
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+}
 
 Add-Type -TypeDefinition @"
 using System;
@@ -151,7 +153,7 @@ function New-ControlSnapshot($Element, [int]$Index) {
     }
 }
 
-function Get-ChromeWindows {
+function Get-ChromeWindows([bool]$NativeOnly = $false) {
     $out = @()
     foreach ($handle in [NativeWindowProbe]::GetTopLevelWindows()) {
         try {
@@ -165,8 +167,10 @@ function Get-ChromeWindows {
             if ($className -notlike 'Chrome_WidgetWin_*') { continue }
             $name = Clean-Text ([NativeWindowProbe]::GetTitle($handle)) 300
             $element = $null
-            try { $element = [System.Windows.Automation.AutomationElement]::FromHandle($handle) } catch {}
-            if (-not $name -and $null -ne $element) { try { $name = Clean-Text $element.Current.Name 300 } catch {} }
+            if (-not $NativeOnly) {
+                try { $element = [System.Windows.Automation.AutomationElement]::FromHandle($handle) } catch {}
+                if (-not $name -and $null -ne $element) { try { $name = Clean-Text $element.Current.Name 300 } catch {} }
+            }
             $minimized = [NativeWindowProbe]::IsIconic($handle)
             $rect = if ($minimized) { $null } else { Get-NativeRect $handle }
             $out += [pscustomobject]@{
@@ -193,8 +197,8 @@ function Window-Score($Window, [string]$ExpectedTitle) {
     return 0
 }
 
-function Select-ChromeWindow([string]$ExpectedTitle) {
-    $windows = @(Get-ChromeWindows)
+function Select-ChromeWindow([string]$ExpectedTitle, [bool]$NativeOnly = $false) {
+    $windows = @(Get-ChromeWindows $NativeOnly)
     if ($windows.Count -eq 0) { return [pscustomobject]@{ element=$null; confidence='none'; reason='chrome_window_not_found'; candidates=0 } }
     if ($windows.Count -eq 1) {
         $score = Window-Score $windows[0] $ExpectedTitle
@@ -295,7 +299,7 @@ function Get-NativeRect([IntPtr]$Handle) {
     return [pscustomobject]@{ x=[double]$r.Left; y=[double]$r.Top; width=$width; height=$height }
 }
 
-function Get-NativeWindowSnapshot([IntPtr]$Handle, [int]$ZOrder = 0) {
+function Get-NativeWindowSnapshot([IntPtr]$Handle, [int]$ZOrder = 0, [bool]$NativeOnly = $false) {
     if ($Handle -eq [IntPtr]::Zero) { return $null }
     [uint32]$processId = 0
     [void][NativeWindowProbe]::GetWindowThreadProcessId($Handle, [ref]$processId)
@@ -304,14 +308,16 @@ function Get-NativeWindowSnapshot([IntPtr]$Handle, [int]$ZOrder = 0) {
     $name = Clean-Text ([NativeWindowProbe]::GetTitle($Handle)) 300
     $className = Clean-Text ([NativeWindowProbe]::GetClass($Handle)) 160
     $controlType = $null
-    try {
-        $element = [System.Windows.Automation.AutomationElement]::FromHandle($Handle)
-        if ($null -ne $element) {
-            if (-not $name) { try { $name = Clean-Text $element.Current.Name 300 } catch {} }
-            if (-not $className) { try { $className = Clean-Text $element.Current.ClassName 160 } catch {} }
-            try { $controlType = Get-TypeName $element } catch {}
-        }
-    } catch {}
+    if (-not $NativeOnly) {
+        try {
+            $element = [System.Windows.Automation.AutomationElement]::FromHandle($Handle)
+            if ($null -ne $element) {
+                if (-not $name) { try { $name = Clean-Text $element.Current.Name 300 } catch {} }
+                if (-not $className) { try { $className = Clean-Text $element.Current.ClassName 160 } catch {} }
+                try { $controlType = Get-TypeName $element } catch {}
+            }
+        } catch {}
+    }
     return [pscustomobject]@{
         handle=[int64]$Handle.ToInt64()
         processId=[int]$processId
@@ -369,7 +375,7 @@ function Fact-Text($Value) {
     return [string]$Value
 }
 
-function Get-NativeFacts($WindowRow) {
+function Get-NativeFacts($WindowRow, [bool]$NativeOnly = $false) {
     $targetHandle = [IntPtr]::Zero
     try { if ($null -ne $WindowRow.handle) { $targetHandle = [IntPtr]([int64]$WindowRow.handle) } } catch {}
     if ($targetHandle -eq [IntPtr]::Zero -and $null -ne $WindowRow.element) {
@@ -378,18 +384,20 @@ function Get-NativeFacts($WindowRow) {
 
     $contentRect = Get-Win32ContentRect $WindowRow
     $contentRectSource = if ($null -ne $contentRect) { 'win32_render_widget' } else { $null }
-    if ($null -eq $contentRect) {
+    if ($null -eq $contentRect -and -not $NativeOnly) {
         $contentRect = Get-ContentRect $WindowRow.element
         if ($null -ne $contentRect) { $contentRectSource = 'uia_document' }
     }
 
     $foregroundHandle = [NativeWindowProbe]::GetForegroundWindow()
-    $foreground = Get-NativeWindowSnapshot $foregroundHandle 0
+    $foreground = Get-NativeWindowSnapshot $foregroundHandle 0 $NativeOnly
     $focused = $null
-    try {
-        $element = [System.Windows.Automation.AutomationElement]::FocusedElement
-        if ($null -ne $element) { $focused = New-ControlSnapshot $element 0 }
-    } catch {}
+    if (-not $NativeOnly) {
+        try {
+            $element = [System.Windows.Automation.AutomationElement]::FocusedElement
+            if ($null -ne $element) { $focused = New-ControlSnapshot $element 0 }
+        } catch {}
+    }
 
     $occluders = @()
     if ($targetHandle -ne [IntPtr]::Zero -and $null -ne $WindowRow.rect) {
@@ -398,7 +406,7 @@ function Get-NativeFacts($WindowRow) {
         while ($cursor -ne [IntPtr]::Zero -and $z -lt 40 -and $occluders.Count -lt 20) {
             $z++
             if ([NativeWindowProbe]::IsWindowVisible($cursor) -and -not [NativeWindowProbe]::IsIconic($cursor)) {
-                $row = Get-NativeWindowSnapshot $cursor $z
+                $row = Get-NativeWindowSnapshot $cursor $z $NativeOnly
                 if ($null -ne $row -and $null -ne $row.rect) {
                     $windowOverlap = Get-IntersectionRect $row.rect $WindowRow.rect
                     $contentOverlap = Get-IntersectionRect $row.rect $contentRect
@@ -426,12 +434,34 @@ function Get-NativeFacts($WindowRow) {
         targetWindowForeground=$targetForeground
         targetWindowMinimized=$targetMinimized
         windowSource='win32'
-        uiAutomationAvailable=[bool]($null -ne $WindowRow.element)
+        uiAutomationAvailable=$(if ($NativeOnly) { $null } else { [bool]($null -ne $WindowRow.element) })
         contentRect=$contentRect
         contentRectSource=$contentRectSource
         foregroundWindow=$foreground
         focusedElement=$focused
         topLevelOccluders=$occluders
+    }
+}
+
+function Observe-NativeClickFacts([string]$ExpectedTitle, $RequestedWindowId) {
+    $selected = Select-ChromeWindow $ExpectedTitle $true
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    if ($null -eq $selected.element) {
+        return [pscustomobject]@{
+            available=$true; observed=$false; reason=$selected.reason; confidence=$selected.confidence; observedAt=$now
+            source='win32_click_guard'; window=$null; native=$null
+        }
+    }
+    $w = $selected.element
+    $native = Get-NativeFacts $w $true
+    return [pscustomobject]@{
+        available=$true; observed=$true; reason=$null; confidence=$selected.confidence; observedAt=$now
+        source='win32_click_guard'
+        window=[pscustomobject]@{
+            handle=$w.handle; processId=$w.processId; name=$w.name; className=$w.className
+            rect=$w.rect; minimized=$w.minimized; requestedWindowId=$RequestedWindowId
+        }
+        native=$native
     }
 }
 
@@ -478,14 +508,18 @@ function Write-Reply($Reply) {
     [Console]::Out.Flush()
 }
 
-if ($Mode -ne 'worker') { throw 'windows_ui_observer supports worker mode only' }
+if ($Mode -ne 'worker' -and $Mode -ne 'safety-worker') { throw 'windows_ui_observer supports worker or safety-worker mode only' }
 while ($null -ne ($line = [Console]::In.ReadLine())) {
     if ([string]::IsNullOrWhiteSpace($line)) { continue }
     $id = $null
     try {
         $msg = $line | ConvertFrom-Json
         $id = [string]$msg.id
-        $snapshot = Observe-BrowserUi ([string]$msg.title) $msg.windowId
+        if ($Mode -eq 'safety-worker') {
+            $snapshot = Observe-NativeClickFacts ([string]$msg.title) $msg.windowId
+        } else {
+            $snapshot = Observe-BrowserUi ([string]$msg.title) $msg.windowId
+        }
         Write-Reply ([pscustomobject]@{ id=$id; ok=$true; snapshot=$snapshot })
     } catch {
         Write-Reply ([pscustomobject]@{ id=$id; ok=$false; error=(Clean-Text $_.Exception.Message 180) })
