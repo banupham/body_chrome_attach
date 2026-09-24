@@ -12,6 +12,7 @@ FILES = [
     "guardian/authority_contract.js",
     "guardian/body_client.js",
     "guardian/browser_registry.js",
+    "guardian/heartbeat.js",
     "guardian/runtime.js",
     "guardian/main.js",
     "guardian/package.json",

@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,6 +81,31 @@ def build_helper() -> Path:
     return helper
 
 
+def smoke_with_external_guardian(executable: Path, node: str) -> None:
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+    guardian = subprocess.Popen(
+        [node, str(ROOT / "guardian" / "main.js")],
+        cwd=str(ROOT),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=creationflags,
+    )
+    try:
+        time.sleep(0.25)
+        run([str(executable), "--check", "--json"])
+    finally:
+        if guardian.poll() is None:
+            try:
+                guardian.terminate()
+                guardian.wait(timeout=3)
+            except Exception:
+                try: guardian.kill()
+                except Exception: pass
+                try: guardian.wait(timeout=2)
+                except Exception: pass
+
+
 def build() -> Path:
     if os.name != "nt":
         raise BuildError("body_core_build_windows_only")
@@ -110,7 +136,7 @@ def build() -> Path:
     executable = OUT / "BodyCore.exe"
     if not executable.exists():
         raise BuildError("body_core_executable_missing")
-    run([str(executable), "--check", "--json"])
+    smoke_with_external_guardian(executable, node)
     return executable
 
 

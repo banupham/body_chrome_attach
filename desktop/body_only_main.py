@@ -24,8 +24,8 @@ def _stop(_signum=None, _frame=None) -> None:
 
 
 def parser() -> argparse.ArgumentParser:
-    value = argparse.ArgumentParser(description="BODY Core test host with external Guardian protection")
-    value.add_argument("--check", action="store_true", help="start BODY core, verify BODY-only boundary, report and exit")
+    value = argparse.ArgumentParser(description="BODY Core test host with required external Guardian protection")
+    value.add_argument("--check", action="store_true", help="start BODY core, require authenticated external Guardian, report and exit")
     value.add_argument("--json", action="store_true", help="emit compact JSON")
     return value
 
@@ -37,7 +37,7 @@ def emit(payload: dict, compact: bool) -> None:
 def run(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     config = load_runtime_config()
-    supervisor = BodyRuntimeSupervisor(config, bootstrap_name="body_bootstrap.js")
+    supervisor = BodyRuntimeSupervisor(config, bootstrap_name="body_bootstrap.js", guardian_mode="external")
     client: BodyStatusClient | None = None
     try:
         supervisor.start()
@@ -48,7 +48,7 @@ def run(argv: list[str] | None = None) -> int:
         payload = {
             "product": "BodyCore",
             "state": "RUNNING",
-            "guardian": "EXTERNAL",
+            "guardian": "EXTERNAL_AUTHENTICATED",
             "guardianProtection": "BROWSER_VALIDITY_AND_HUMAN_LEARNING",
             "humanLocalControl": "DIRECT",
             "bodyContractVersion": hello.get("bodyContractVersion"),

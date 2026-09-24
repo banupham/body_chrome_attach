@@ -2,6 +2,7 @@
 
 const {GuardianRuntime}=require('./runtime');
 const {GuardianBrowserRegistry}=require('./browser_registry');
+const {GuardianHeartbeat}=require('./heartbeat');
 const {BehaviorGuardian}=require('../daemon/src/behavior_guardian');
 const {assessControllerConflict}=require('../daemon/src/external_controller_probe');
 
@@ -38,17 +39,18 @@ function selftest(){
 async function main(){
   if(process.argv.includes('--selftest'))return selftest();
   const check=process.argv.includes('--check');
-  let stopping=false,current=null;
-  const stop=()=>{stopping=true;try{current?.client?.close();}catch{}};
+  let stopping=false,current=null,heartbeat=null;
+  const stop=()=>{stopping=true;try{heartbeat?.disarm();}catch{}try{current?.client?.close();}catch{}};
   process.once('SIGINT',stop);
   process.once('SIGTERM',stop);
 
   while(!stopping){
     current=new GuardianRuntime({log:row=>console.log(JSON.stringify(row))});
+    heartbeat=new GuardianHeartbeat(current.client).arm();
     try{
       const status=await current.start();
       console.log(JSON.stringify({component:'Guardian',state:'RUNNING',authorityOrder:status.authorityOrder,browserCount:status.browsers.length,decisionCount:Object.keys(status.decisions).length}));
-      if(check){await current.stop();return 0;}
+      if(check){heartbeat.disarm();await current.stop();return 0;}
       await new Promise(resolve=>{
         const done=()=>resolve();
         current.client.once('disconnected',done);
@@ -59,6 +61,8 @@ async function main(){
       console.error('[GUARDIAN]',String(error?.stack||error?.message||error));
       if(check)return 1;
     }finally{
+      try{heartbeat?.disarm();}catch{}
+      heartbeat=null;
       try{await current.stop();}catch{}
       current=null;
     }
