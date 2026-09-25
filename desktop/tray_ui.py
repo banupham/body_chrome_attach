@@ -285,6 +285,7 @@ class BodyBrainTray:
         self._notice_lock = threading.RLock()
         self._notice = "Starting BODY runtime..."
         self._last_text = ""
+        self._session_log_offset = 0
         self._hwnd = None
         self._edit = None
         self._font = None
@@ -299,11 +300,18 @@ class BodyBrainTray:
     def supported() -> bool:
         return os.name == "nt"
 
+    def _capture_log_session_start(self) -> None:
+        try:
+            self._session_log_offset = self.log_path.stat().st_size if self.log_path.exists() else 0
+        except OSError:
+            self._session_log_offset = 0
+
     def start(self) -> None:
         if not self.supported():
             raise TrayUiError("windows_tray_ui_unavailable")
         if self._thread and self._thread.is_alive():
             return
+        self._capture_log_session_start()
         self._thread = threading.Thread(target=self._run, name="BodyBrainTrayUI", daemon=False)
         self._thread.start()
         if not self._started.wait(5.0):
@@ -343,19 +351,25 @@ class BodyBrainTray:
     def _read_log_tail(self) -> str:
         path = self.log_path
         if not path.exists():
-            return "[BodyBrain] Waiting for daemon log..."
+            return "[BodyBrain] Waiting for current-session daemon log..."
         try:
             with path.open("rb") as handle:
                 handle.seek(0, 2)
                 size = handle.tell()
-                start = max(0, size - self.max_log_bytes)
+                session_start = max(0, int(self._session_log_offset))
+                if size < session_start:
+                    session_start = 0
+                    self._session_log_offset = 0
+                if size <= session_start:
+                    return "[BodyBrain] Waiting for current-session daemon log..."
+                start = max(session_start, size - self.max_log_bytes)
                 handle.seek(start)
                 data = handle.read()
             text = data.decode("utf-8", errors="replace")
             lines = text.splitlines()
-            if start > 0 and lines:
+            if start > session_start and lines:
                 lines = lines[1:]
-            return "\r\n".join(lines[-self.max_log_lines:]) or "[BodyBrain] Daemon log is empty."
+            return "\r\n".join(lines[-self.max_log_lines:]) or "[BodyBrain] Current-session daemon log is empty."
         except OSError as exc:
             return f"[BodyBrain] Unable to read daemon log: {type(exc).__name__}"
 
@@ -414,7 +428,7 @@ class BodyBrainTray:
                 width, height = 680, 360
                 x, y = self._top_right_xy(width, height)
                 style = WS_CAPTION | WS_SYSMENU | WS_THICKFRAME
-                ex_style = WS_EX_TOPMOST | WS_EX_TOOLWINDOW
+                ex_style = WS_EX_TOOLWINDOW
                 self._hwnd = user32.CreateWindowExW(
                     ex_style,
                     self._class_name,
@@ -491,7 +505,7 @@ class BodyBrainTray:
                     raise ctypes.WinError(ctypes.get_last_error())
 
                 self._refresh_log(force=True)
-                user32.ShowWindow(self._hwnd, SW_SHOWNOACTIVATE)
+                user32.ShowWindow(self._hwnd, SW_HIDE)
                 user32.UpdateWindow(self._hwnd)
                 self._set_stage("running")
                 self._started.set()
