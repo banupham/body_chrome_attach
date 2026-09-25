@@ -25,7 +25,7 @@ function protocolAllowed(role,version){const v=Number(version);return role==='ex
 function browserIdFromHello(msg){const explicit=String(msg.browserInstanceId||'').trim();if(explicit)return explicit;const extensionId=String(msg.extensionId||'').trim();if(Number(msg.protocolVersion)===5&&extensionId)return `browser-${extensionId}`;return '';}
 function requireBrowserId(msg){const id=String(msg.browserInstanceId||'').trim();if(!id)throw new Error('browser_instance_id_required');return id;}
 function loggableInputEvent(event){return ['mousedown','mouseup','wheel','keydown','keyup'].includes(String(event?.eventType||''));}
-function guardianInputEvent(event){return ['mousemove','mousedown','mouseup','click','dblclick','wheel','keydown','keyup'].includes(String(event?.eventType||''));}
+function guardianInputEvent(event){return ['mousemove','mousedown','mouseup','click','dblclick','wheel','keydown','keyup','synthetic_input'].includes(String(event?.eventType||''));}
 function sendReadiness(ws,browserInstanceId){
   let status={state:'CHECKING',reason:'guardian_browser_check_pending',browserState:'UNKNOWN',guardian:'EXTERNAL'};
   try{
