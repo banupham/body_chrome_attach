@@ -1,0 +1,150 @@
+CENTRAL ↔ BRAIN CONTRACT V1
+DESIGN ONLY — no Central implementation yet
+
+Purpose
+-------
+Freeze the boundary between Central and Brain before Central is built.
+
+Business objective
+------------------
+TASK_OFFER carries exactly one business objective: targetId.
+
+Central must never send Brain:
+- search query
+- keyword list
+- route/surface choice
+- strategy
+- plan
+- click coordinates
+- scroll direction
+- retry rule
+- dwell time
+- candidate choice
+- BODY_STEP
+- browser UI action
+
+Central preconditions before TASK_OFFER
+---------------------------------------
+Central must complete ALL checks before a TASK_OFFER exists:
+1. Brain WebSocket session is authenticated.
+2. Brain is online and capability-compatible.
+3. targetId exists in Central Target Registry.
+4. targetId resolves to a channel registered with Central.
+5. Channel registration is ACTIVE.
+6. Brain authoritative wallet has sufficient available points.
+7. Task cost is atomically RESERVED.
+
+If any check fails, Central must not send TASK_OFFER.
+
+Brain must not independently decide:
+- whether a target is registered;
+- whether a channel is active;
+- whether authoritative points are sufficient.
+
+Those are Central-owned facts. TASK_OFFER itself is the signed/authenticated assertion that those preconditions were satisfied.
+
+TASK_OFFER
+----------
+Required envelope:
+{
+  "type": "TASK_OFFER",
+  "protocolVersion": 1,
+  "taskId": "...",
+  "targetId": "...",
+  "authorizationRef": "...",
+  "issuedAt": 0,
+  "expiresAt": 0
+}
+
+Only targetId is a planning objective.
+taskId, authorizationRef and timestamps are transport/accounting metadata.
+
+Brain acceptance
+----------------
+Brain may reject only for local/protocol reasons:
+- BUSY
+- UNSUPPORTED_TARGET_ID_FORMAT
+- TASK_EXPIRED
+- DUPLICATE_TASK_CONFLICT
+- LOCAL_RUNTIME_UNAVAILABLE
+- BODY_UNAVAILABLE
+- PROTOCOL_INVALID
+
+Brain must not reject with:
+- TARGET_NOT_REGISTERED
+- CHANNEL_NOT_ACTIVE
+- INSUFFICIENT_POINTS
+
+Those failures belong to Central before TASK_OFFER.
+
+Task execution
+--------------
+Once accepted, Brain owns:
+- target profiling;
+- environment understanding;
+- planning;
+- exploration;
+- candidate selection;
+- self-correction;
+- retry decisions;
+- learning;
+- BODY action requests.
+
+Central does not participate in those decisions.
+
+Task result
+-----------
+Brain returns factual outcome only:
+- COMPLETED / FAILED / CANCELLED
+- targetObserved
+- targetOpened
+- startedAt
+- finishedAt
+- durationMs
+- steps
+- bodyActions
+- reportRef
+- evidenceDigest
+
+Brain must not submit:
+- score
+- points
+- reward
+- debit
+- wallet balance
+
+Scoring and settlement
+----------------------
+Central owns the score.
+
+Central receives TASK_RESULT, verifies it, applies a versioned score policy, then settles the reservation.
+
+Points model:
+AVAILABLE -> RESERVED -> DEBITED
+or
+AVAILABLE -> RESERVED -> RELEASED
+
+Brain may cache wallet information for display, but cannot mutate authoritative points.
+
+Idempotency
+-----------
+taskId identifies one logical task lifecycle.
+A repeated TASK_OFFER with the same taskId must not create a second Brain run.
+
+Reconnect
+---------
+Brain reconnects outward to Central.
+The protocol reserves RESUME / RESUME_ACK for restoring active task state after connection loss.
+
+Concurrency
+-----------
+BRAIN_HELLO advertises maxConcurrentTasks.
+V1 defaults to 1.
+Central must not offer beyond negotiated capacity.
+
+Implementation order
+--------------------
+1. Freeze this contract.
+2. Finish independent BODY / Guardian / Brain functional testing.
+3. Work on Brain planning, self-learning, exploration, environment understanding and self-correction.
+4. Build Central later against this frozen contract.

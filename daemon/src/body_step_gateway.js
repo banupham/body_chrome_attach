@@ -1,8 +1,11 @@
 'use strict';
 
+const fs=require('node:fs');
+const path=require('node:path');
+const readline=require('node:readline');
+const {spawn}=require('node:child_process');
 const {BodyStepLedger}=require('./body_step_ledger');
 const {BROWSER_COMMANDS,COMPOUND_COMMANDS}=require('./browser_ui_adapter');
-const {createBrowserUiObserver}=require('./browser_ui_observer');
 
 const BODY_CONTRACT_VERSION='1.0';
 const MOTOR_TYPES=new Set(['click','doubleClick','moveTo','hover','drag','scrollVertical','scrollHorizontal','typeText','pressKey','keyCombo']);
@@ -23,6 +26,59 @@ function ageMs(now,row){if(!row||!finiteNumber(row.observedAt))return null;retur
 function technicalError(error){const message=String(error?.message||error||'body_step_error');const code=String(error?.code||message.split(':')[0]||'body_step_error');return {code,message};}
 function actionName(step){if(step?.kind==='motor')return String(step.intent?.type||'unknown');if(step?.kind==='browser_ui')return String(step.action||'unknown');if(step?.kind==='tab_switch')return 'switchTab';return null;}
 function replayResult(result,replayed=true){const out=clone(result);if(out?.execution)out.execution.replayed=replayed===true;return out;}
+
+const CLICK_INTENT_TYPES=new Set(['click','doubleClick']);
+function validRect(rect){return Boolean(rect&&finiteNumber(rect.x)&&finiteNumber(rect.y)&&finiteNumber(rect.width)&&finiteNumber(rect.height)&&Number(rect.width)>0&&Number(rect.height)>0);}
+function pointInRect(point,rect){return Boolean(point&&validRect(rect)&&finiteNumber(point.x)&&finiteNumber(point.y)&&Number(point.x)>=Number(rect.x)&&Number(point.x)<Number(rect.x)+Number(rect.width)&&Number(point.y)>=Number(rect.y)&&Number(point.y)<Number(rect.y)+Number(rect.height));}
+function viewportFromObservation(observation={}){const value=observation?.content?.semantic?.viewport||observation?.content?.page?.viewport||null;if(!value||!finiteNumber(value.width)||!finiteNumber(value.height)||Number(value.width)<=0||Number(value.height)<=0)return null;return {width:Number(value.width),height:Number(value.height)};}
+function evaluateNativeClickSafety(observation={},intent={},snapshot={}){
+  const tabId=optionalInteger(observation?.scope?.tabId),activeTabId=optionalInteger(observation?.bodyState?.activeTabId);
+  if(activeTabId===null)return {ok:false,reason:'native_click_guard_active_tab_unknown'};
+  if(tabId===null||activeTabId!==tabId)return {ok:false,reason:'native_click_guard_tab_not_active',tabId,activeTabId};
+  if(snapshot?.observed!==true)return {ok:false,reason:'native_click_guard_unobserved',nativeReason:snapshot?.reason||null};
+  const native=snapshot?.native||{};
+  if(native.targetWindowMinimized!==false)return {ok:false,reason:'native_click_guard_window_minimized_or_unknown'};
+  if(native.targetWindowForeground!==true)return {ok:false,reason:'native_click_guard_window_not_foreground'};
+  const contentRect=native.contentRect;
+  if(!validRect(contentRect))return {ok:false,reason:'native_click_guard_content_rect_unknown'};
+  const viewport=viewportFromObservation(observation);
+  if(!viewport)return {ok:false,reason:'native_click_guard_viewport_unknown'};
+  const x=Number(intent?.x),y=Number(intent?.y);
+  if(!Number.isFinite(x)||!Number.isFinite(y))return {ok:false,reason:'native_click_guard_point_unknown'};
+  if(x<0||y<0||x>=viewport.width||y>=viewport.height)return {ok:false,reason:'native_click_guard_point_outside_viewport',viewport,point:{x,y}};
+  const screenPoint={x:Number(contentRect.x)+x*(Number(contentRect.width)/viewport.width),y:Number(contentRect.y)+y*(Number(contentRect.height)/viewport.height)};
+  if(!pointInRect(screenPoint,contentRect))return {ok:false,reason:'native_click_guard_point_outside_content',screenPoint};
+  const occluder=(Array.isArray(native.topLevelOccluders)?native.topLevelOccluders:[]).find(row=>pointInRect(screenPoint,row?.rect))||null;
+  if(occluder)return {ok:false,reason:'native_click_guard_occluded',screenPoint,occluder:{handle:occluder.handle??null,processId:occluder.processId??null,className:occluder.className??null,rect:clone(occluder.rect)}};
+  return {ok:true,reason:null,screenPoint,contentRect:clone(contentRect),viewport};
+}
+function tabOnlyBrowserUi(browser,browserInstanceId,tabId,windowId,title,now){
+  const tabs=[...(browser?.tabs?.values?.()||[])].map(row=>({id:Number(row.id),active:row.active===true,windowId:optionalInteger(row.windowId),title:row.title??null,siteKey:row.siteKey??null,navigationToken:row.navigationToken??null,navigationEpoch:optionalInteger(row.navigationEpoch),status:row.status??null}));
+  return {available:true,observed:true,reason:null,confidence:'tab_state',source:'extension_tab_state',observedAt:now,scope:{browserInstanceId,tabId:Number(tabId),windowId,title},window:null,native:{targetWindowHandle:null,targetWindowForeground:null,targetWindowMinimized:null,windowSource:null,uiAutomationAvailable:null,contentRect:null,contentRectSource:null,foregroundWindow:null,focusedElement:null,topLevelOccluders:[]},focusedControl:null,addressBar:null,tabs,controls:[],signature:null};
+}
+
+class Win32ClickSafetyProbe{
+  constructor({baseDir,platform=process.platform,spawnImpl=spawn,timeoutMs=5000}={}){
+    this.platform=platform;this.spawnImpl=spawnImpl;this.timeoutMs=Math.max(1000,Number(timeoutMs)||5000);this.helperPath=baseDir?path.join(baseDir,'native','windows_ui_observer.ps1'):null;this.child=null;this.starting=null;this.pending=new Map();this.sequence=0;
+  }
+  async _spawn(exe,args){return new Promise((resolve,reject)=>{let child;try{child=this.spawnImpl(exe,args,{windowsHide:true,stdio:['pipe','pipe','pipe']});}catch(error){reject(error);return;}const cleanup=()=>{child.off?.('error',onError);child.off?.('spawn',onSpawn);};const onError=error=>{cleanup();try{child.kill();}catch{}reject(error);};const onSpawn=()=>{cleanup();resolve(child);};child.once?.('error',onError);child.once?.('spawn',onSpawn);if(!child.once)resolve(child);});}
+  _bind(child){
+    this.child=child;const lines=readline.createInterface({input:child.stdout});
+    lines.on('line',line=>{let msg;try{msg=JSON.parse(String(line));}catch{return;}const id=String(msg.id??''),item=this.pending.get(id);if(!item)return;clearTimeout(item.timer);this.pending.delete(id);if(msg.ok===false)item.resolve({available:false,observed:false,reason:String(msg.error||'native_click_guard_worker_error')});else item.resolve(msg.snapshot||{available:false,observed:false,reason:'native_click_guard_empty_snapshot'});});
+    child.stderr?.on('data',()=>{});child.once?.('close',code=>{if(this.child===child)this.child=null;for(const [id,item] of this.pending){clearTimeout(item.timer);this.pending.delete(id);item.resolve({available:false,observed:false,reason:`native_click_guard_worker_closed:${code}`});}});
+  }
+  async start(){
+    if(this.platform!=='win32'||!this.helperPath||!fs.existsSync(this.helperPath))throw errorWithCode('native_click_guard_unavailable');
+    if(this.child&&!this.child.killed)return this.child;if(this.starting)return this.starting;
+    this.starting=(async()=>{const args=['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',this.helperPath,'safety-worker'],candidates=[['powershell.exe',args],['powershell',args],['pwsh',['-NoProfile','-NonInteractive','-File',this.helperPath,'safety-worker']]];let lastError=null;for(const [exe,argv] of candidates){try{const child=await this._spawn(exe,argv);this._bind(child);return child;}catch(error){lastError=error;}}throw lastError||errorWithCode('native_click_guard_worker_unavailable');})();
+    try{return await this.starting;}finally{this.starting=null;}
+  }
+  async observe(request={}){
+    let child;try{child=await this.start();}catch(error){return {available:false,observed:false,reason:String(error?.code||error?.message||'native_click_guard_unavailable')};}
+    const id=String(++this.sequence);return new Promise(resolve=>{const timer=setTimeout(()=>{this.pending.delete(id);if(this.child===child){this.child=null;try{child.kill();}catch{}}resolve({available:false,observed:false,reason:'native_click_guard_timeout'});},this.timeoutMs);this.pending.set(id,{resolve,timer});try{child.stdin.write(JSON.stringify({id,title:String(request.title||''),windowId:request.windowId??null,tabId:request.tabId??null})+'\n');}catch(error){clearTimeout(timer);this.pending.delete(id);resolve({available:false,observed:false,reason:'native_click_guard_write_failed'});}});
+  }
+  async close(){const child=this.child;this.child=null;if(!child)return;try{child.stdin.end();}catch{}await new Promise(resolve=>{child.once?.('close',resolve);setTimeout(()=>{try{child.kill();}catch{}resolve();},300);});}
+}
 
 function validateBodyStepCommand(message){
   if(!message||typeof message!=='object'||Array.isArray(message))throw errorWithCode('body_step_command_required');
@@ -49,11 +105,14 @@ function validateBodyStepCommand(message){
 }
 
 class BodyStepGateway{
-  constructor(runtime,{now=()=>Date.now(),baseDir=null,ledger=null,browserUiObserver=null}={}){
+  constructor(runtime,{now=()=>Date.now(),baseDir=null,ledger=null,browserUiObserver=null,nativeClickSafetyProbe=null}={}){
     if(!runtime)throw new Error('body_step_gateway_runtime_required');
     if(!ledger&&!baseDir)throw new Error('body_step_gateway_ledger_required');
     this.runtime=runtime;this.now=now;this.ledger=ledger||new BodyStepLedger(baseDir,{now});this.inflight=new Map();this.lastLedgerError=null;
-    this.semantic=new Map();this.page=new Map();this.tabContext=new Map();this.controls=new Map();this.browserUiObserver=browserUiObserver||createBrowserUiObserver();
+    this.semantic=new Map();this.page=new Map();this.tabContext=new Map();this.controls=new Map();this.browserUiObserver=browserUiObserver||null;
+    const nativeHelper=baseDir?path.join(baseDir,'native','windows_ui_observer.ps1'):null;
+    this.nativeClickGuardRequired=process.platform==='win32'&&Boolean(nativeHelper&&fs.existsSync(nativeHelper));
+    this.nativeClickSafetyProbe=nativeClickSafetyProbe||(this.nativeClickGuardRequired?new Win32ClickSafetyProbe({baseDir}):null);
   }
   key(browserInstanceId,tabId){return `${String(browserInstanceId||'')}/${Number(tabId)}`;}
   identityForExtension(extensionId){return this.runtime.identityForExtension(extensionId);}
@@ -80,10 +139,20 @@ class BodyStepGateway{
     let pointer=refresh.pointer||this.runtime.pointerState.snapshot(identity,tabId);if(!refresh.pointer&&browser.online&&extensionInstanceId){try{pointer=await this.runtime.pointerStatus(extensionInstanceId,tabId);}catch{}}
     const key=this.key(browserInstanceId,tabId),semanticRow=this.semantic.get(key)||null,pageRow=this.page.get(key)||null,contextRow=this.tabContext.get(key)||null,controlRow=this.controls.get(key)||null,now=this.now(),context=contextRow?.value||null,page=pageRow?.value||null,semantic=semanticRow?.value||null;
     const windowId=optionalInteger(context?.windowId??tab.windowId),title=context?.title??tab.title??null;
-    let browserUi={available:false,observed:false,reason:'browser_ui_observer_unavailable',confidence:'none',source:'windows_uia_read_only',observedAt:now,scope:{browserInstanceId,tabId:Number(tabId),windowId,title},window:null,focusedControl:null,addressBar:null,tabs:[],controls:[],signature:null};
-    if(this.browserUiObserver&&typeof this.browserUiObserver.observe==='function')try{browserUi=await this.browserUiObserver.observe({browserInstanceId,tabId:Number(tabId),windowId,title});}catch(error){browserUi={...browserUi,reason:'browser_ui_observer_error',error:technicalError(error)};}
-    const observation={contractVersion:BODY_CONTRACT_VERSION,observedAt:now,scope:{browserInstanceId,extensionInstanceId,tabId:Number(tabId),siteKey:context?.siteKey??tab.siteKey??null,title,windowId,navigationToken:context?.navigationToken??tab.navigationToken??null,navigationEpoch:optionalInteger(context?.navigationEpoch??tab.navigationEpoch),status:context?.status??tab.status??null},bodyState:{pointer:clone(pointer),browserState:String(browser.state||'UNKNOWN'),activeTabId:optionalInteger(browser.activeTabId)},browserUi:clone(browserUi),control:{activeTarget:page?.activeTarget?clone(page.activeTarget):null,lastObservedTarget:controlRow?clone(controlRow.value):null,semanticControls:semantic?.controls?clone(semantic.controls):null},content:{tabContext:context?clone(context):null,page:page?clone(page):null,semantic:semantic?clone(semantic):null},environment:{online:browser.online===true,browserState:String(browser.state||'UNKNOWN'),eligible:browser.environment?.eligible===true,status:String(browser.environment?.status||'UNKNOWN'),reasons:Array.isArray(browser.environment?.reasons)?browser.environment.reasons.map(String):[]},freshness:{liveRefreshAttempted:refresh.attempted===true,liveRefreshSucceeded:refresh.succeeded===true,browserUiAgeMs:finiteNumber(browserUi?.observedAt)?Math.max(0,Math.trunc(now-Number(browserUi.observedAt))):null,tabContextAgeMs:ageMs(now,contextRow),pageAgeMs:ageMs(now,pageRow),semanticAgeMs:ageMs(now,semanticRow),controlAgeMs:ageMs(now,controlRow)}};
+    let browserUi=tabOnlyBrowserUi(browser,browserInstanceId,tabId,windowId,title,now);
+    if(this.browserUiObserver&&typeof this.browserUiObserver.observe==='function')try{browserUi=await this.browserUiObserver.observe({browserInstanceId,tabId:Number(tabId),windowId,title});}catch(error){browserUi={...browserUi,available:false,observed:false,reason:'browser_ui_observer_error',error:technicalError(error)};}
+    const observation={contractVersion:BODY_CONTRACT_VERSION,observedAt:now,scope:{browserInstanceId,extensionInstanceId,tabId:Number(tabId),siteKey:context?.siteKey??tab.siteKey??null,title,windowId,navigationToken:context?.navigationToken??tab.navigationToken??null,navigationEpoch:optionalInteger(context?.navigationEpoch??tab.navigationEpoch),status:context?.status??tab.status??null},bodyState:{pointer:clone(pointer),online:browser.online===true,activeTabId:optionalInteger(browser.activeTabId)},browserUi:clone(browserUi),control:{activeTarget:page?.activeTarget?clone(page.activeTarget):null,lastObservedTarget:controlRow?clone(controlRow.value):null,semanticControls:semantic?.controls?clone(semantic.controls):null},content:{tabContext:context?clone(context):null,page:page?clone(page):null,semantic:semantic?clone(semantic):null},freshness:{liveRefreshAttempted:refresh.attempted===true,liveRefreshSucceeded:refresh.succeeded===true,browserUiAgeMs:finiteNumber(browserUi?.observedAt)?Math.max(0,Math.trunc(now-Number(browserUi.observedAt))):null,tabContextAgeMs:ageMs(now,contextRow),pageAgeMs:ageMs(now,pageRow),semanticAgeMs:ageMs(now,semanticRow),controlAgeMs:ageMs(now,controlRow)}};
     return stripJudgment(observation);
+  }
+
+  async assertNativeClickSafe(context,intent,before){
+    if(!CLICK_INTENT_TYPES.has(String(intent?.type||'')))return null;
+    if(!this.nativeClickGuardRequired)return null;
+    if(!this.nativeClickSafetyProbe)throw errorWithCode('native_click_guard_unavailable');
+    const snapshot=await this.nativeClickSafetyProbe.observe({title:before?.scope?.title||'',windowId:before?.scope?.windowId??null,tabId:context?.tabId??null});
+    const safety=evaluateNativeClickSafety(before,intent,snapshot);
+    if(safety.ok!==true)throw errorWithCode(safety.reason||'native_click_guard_blocked');
+    return safety;
   }
 
   executionFacts(raw,kind){const nested=raw?.execution&&typeof raw.execution==='object'?raw.execution:null,commandId=raw?.commandId??nested?.commandId??null;if(kind==='motor'){const planned=optionalInteger(nested?.plannedStepCount),completed=optionalInteger(nested?.completedStepCount),issued=optionalInteger(nested?.issuedStepCount)??0;return {commandId,dispatched:nested?.delivered===true||issued>0,completed:nested?.delivered===true&&(planned===null||completed===planned),plannedLowLevelSteps:planned,completedLowLevelSteps:completed,changes:stripJudgment(nested?.observedEffect??null)};}if(kind==='browser_ui'){const count=optionalInteger(raw?.executionAudit?.stepCount);return {commandId,dispatched:raw?.delivered===true||raw?.focus?.fastExecuted===true||Boolean(count&&count>0),completed:raw?.delivered===true,plannedLowLevelSteps:count,completedLowLevelSteps:raw?.delivered===true?count:null,changes:stripJudgment(raw?.observedEffect??null)};}return {commandId,dispatched:raw?.switched===true,completed:raw?.switched===true,plannedLowLevelSteps:null,completedLowLevelSteps:null,changes:null};}
@@ -95,10 +164,17 @@ class BodyStepGateway{
     try{
       context=this.runtime.tasks.executionContext(command.taskId,tabRef,{autoStart:false});accepted=true;
       before=await this.observe({browserInstanceId:context.browserInstanceId,tabId:context.tabId});
-      attemptCount=1;
-      if(command.step.kind==='motor')raw=await this.runtime.executeIntent(command.step.intent,{extensionId:context.extensionInstanceId,tabId:context.tabId});
-      else if(command.step.kind==='browser_ui')raw=await this.runtime.executeBrowserCommand(command.step.action,{extensionId:context.extensionInstanceId,tabId:context.tabId,value:command.step.value??null});
-      else raw=await this.runtime.switchTab(context.extensionInstanceId,context.tabId);
+      if(command.step.kind==='motor'){
+        await this.assertNativeClickSafe(context,command.step.intent,before);
+        attemptCount=1;
+        raw=await this.runtime.executeIntent(command.step.intent,{extensionId:context.extensionInstanceId,tabId:context.tabId});
+      }else if(command.step.kind==='browser_ui'){
+        attemptCount=1;
+        raw=await this.runtime.executeBrowserCommand(command.step.action,{extensionId:context.extensionInstanceId,tabId:context.tabId,value:command.step.value??null});
+      }else{
+        attemptCount=1;
+        raw=await this.runtime.switchTab(context.extensionInstanceId,context.tabId);
+      }
       after=await this.observe({browserInstanceId:context.browserInstanceId,tabId:context.tabId});
       const facts=this.executionFacts(raw,command.step.kind);
       return stripJudgment({contractVersion:BODY_CONTRACT_VERSION,type:'BODY_STEP_RESULT',stepId:command.stepId,taskId:command.taskId,action:{kind:command.step.kind,name:actionName(command.step)},execution:{accepted:true,attemptCount:1,replayed:false,dispatched:facts.dispatched,completed:facts.completed,commandId:facts.commandId,plannedLowLevelSteps:facts.plannedLowLevelSteps,completedLowLevelSteps:facts.completedLowLevelSteps,error:null},observation:{before,after,changes:facts.changes}});
@@ -125,4 +201,4 @@ class BodyStepGateway{
   }
 }
 
-module.exports={BODY_CONTRACT_VERSION,MOTOR_TYPES,BROWSER_UI_ACTIONS,STEP_KINDS,FORBIDDEN_JUDGMENT_KEYS,stripJudgment,judgmentPaths,validateBodyStepCommand,BodyStepGateway};
+module.exports={BODY_CONTRACT_VERSION,MOTOR_TYPES,BROWSER_UI_ACTIONS,STEP_KINDS,FORBIDDEN_JUDGMENT_KEYS,stripJudgment,judgmentPaths,validateBodyStepCommand,evaluateNativeClickSafety,Win32ClickSafetyProbe,BodyStepGateway};

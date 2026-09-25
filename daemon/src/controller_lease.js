@@ -26,7 +26,7 @@ class ControllerLease {
   }
 
   assertDebugControlAllowed() {
-    if (this.hasBrain()) throw new Error('brain_controller_active');
+    // Local Human/operator control is higher authority than Brain.
     return true;
   }
 
@@ -34,7 +34,9 @@ class ControllerLease {
     return {
       controller: this.hasBrain() ? 'brain' : 'none',
       brainOnline: this.hasBrain(),
-      exclusive: true,
+      exclusive: false,
+      brainExclusive: true,
+      humanOverride: true,
       brain: this.brain ? { ...this.brain } : null
     };
   }

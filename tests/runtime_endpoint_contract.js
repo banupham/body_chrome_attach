@@ -187,7 +187,7 @@ function tmp(name) {
   assert.match(server, /acquireRuntimeLock/);
   assert.doesNotMatch(server, /ensureAutomaticPairingWindow/);
   assert.match(String(pkg.scripts?.daemon || ''), /sticky_runtime_port_preload\.js/);
-  assert.match(String(pkg.scripts?.daemon || ''), /guardian_bootstrap\.js/);
+  assert.match(String(pkg.scripts?.daemon || ''), /body_bootstrap\.js/);
   assert.match(preload, /preferredRuntimePort/);
   assert.match(preload, /installStickyRuntimePort/);
   assert.match(preload, /BODY_RUNTIME_PORT/);

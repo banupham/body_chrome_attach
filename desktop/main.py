@@ -71,8 +71,6 @@ def _restore_windows_cli_streams() -> None:
         stdout = stream_from_handle(-11)
         stderr = stream_from_handle(-12)
         if stdout is None or stderr is None:
-            # ATTACH_PARENT_PROCESS = DWORD(-1). ERROR_ACCESS_DENIED simply means
-            # the process is already attached to a console, which is acceptable.
             kernel32.AttachConsole(wintypes.DWORD(0xFFFFFFFF))
             if stdout is None:
                 stdout = stream_from_handle(-11)
@@ -83,8 +81,6 @@ def _restore_windows_cli_streams() -> None:
         if stderr is not None:
             sys.stderr = stderr
     except Exception:
-        # Diagnostics must never make production startup fail merely because a
-        # parent process supplied no usable standard handles.
         return
 
 
@@ -92,9 +88,6 @@ def _install_signal_handlers(*, tray_mode: bool) -> None:
     def stop(_signum, _frame):
         _request_stop("process_signal")
 
-    # A normal Windows BodyBrain session is tray-owned. Ctrl+C must not become a
-    # competing user-facing Quit path; system termination signals are still
-    # honored so Windows can shut the process down.
     if tray_mode and hasattr(signal, "SIGINT"):
         signal.signal(signal.SIGINT, signal.SIG_IGN)
     else:
@@ -173,9 +166,62 @@ def _status(health: HealthModel, hello: dict, readiness: dict) -> dict:
 
 def _hold_error_for_tray(tray: BodyBrainTray, message: str) -> None:
     tray.set_notice(f"ERROR: {message} - right-click the tray icon and choose Quit BodyBrain to stop.")
-    tray.show()
     while not StopRequested.value:
         time.sleep(0.2)
+
+
+def _connect_status_client(supervisor: BodyRuntimeSupervisor, config, health: HealthModel) -> tuple[BodyStatusClient, dict]:
+    supervisor.start()
+    health.set_subsystem("bodyRuntime", "READY")
+    health.set_workers(supervisor.health())
+    token = supervisor.read_controller_token()
+    client = BodyStatusClient(config, token)
+    hello = client.connect()
+    health.set_desktop("READY")
+    return client, hello
+
+
+def _recover_runtime(
+    supervisor: BodyRuntimeSupervisor,
+    config,
+    health: HealthModel,
+    tray: BodyBrainTray | None,
+    previous_client: BodyStatusClient | None,
+    reason: str,
+) -> tuple[BodyStatusClient, dict]:
+    if previous_client is not None:
+        try:
+            previous_client.close()
+        except Exception:
+            pass
+
+    attempt = 0
+    last_error = str(reason or "runtime_connection_lost")
+    while not StopRequested.value:
+        attempt += 1
+        health.set_desktop("DEGRADED", "guardian_runtime_recovery")
+        health.set_subsystem("bodyRuntime", "WAITING", "guardian_runtime_recovery")
+        health.set_subsystem("guardian", "WAITING", "guardian_runtime_recovery")
+        health.set_subsystem("extensionConnectivity", "WAITING", "body_runtime_restarting")
+        if tray is not None:
+            tray.set_notice(f"RECOVERING - Guardian/BODY connection lost. Attempt {attempt}...")
+        try:
+            supervisor.stop()
+            client, hello = _connect_status_client(supervisor, config, health)
+            if tray is not None:
+                tray.set_notice("BODY + Guardian restored. Waiting for Chrome BODY Extension...")
+            return client, hello
+        except (SupervisorError, BodyStatusClientError, OSError, ValueError) as exc:
+            last_error = str(exc)
+            try:
+                supervisor.stop()
+            except Exception:
+                pass
+            if tray is not None:
+                tray.set_notice(f"RECOVERING - retrying Guardian/BODY after: {last_error}")
+            time.sleep(min(5.0, max(0.5, attempt * 0.5)))
+
+    raise BodyStatusClientError(f"runtime_recovery_cancelled:{last_error}")
 
 
 def run(argv: list[str] | None = None) -> int:
@@ -215,13 +261,7 @@ def run(argv: list[str] | None = None) -> int:
             tray_started = True
             tray.set_notice("Starting Guardian + BODY runtime...")
 
-        supervisor.start()
-        health.set_subsystem("bodyRuntime", "READY")
-        health.set_workers(supervisor.health())
-        token = supervisor.read_controller_token()
-        client = BodyStatusClient(config, token)
-        hello = client.connect()
-        health.set_desktop("READY")
+        client, hello = _connect_status_client(supervisor, config, health)
         if tray is not None:
             tray.set_notice("BODY runtime connected. Waiting for Chrome BODY Extension...")
 
@@ -245,8 +285,21 @@ def run(argv: list[str] | None = None) -> int:
             time.sleep(config.readiness_poll_seconds)
             if StopRequested.value:
                 break
-            health.set_workers(supervisor.health())
-            current = client.readiness()
+            try:
+                workers = supervisor.health()
+                health.set_workers(workers)
+                body_state = str((workers.get("body-runtime") or {}).get("state") or "UNKNOWN")
+                if body_state != "RUNNING":
+                    raise BodyStatusClientError(f"body_runtime_requires_recovery:{body_state}")
+                current = client.readiness()
+            except (SupervisorError, BodyStatusClientError, OSError, ValueError) as exc:
+                client, hello = _recover_runtime(supervisor, config, health, tray, client, str(exc))
+                current = {"state":"CHECKING","browsers":[],"reason":"browser_waiting","ignoredOfflineBrowserCount":0}
+                _apply_readiness(health, current)
+                last = json.dumps(current, sort_keys=True)
+                _print(_status(health, hello, current), args.json)
+                continue
+
             _apply_readiness(health, current)
             serialized = json.dumps(current, sort_keys=True)
             if serialized != last:

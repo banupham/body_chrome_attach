@@ -6,9 +6,10 @@ const path=require('node:path');
 const {nodeView}=require('../src/dom_perception');
 const {extractSurface}=require('../src/youtube_semantic_observer');
 const {buildWorld,candidateInteractionState,candidateViewportState,candidateEffectDelta,actionabilityDelta}=require('../research/autonomous_discovery/world_model');
-const {AutonomousAgentPlanner,candidatePositionActions}=require('../research/autonomous_discovery/agent_planner');
-const {AutonomousYouTubeBrainV3}=require('../research/autonomous_discovery/brain_v3');
+const {AutonomousAgentPlanner,candidatePositionActions,affordanceActions}=require('../research/autonomous_discovery/agent_planner');
+const {AutonomousYouTubeBrainV3,progressSignals,candidateEffectValue,findSemanticAffordance,semanticTextVerification,rawBodySemanticEffect}=require('../research/autonomous_discovery/brain_v3');
 const {ExperienceMemory}=require('../research/autonomous_discovery/experience_memory');
+const {FORMAT}=require('../research/autonomous_discovery/media_format');
 const os=require('node:os');
 
 const normalStyle={display:'block',visibility:'visible',opacity:'1',overflow:'visible',overflowX:'visible',overflowY:'visible'};
@@ -135,13 +136,61 @@ function worldWith(c,scrollY=0){
   fs.rmSync(dir,{recursive:true,force:true});
 }
 
-// Recovery reward remains a Brain concern.
+// Candidate actionability progress is local recovery evidence, not target progress.
 {
-  const brain=Object.create(AutonomousYouTubeBrainV3.prototype);
-  const unchanged=brain.rewardAgent({action:{},outcome:{success:true,error:null},delta:{changed:true,reasons:['scroll','signature']},afterInfo:{},recovery:{improved:false,regressed:false,scoreDelta:0,becameActionable:false}});
-  const improved=brain.rewardAgent({action:{},outcome:{success:true,error:null},delta:{changed:true,reasons:['scroll','actionability']},afterInfo:{},recovery:{improved:true,regressed:false,scoreDelta:8,becameActionable:false}});
-  assert.ok(unchanged<0);
-  assert.ok(improved>0);
+  const unrelated=progressSignals({goalSuccess:false,success:true,proximityGain:0,targetCandidateBefore:false,targetCandidateAfter:false,recovery:{improved:true},recoveryTargetVideoId:'neighbor001',targetVideoId:'target001'});
+  assert.equal(unrelated.candidateActionabilityProgress,true);
+  assert.equal(unrelated.recoveryIsTarget,false);
+  assert.equal(unrelated.targetRecoveryProgress,false);
+  assert.equal(unrelated.targetProgress,false);
+
+  const targetRecovery=progressSignals({goalSuccess:false,success:true,proximityGain:0,targetCandidateBefore:true,targetCandidateAfter:true,recovery:{improved:true},recoveryTargetVideoId:'target001',targetVideoId:'target001'});
+  assert.equal(targetRecovery.candidateActionabilityProgress,true);
+  assert.equal(targetRecovery.recoveryIsTarget,true);
+  assert.equal(targetRecovery.targetRecoveryProgress,true);
+  assert.equal(targetRecovery.targetProgress,true);
+
+  const evidenceGain=progressSignals({goalSuccess:false,success:true,proximityGain:0.2,targetCandidateBefore:false,targetCandidateAfter:false,recovery:null,recoveryTargetVideoId:null,targetVideoId:'target001'});
+  assert.equal(evidenceGain.targetProximityImproved,true);
+  assert.equal(evidenceGain.targetProgress,true);
+}
+
+// Recovery reward keeps local candidate improvement modest; target recovery may
+// receive target-directed reward. Candidate effect value remains available for
+// learning geometry/actionability independently of task progress.
+{
+  const brain=Object.create(AutonomousYouTubeBrainV3.prototype);brain.targetOpened=false;
+  const recovery={improved:true,regressed:false,scoreDelta:110,distanceImprovement:154,becameInViewport:true,becameActionable:true};
+  const afterInfo={newVideos:0,newTopics:0,newTransitions:0,proximityGain:0,targetCandidate:null};
+  const unrelatedReward=brain.rewardAgent({action:{},outcome:{success:true,error:null},delta:{changed:true,reasons:['scroll','actionability']},afterInfo,recovery,recoveryIsTarget:false,targetProgress:false});
+  const targetReward=brain.rewardAgent({action:{},outcome:{success:true,error:null},delta:{changed:true,reasons:['scroll','actionability']},afterInfo,recovery,recoveryIsTarget:true,targetProgress:true});
+  assert.equal(unrelatedReward,2);
+  assert.ok(targetReward>unrelatedReward);
+  assert.ok(candidateEffectValue(recovery)>unrelatedReward);
+}
+
+
+// Native-occluded affordances are evidence, not safe targets. Brain must not
+// generate pointer/text actions from a covered coordinate.
+{
+  const world={affordances:[{index:3,tag:'input',role:'textbox',type:'text',editable:true,disabled:false,label:'Search',actionRect:{x:100,y:500,width:300,height:40},interactionPoint:null,interaction:{actionable:false,reason:'native_top_level_occlusion'}}],viewport:{width:1000,height:700}};
+  const actions=affordanceActions(world,{textProbe:'europeans food',targetVocabulary:['food'],targetFormat:FORMAT.LONG_FORM});
+  assert.equal(actions.length,0);
+}
+
+// Generic text actions are successful only when the same observed editable is
+// still focused and contains the exact expected text.
+{
+  const descriptor={index:3,label:'Search',role:'textbox',tag:'input'};
+  const expected={length:14,fnv1a32:'placeholder'};
+  const rows={affordances:[{index:3,label:'Search',role:'textbox',tag:'input',editable:true,active:true,state:{valueFingerprint:expected}}]};
+  const row=findSemanticAffordance(rows,descriptor);assert.ok(row);
+  const actual=semanticTextVerification(row,'europeans food');
+  assert.equal(actual.ok,false);
+  assert.equal(rawBodySemanticEffect({capability:'motor.typeText',verification:{textVerified:false}},{changed:true,reasons:['signature','browser_ui']}),false);
+  assert.equal(rawBodySemanticEffect({capability:'motor.typeText',verification:{textVerified:true}},{changed:true,reasons:['selection']}),true);
+  assert.equal(rawBodySemanticEffect({capability:'motor.click'},{changed:true,reasons:['browser_ui']}),false);
+  assert.equal(rawBodySemanticEffect({capability:'motor.click'},{changed:true,reasons:['page_type']}),true);
 }
 
 // Architecture guard: BODY may observe, never judge or choose an action target.

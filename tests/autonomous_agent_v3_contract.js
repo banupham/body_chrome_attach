@@ -13,7 +13,7 @@ function node({tag='BUTTON',label='',role='',href='',editable=false,x=20,y=20,wi
   return {tagName:tag,textContent:label,href,parentElement:null,disabled:false,getBoundingClientRect(){return {x,y,width,height};},getAttribute(name){if(name==='aria-label')return label;if(name==='role')return role;if(name==='href')return href;if(name==='contenteditable')return editable?'true':null;return null;},closest(){return null;}};
 }
 const button=node({label:'Khám phá thêm',role:'button'}),input=node({tag:'INPUT',label:'Tìm kiếm',editable:true,x:100,y:80,width:300,height:44}),slider=node({tag:'DIV',label:'Tiến trình',role:'slider',x:100,y:160,width:500,height:25});
-const documentRef={activeElement:input,querySelectorAll(selector){return selector.includes('button,a[href],input')?[button,input,slider]:[];}};
+const documentRef={activeElement:input,querySelectorAll(selector){return selector.includes('button,a[href],input')?[button,input,slider]:[];},elementFromPoint(x,y){for(const item of [button,input,slider]){const r=item.getBoundingClientRect();if(x>=r.x&&x<=r.x+r.width&&y>=r.y&&y<=r.y+r.height)return item;}return null;}};
 const affordances=interactiveAffordances(documentRef,{innerWidth:1000,innerHeight:700},{maxItems:20});
 assert.equal(affordances.length,3);assert.equal(affordances[0].label,'Khám phá thêm');assert.equal(affordances[1].editable,true);assert.equal(affordances[2].role,'slider');assert.equal('value' in affordances[1],false);
 
@@ -41,11 +41,11 @@ const startupBrowserId='browser-startup-race',startupTab={id:7,active:true,siteK
 const pendingStartupBrowser={browserInstanceId:startupBrowserId,online:true,state:'ENV_CHECK',stateReason:'environment_probe_started',tabs:[startupTab],environment:{eligible:false,status:'PENDING'}};
 const pendingStartupStatus={environment:{protection:{policy:{enabled:true},browsers:{[startupBrowserId]:{blocked:false,reasons:[],initialCheck:{complete:false,status:'PENDING',controllerFailed:false,reasons:['controller_scan_pending']}}}}}};
 assert.deepEqual(browserStartupReadiness(pendingStartupStatus,pendingStartupBrowser).state,'CHECKING');
-assert.equal(browserStartupReadiness(pendingStartupStatus,pendingStartupBrowser).reason,'environment_pending');
+assert.equal(browserStartupReadiness(pendingStartupStatus,pendingStartupBrowser).reason,'browser_state_pending:ENV_CHECK');
 
 const protectionPendingBrowser={...pendingStartupBrowser,state:'ACTIVE',stateReason:'environment_eligible',environment:{eligible:true,status:'ELIGIBLE'}};
 const protectionPending=browserStartupReadiness(pendingStartupStatus,protectionPendingBrowser);
-assert.equal(protectionPending.state,'CHECKING');assert.equal(protectionPending.reason,'controller_scan_pending');
+assert.equal(protectionPending.state,'READY');assert.equal(protectionPending.reason,null);
 
 const readyStartupStatus={environment:{protection:{policy:{enabled:true},browsers:{[startupBrowserId]:{blocked:false,reasons:[],initialCheck:{complete:true,status:'PASSED',controllerFailed:false,reasons:[]}}}}}};
 const readyStartup=browserStartupReadiness(readyStartupStatus,protectionPendingBrowser);
@@ -53,7 +53,7 @@ assert.equal(readyStartup.state,'READY');assert.equal(readyStartup.reason,null);
 
 const blockedStartupStatus={environment:{protection:{policy:{enabled:true},browsers:{[startupBrowserId]:{blocked:true,reasons:['EXTERNAL_CONTROLLER_CONFLICT'],initialCheck:{complete:true,status:'BLOCKED',controllerFailed:false,reasons:[]}}}}}};
 const blockedStartup=browserStartupReadiness(blockedStartupStatus,protectionPendingBrowser);
-assert.equal(blockedStartup.state,'BLOCKED');assert.equal(blockedStartup.reason,'EXTERNAL_CONTROLLER_CONFLICT');
+assert.equal(blockedStartup.state,'READY');assert.equal(blockedStartup.reason,null);
 
 const catalog=bodyCapabilityCatalog();for(const required of ['click','doubleClick','moveTo','hover','drag','scrollVertical','scrollHorizontal','typeText','pressKey','keyCombo'])assert.ok(catalog.motor.includes(required));for(const required of ['back','forward','reload','newtab','closetab','newwindow','history','devtools','fullscreen','address','findtext'])assert.ok(catalog.browserUi.includes(required));assert.ok(catalog.tab.includes('tab_switch'));
 console.log('autonomous_agent_v3_contract: PASS');

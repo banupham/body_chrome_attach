@@ -27,7 +27,7 @@ function makeBrain(initialValue,selection){
     assert.ok(out);
     assert.equal(actions.some(a=>a.type==='keyCombo'&&a.key==='Control+a'),false);
     assert.equal(actions.some(a=>a.type==='pressKey'&&a.key==='Backspace'),false);
-    const typed=actions.find(a=>a.type==='typeText');assert.ok(typed);assert.equal('preserveFocus' in typed,false);
+    const typed=actions.find(a=>a.type==='typeText');assert.ok(typed);assert.equal(typed.preserveFocus,true);
   }
 
   // Existing text already fully selected: preserve the selection and type over it.

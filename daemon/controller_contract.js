@@ -19,7 +19,8 @@ test('Brain controller lease is exclusive and releases cleanly',()=>{
   assert.equal(lease.status().brainOnline,true);
   assert.equal(lease.status().brain.controllerId,'brain-a');
   assert.throws(()=>lease.attachBrain(brainB,{controllerId:'brain-b'}),/brain_controller_already_attached/);
-  assert.throws(()=>lease.assertDebugControlAllowed(),/brain_controller_active/);
+  assert.equal(lease.assertDebugControlAllowed(),true);
+  assert.equal(lease.status().humanOverride,true);
   assert.equal(lease.detachSocket(brainB),false);
   assert.equal(lease.detachSocket(brainA),true);
   assert.equal(lease.assertDebugControlAllowed(),true);
@@ -34,7 +35,7 @@ test('Brain and debug client use separate local credentials',()=>{
   assert.equal(auth.authenticateDebugClient(auth.brainSecret),false);
 });
 
-test('debug command classification keeps reads available during Brain control',()=>{
+test('Human local command classification remains explicit during Brain control',()=>{
   for(const command of ['status','extensions','tabs','dataset','model','habit'])assert.equal(commandKind(command),'read');
   for(const command of ['click 1 2','type 1 2 hello','browsernewtab','record off','train all','detach'])assert.equal(commandKind(command),'control');
 });

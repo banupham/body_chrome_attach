@@ -15,10 +15,12 @@ class LocalAuth{
     this.dir=path.join(resolvedBaseDir,'profiles','.auth');
     this.debugClientPath=path.join(this.dir,'client.token');
     this.brainPath=path.join(this.dir,'brain.token');
+    this.guardianPath=path.join(this.dir,'guardian.token');
     this.extensionsPath=path.join(this.dir,'extensions.json');
     fs.mkdirSync(this.dir,{recursive:true});
     this.debugClientSecret=this._loadOrCreateSecret(this.debugClientPath);
     this.brainSecret=this._loadOrCreateSecret(this.brainPath);
+    this.guardianSecret=this._loadOrCreateSecret(this.guardianPath);
     this.clientPath=this.debugClientPath;
     this.clientSecret=this.debugClientSecret;
     this.extensions=this._loadExtensions();
@@ -31,6 +33,7 @@ class LocalAuth{
   authenticateDebugClient(value){return secureEqualHex(digest(value),digest(this.debugClientSecret));}
   authenticateClient(value){return this.authenticateDebugClient(value);}
   authenticateBrain(value){return secureEqualHex(digest(value),digest(this.brainSecret));}
+  authenticateGuardian(value){return secureEqualHex(digest(value),digest(this.guardianSecret));}
   ensureAutomaticPairingWindow(){return {opened:false,busy:false,automatic:true,pairingMode:'automatic_local'};}
 
   _issueExtensionToken(instance,record,{rotated=false}={}){
@@ -67,7 +70,7 @@ class LocalAuth{
     return true;
   }
 
-  status(){return {debugClientTokenPath:this.debugClientPath,brainTokenPath:this.brainPath,pairedExtensions:Object.keys(this.extensions).length,pairingMode:'automatic_local'};}
+  status(){return {debugClientTokenPath:this.debugClientPath,brainTokenPath:this.brainPath,guardianTokenPath:this.guardianPath,pairedExtensions:Object.keys(this.extensions).length,pairingMode:'automatic_local'};}
 }
 
 module.exports={LocalAuth,digest,secureEqualHex};

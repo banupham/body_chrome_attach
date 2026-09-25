@@ -128,8 +128,8 @@ class DesktopHostContractTest(unittest.TestCase):
             self.assertFalse((state / "runtime.lock").exists())
             self.assertFalse((state / "runtime-endpoint.json").exists())
 
-    def test_guardian_transport_error_is_handled_and_cleans_ownership(self):
-        bootstrap = (ROOT / "daemon" / "guardian_bootstrap.js").read_text(encoding="utf-8")
+    def test_body_transport_error_is_handled_and_cleans_ownership(self):
+        bootstrap = (ROOT / "daemon" / "body_bootstrap.js").read_text(encoding="utf-8")
         self.assertIn("server.wss.on('error'", bootstrap)
         self.assertIn("server.clearEndpoint()", bootstrap)
         self.assertIn("[FATAL_TRANSPORT]", bootstrap)

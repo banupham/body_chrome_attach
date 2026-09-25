@@ -11,7 +11,7 @@ const {BodyStepLedger}=require('./src/body_step_ledger');
 function tmp(name){return fs.mkdtempSync(path.join(os.tmpdir(),`${name}-`));}
 function gateway(runtime,options={}){return new BodyStepGateway(runtime,{baseDir:options.baseDir||tmp('body-step-gateway'),now:options.now||(()=>Date.now())});}
 function runtimeStub({taskState='RUNNING'}={}){
-  const browser={browserInstanceId:'browser-a',extensionInstanceId:'ext-a',online:true,state:'ACTIVE',activeTabId:1,tabs:new Map([[1,{id:1,active:true,windowId:7,title:'Example',siteKey:'example.test',navigationToken:'nav-1',navigationEpoch:1,status:'complete'}],[2,{id:2,active:false,windowId:7,title:'Other',siteKey:'example.test',navigationToken:'nav-2',navigationEpoch:1,status:'complete'}]]),environment:{eligible:true,status:'ELIGIBLE',reasons:[]}};
+  const browser={browserInstanceId:'browser-a',extensionInstanceId:'ext-a',online:true,state:'ONLINE',activeTabId:1,tabs:new Map([[1,{id:1,active:true,windowId:7,title:'Example',siteKey:'example.test',navigationToken:'nav-1',navigationEpoch:1,status:'complete'}],[2,{id:2,active:false,windowId:7,title:'Other',siteKey:'example.test',navigationToken:'nav-2',navigationEpoch:1,status:'complete'}]])};
   const calls={contexts:0,motor:0,browser:0,switch:0,eyes:0,lastContextOptions:null};
   const runtime={
     calls,
@@ -43,11 +43,11 @@ test('BODY Contract v1 validates one atomic Body step and whitelists browser UI 
   assert.equal(validateBodyStepCommand({contractVersion:'1.0',type:'BODY_STEP',stepId:'STEP-7',taskId:'TASK-1',step:{kind:'browser_ui',action:'BACK'}}).step.action,'back');
 });
 
-test('Eyes performs a fresh snapshot and returns control/content/environment facts with freshness',async()=>{
+test('Eyes performs a fresh snapshot and returns raw control/content facts with freshness',async()=>{
   let now=1100;const runtime=runtimeStub(),body=gateway(runtime,{now:()=>now});
   body.observeRecorder('ext-a',{tabId:1,event:{ts:950,source:'human',target:{tag:'button',role:'button',editable:false,sensitive:false,rect:{x:200,y:100,width:80,height:32}}}});
   const observation=await body.observe({browserInstanceId:'browser-a',tabId:1});
-  assert.equal(runtime.calls.eyes,1);assert.equal(observation.contractVersion,'1.0');assert.equal(observation.scope.navigationToken,'live-1');assert.equal(observation.control.activeTarget.role,'textbox');assert.equal(observation.control.lastObservedTarget.role,'button');assert.equal(observation.control.semanticControls.searchInput.actionRect.x,5);assert.equal(observation.content.page.scrollY,20);assert.equal(observation.environment.eligible,true);assert.equal(observation.bodyState.pointer.x,55);assert.equal(observation.freshness.liveRefreshAttempted,true);assert.equal(observation.freshness.liveRefreshSucceeded,true);assert.equal(observation.freshness.pageAgeMs,100);assert.equal(observation.freshness.semanticAgeMs,100);assert.equal(judgmentPaths(observation).length,0);
+  assert.equal(runtime.calls.eyes,1);assert.equal(observation.contractVersion,'1.0');assert.equal(observation.scope.navigationToken,'live-1');assert.equal(observation.control.activeTarget.role,'textbox');assert.equal(observation.control.lastObservedTarget.role,'button');assert.equal(observation.control.semanticControls.searchInput.actionRect.x,5);assert.equal(observation.content.page.scrollY,20);assert.equal(Object.prototype.hasOwnProperty.call(observation,'environment'),false);assert.equal(observation.bodyState.online,true);assert.equal(Object.prototype.hasOwnProperty.call(observation.bodyState,'browserState'),false);assert.equal(observation.bodyState.pointer.x,55);assert.equal(observation.freshness.liveRefreshAttempted,true);assert.equal(observation.freshness.liveRefreshSucceeded,true);assert.equal(observation.freshness.pageAgeMs,100);assert.equal(observation.freshness.semanticAgeMs,100);assert.equal(judgmentPaths(observation).length,0);
 });
 
 test('Eyes never converts missing optional integers into invented zero values',async()=>{
@@ -60,6 +60,16 @@ test('one BODY_STEP invokes one motor execution, requires a RUNNING Task, and st
 
 test('BODY_STEP cannot implicitly start a READY Task',async()=>{
   const runtime=runtimeStub({taskState:'READY'}),body=gateway(runtime);const result=await body.execute({contractVersion:'1.0',type:'BODY_STEP',stepId:'STEP-R',taskId:'TASK-1',step:{kind:'motor',intent:{type:'pressKey',key:'Enter'}}});assert.equal(runtime.calls.contexts,1);assert.equal(runtime.calls.motor,0);assert.equal(result.execution.accepted,false);assert.equal(result.execution.attemptCount,0);assert.match(result.execution.error.message,/task_not_executable/);
+});
+
+
+
+test('Guardian is not on the Brain BODY_STEP execution path',async()=>{
+  const runtime=runtimeStub(),body=gateway(runtime);
+  const result=await body.execute({contractVersion:'1.0',type:'BODY_STEP',stepId:'STEP-NO-GUARDIAN-GATE',taskId:'TASK-1',step:{kind:'motor',intent:{type:'click',x:10,y:20}}});
+  assert.equal(runtime.calls.motor,1);
+  assert.equal(result.execution.dispatched,true);
+  assert.equal(result.execution.completed,true);
 });
 
 test('technical execution error reports unknown dispatch truth and never retries',async()=>{

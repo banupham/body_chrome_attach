@@ -1,0 +1,13 @@
+{
+  "name": "bodybrain-guardian",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js",
+    "check": "node --check main.js && node --check runtime.js && node --check body_client.js && node --check browser_registry.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

@@ -1,0 +1,313 @@
+{
+  "protocol": "central-brain",
+  "protocolVersion": 1,
+  "status": "DESIGN_ONLY",
+  "implementationState": "NOT_CONNECTED_YET",
+  "purpose": "Define the future WebSocket contract between Central and Brain without implementing Central or changing Brain planning.",
+  "authorityBoundary": {
+    "central": [
+      "authenticate Brain sessions",
+      "own channel and target registry",
+      "verify targetId belongs to an ACTIVE registered channel before offering a task",
+      "own the authoritative Brain points wallet",
+      "atomically reserve sufficient points before offering a task",
+      "issue tasks",
+      "verify task results",
+      "calculate task score",
+      "settle reserved points and rewards"
+    ],
+    "brain": [
+      "accept only authenticated protocol messages",
+      "treat targetId as the sole task objective",
+      "decide whether local runtime is available",
+      "profile targetId",
+      "plan autonomously",
+      "explore autonomously",
+      "self-correct autonomously",
+      "execute through BODY",
+      "return factual task outcome and metrics"
+    ],
+    "forbiddenCentralInfluence": [
+      "search query",
+      "keywords",
+      "strategy",
+      "plan",
+      "candidate choice",
+      "click coordinates",
+      "scroll direction",
+      "retry policy",
+      "dwell duration",
+      "BODY_STEP",
+      "browser UI action"
+    ]
+  },
+  "invariants": [
+    "The only business objective field in TASK_OFFER is targetId.",
+    "TASK_OFFER means Central has already verified that targetId belongs to an ACTIVE registered channel.",
+    "TASK_OFFER means Central has already atomically reserved sufficient points from the authoritative Brain wallet.",
+    "Brain never authoritatively validates channel registration or wallet balance.",
+    "Brain never calculates or submits its own task score.",
+    "Central never supplies a plan or action sequence to Brain.",
+    "taskId is globally idempotent for one Brain task lifecycle.",
+    "A repeated TASK_OFFER with the same taskId must not create a second Brain run.",
+    "Brain reports coarse task state and factual outcome, not internal click/scroll traces.",
+    "Central scoring and points settlement happen only after TASK_RESULT."
+  ],
+  "objective": {
+    "requiredFields": [
+      "targetId"
+    ],
+    "targetId": {
+      "type": "string",
+      "description": "Opaque target identifier. Central registry resolves target -> registered channel/platform. Brain uses the identifier as the goal only."
+    }
+  },
+  "preOfferRequirements": {
+    "centralMustComplete": [
+      "brain session authenticated",
+      "brain online and capability compatible",
+      "targetId exists in Central target registry",
+      "targetId maps to a registered channel",
+      "channel registration status is ACTIVE",
+      "Brain authoritative available points are sufficient",
+      "points reservation is committed atomically"
+    ],
+    "ifAnyRequirementFails": "Do not send TASK_OFFER."
+  },
+  "transport": {
+    "kind": "WebSocket",
+    "productionScheme": "wss",
+    "localhostScheme": "ws",
+    "connectionDirection": "Brain connects outward to Central",
+    "heartbeat": true,
+    "reconnect": true,
+    "resume": true
+  },
+  "concurrency": {
+    "negotiatedBy": "BRAIN_HELLO.maxConcurrentTasks",
+    "defaultV1": 1,
+    "behavior": "Central must not offer more active tasks than negotiated capacity."
+  },
+  "messages": {
+    "BRAIN_HELLO": {
+      "direction": "brain_to_central",
+      "required": [
+        "type",
+        "protocolVersion",
+        "brainId",
+        "instanceId",
+        "brainVersion",
+        "capabilities",
+        "maxConcurrentTasks"
+      ]
+    },
+    "BRAIN_HELLO_ACK": {
+      "direction": "central_to_brain",
+      "required": [
+        "type",
+        "protocolVersion",
+        "sessionId",
+        "authenticated",
+        "heartbeatMs"
+      ]
+    },
+    "TASK_OFFER": {
+      "direction": "central_to_brain",
+      "required": [
+        "type",
+        "protocolVersion",
+        "taskId",
+        "targetId",
+        "authorizationRef",
+        "issuedAt",
+        "expiresAt"
+      ],
+      "businessObjectiveFields": [
+        "targetId"
+      ],
+      "authorizationRefMeaning": "Opaque Central reference created only after target/channel validation and points reservation."
+    },
+    "TASK_ACCEPT": {
+      "direction": "brain_to_central",
+      "required": [
+        "type",
+        "taskId",
+        "acceptedAt"
+      ]
+    },
+    "TASK_REJECT": {
+      "direction": "brain_to_central",
+      "required": [
+        "type",
+        "taskId",
+        "reason"
+      ],
+      "allowedReasons": [
+        "BUSY",
+        "UNSUPPORTED_TARGET_ID_FORMAT",
+        "TASK_EXPIRED",
+        "DUPLICATE_TASK_CONFLICT",
+        "LOCAL_RUNTIME_UNAVAILABLE",
+        "BODY_UNAVAILABLE",
+        "PROTOCOL_INVALID"
+      ],
+      "forbiddenReasons": [
+        "TARGET_NOT_REGISTERED",
+        "CHANNEL_NOT_ACTIVE",
+        "INSUFFICIENT_POINTS"
+      ]
+    },
+    "TASK_STATUS": {
+      "direction": "brain_to_central",
+      "required": [
+        "type",
+        "taskId",
+        "state",
+        "ts"
+      ],
+      "allowedStates": [
+        "ACCEPTED",
+        "RUNNING",
+        "RESULT_PENDING"
+      ],
+      "note": "Coarse lifecycle only; no planner actions."
+    },
+    "TASK_HEARTBEAT": {
+      "direction": "brain_to_central",
+      "required": [
+        "type",
+        "taskId",
+        "ts"
+      ]
+    },
+    "TASK_CANCEL": {
+      "direction": "central_to_brain",
+      "required": [
+        "type",
+        "taskId",
+        "reason"
+      ],
+      "note": "Requests graceful cancellation; does not prescribe recovery/actions."
+    },
+    "TASK_RESULT": {
+      "direction": "brain_to_central",
+      "required": [
+        "type",
+        "taskId",
+        "targetId",
+        "state",
+        "outcome",
+        "metrics",
+        "finishedAt"
+      ],
+      "allowedStates": [
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED"
+      ],
+      "forbidden": [
+        "score",
+        "points",
+        "reward",
+        "debit",
+        "balance"
+      ]
+    },
+    "TASK_SETTLED": {
+      "direction": "central_to_brain",
+      "required": [
+        "type",
+        "taskId",
+        "verification",
+        "score",
+        "settlement"
+      ],
+      "note": "Central-only scoring and points settlement result."
+    },
+    "RESUME": {
+      "direction": "brain_to_central",
+      "required": [
+        "type",
+        "sessionRecoveryId",
+        "tasks"
+      ]
+    },
+    "RESUME_ACK": {
+      "direction": "central_to_brain",
+      "required": [
+        "type",
+        "tasks"
+      ]
+    }
+  },
+  "taskLifecycle": {
+    "central": [
+      "CREATED",
+      "VALIDATING",
+      "POINTS_RESERVED",
+      "OFFERED",
+      "ACCEPTED",
+      "RUNNING",
+      "RESULT_RECEIVED",
+      "VERIFYING",
+      "SETTLED"
+    ],
+    "terminalAlternatives": [
+      "REJECTED",
+      "EXPIRED",
+      "FAILED",
+      "CANCELLED"
+    ],
+    "brain": [
+      "IDLE",
+      "ACCEPTED",
+      "RUNNING",
+      "RESULT_SENT",
+      "CLOSED"
+    ]
+  },
+  "points": {
+    "owner": "Central",
+    "model": "reservation",
+    "authoritativeFields": [
+      "available",
+      "reserved",
+      "spent"
+    ],
+    "flow": [
+      "check available >= task cost",
+      "reserve task cost atomically",
+      "send TASK_OFFER",
+      "after verified result: debit or release according to Central settlement policy"
+    ],
+    "brainMayCache": true,
+    "brainMayMutate": false,
+    "invariant": "TASK_OFFER must never be emitted without an existing points reservation."
+  },
+  "scoring": {
+    "owner": "Central",
+    "versionedPolicy": true,
+    "brainSubmitsScore": false,
+    "brainSuppliesFacts": [
+      "completion state",
+      "targetObserved",
+      "targetOpened",
+      "startedAt",
+      "finishedAt",
+      "durationMs",
+      "steps",
+      "bodyActions",
+      "reportRef",
+      "evidenceDigest"
+    ],
+    "note": "Exact score formula is intentionally deferred until Central implementation."
+  },
+  "deferred": [
+    "Central service implementation",
+    "registry storage schema",
+    "wallet database/transaction implementation",
+    "score formula",
+    "authentication key distribution",
+    "production reconnect timeout values"
+  ]
+}

@@ -3,7 +3,8 @@
 const childProcess=require('node:child_process');
 
 const DRIVER_NAMES=new Set(['chromedriver.exe','msedgedriver.exe','geckodriver.exe','iedriverserver.exe']);
-const INPUT_AUTOMATION_NAMES=new Set(['autohotkey.exe','autohotkey64.exe','autohotkey32.exe','autoit3.exe','autoit3_x64.exe']);
+const INPUT_AUTOMATION_NAMES=new Set(['autohotkey.exe','autohotkey64.exe','autohotkey32.exe','autoit3.exe','autoit3_x64.exe','tinytask.exe']);
+const GENERIC_INPUT_AUTOMATION_PATTERN=/\b(auto[\s._-]?click(?:er)?|mouse[\s._-]?click(?:er)?|macro[\s._-]?recorder|mouse[\s._-]?recorder|auto[\s._-]?mouse)\b/i;
 const BROWSER_NAMES=new Set(['chrome.exe','msedge.exe','brave.exe','chromium.exe']);
 const FRAMEWORK_PATTERN=/\b(selenium|playwright|puppeteer|pyautogui|pynput|webdriver)\b/i;
 const AUTOMATION_FLAG_PATTERN=/(?:^|\s)--enable-automation(?:\s|$)/i;
@@ -16,7 +17,7 @@ function safePid(value){const n=Number(value);return Number.isInteger(n)&&n>0?n:
 function compactProcessSnapshot(payload={}){
   const processes=arrayOf(payload.processes).map(row=>({name:safeName(row?.Name||row?.name),pid:safePid(row?.ProcessId||row?.processId||row?.pid),parentPid:safePid(row?.ParentProcessId||row?.parentProcessId),commandLine:String(row?.CommandLine||row?.commandLine||'')})).filter(row=>row.name&&row.pid);
   const udp=arrayOf(payload.udp).map(row=>({pid:safePid(row?.OwningProcess||row?.owningProcess||row?.pid),localPort:Number(row?.LocalPort||row?.localPort||0)})).filter(row=>row.pid&&Number.isInteger(row.localPort)&&row.localPort>=0&&row.localPort<=65535);
-  const drivers=processes.filter(row=>DRIVER_NAMES.has(row.name)),browserFlagRows=processes.filter(row=>BROWSER_NAMES.has(row.name)&&AUTOMATION_FLAG_PATTERN.test(row.commandLine)),remoteDebugRows=processes.filter(row=>BROWSER_NAMES.has(row.name)&&REMOTE_DEBUG_PATTERN.test(row.commandLine)),inputAutomation=processes.filter(row=>INPUT_AUTOMATION_NAMES.has(row.name)),frameworks=processes.filter(row=>!DRIVER_NAMES.has(row.name)&&!BROWSER_NAMES.has(row.name)&&FRAMEWORK_PATTERN.test(row.commandLine)),suspectPids=new Set([...drivers,...frameworks,...inputAutomation].map(row=>row.pid)),udpForSuspect=udp.filter(row=>suspectPids.has(row.pid));
+  const drivers=processes.filter(row=>DRIVER_NAMES.has(row.name)),browserFlagRows=processes.filter(row=>BROWSER_NAMES.has(row.name)&&AUTOMATION_FLAG_PATTERN.test(row.commandLine)),remoteDebugRows=processes.filter(row=>BROWSER_NAMES.has(row.name)&&REMOTE_DEBUG_PATTERN.test(row.commandLine)),inputAutomation=processes.filter(row=>INPUT_AUTOMATION_NAMES.has(row.name)||GENERIC_INPUT_AUTOMATION_PATTERN.test(row.name)||GENERIC_INPUT_AUTOMATION_PATTERN.test(row.commandLine)),frameworks=processes.filter(row=>!DRIVER_NAMES.has(row.name)&&!BROWSER_NAMES.has(row.name)&&FRAMEWORK_PATTERN.test(row.commandLine)),suspectPids=new Set([...drivers,...frameworks,...inputAutomation].map(row=>row.pid)),udpForSuspect=udp.filter(row=>suspectPids.has(row.pid));
   return {available:true,driverProcesses:drivers.map(row=>({name:row.name,pid:row.pid})),frameworkProcesses:frameworks.map(row=>({name:row.name,pid:row.pid})),inputAutomationProcesses:inputAutomation.map(row=>({name:row.name,pid:row.pid})),browserAutomationFlags:browserFlagRows.map(row=>({name:row.name,pid:row.pid,flag:'--enable-automation'})),browserRemoteDebugFlags:remoteDebugRows.map(row=>({name:row.name,pid:row.pid,flag:/--remote-debugging-pipe/i.test(row.commandLine)?'--remote-debugging-pipe':'--remote-debugging-port'})),suspectUdpEndpoints:udpForSuspect.map(row=>({pid:row.pid,localPort:row.localPort}))};
 }
 
@@ -46,4 +47,4 @@ class ExternalControllerProbe{
   }
 }
 
-module.exports={ExternalControllerProbe,compactProcessSnapshot,assessControllerConflict,emptyUnavailable,DRIVER_NAMES,INPUT_AUTOMATION_NAMES,BROWSER_NAMES};
+module.exports={ExternalControllerProbe,compactProcessSnapshot,assessControllerConflict,emptyUnavailable,DRIVER_NAMES,INPUT_AUTOMATION_NAMES,GENERIC_INPUT_AUTOMATION_PATTERN,BROWSER_NAMES};
