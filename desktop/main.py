@@ -166,7 +166,6 @@ def _status(health: HealthModel, hello: dict, readiness: dict) -> dict:
 
 def _hold_error_for_tray(tray: BodyBrainTray, message: str) -> None:
     tray.set_notice(f"ERROR: {message} - right-click the tray icon and choose Quit BodyBrain to stop.")
-    tray.show()
     while not StopRequested.value:
         time.sleep(0.2)
 
